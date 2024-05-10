@@ -82,7 +82,7 @@ BPDX=${BPDX:-8}\n\
 BPDY=${BPDY:-4}\n\
 BPDZ=${BPDZ:-4}\n\
 NU=${NU:-0.00001}\n\
-PSOLVER=\"cuda_iterative\"\n\
+PSOLVER=\"iterative\"\n\
 \n\
 \n\
 FACTORY=\n")
@@ -96,7 +96,6 @@ FACTORY=\n")
   f.write('\nOPTIONS=\n\
 OPTIONS+=" -extentx 8.0"\n\
 OPTIONS+=" -bpdx ${BPDX} -bpdy ${BPDY} -bpdz ${BPDZ}"\n\
-OPTIONS+=" -tdump 0.1 -tend 0.00000001 "\n\
 OPTIONS+=" -CFL 0.4 -nu ${NU}"\n\
 OPTIONS+=" -levelMax 7 -levelStart 4 -Rtol 5.0 -Ctol 0.1"\n\
 OPTIONS+=" -bMeanConstraint 2 "\n\
