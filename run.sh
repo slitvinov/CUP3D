@@ -1,5 +1,3 @@
-python fish.py --fish 3
-. ./fish.sh
 exec mpiexec ./main \
      -bMeanConstraint 2 \
      -bpdx 8 \
@@ -14,8 +12,11 @@ exec mpiexec ./main \
      -dumpVelocityY 1 \
      -dumpVelocityZ 1 \
      -extentx 8 \
-     -factory-content $FACTORY \
-     -levelMax 7 \
+     -factory-content \
+     'StefanFish L=0.2 T=1.0 xpos=3.4 ypos=1.5 zpos=1.8 CorrectPosition=true CorrectZ=true CorrectRoll=true heightProfile=danio widthProfile=stefan bFixFrameOfRef=1
+      StefanFish L=0.2 T=1.0 xpos=3.9 ypos=1.7 zpos=1.5 CorrectPosition=true CorrectZ=true CorrectRoll=true heightProfile=danio widthProfile=stefan
+      StefanFish L=0.2 T=1.0 xpos=3.7 ypos=2.0 zpos=1.6 CorrectPosition=true CorrectZ=true CorrectRoll=true heightProfile=danio widthProfile=stefan' \
+     -levelMax 5 \
      -levelStart 4 \
      -nu 0.00001 \
      -poissonSolver iterative \
