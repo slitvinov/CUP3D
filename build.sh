@@ -11,7 +11,7 @@ ${MPICC=mpic++} \
 -ICubism/include \
 -DDIMENSION=3 \
 -o main \
-Cubism/src/ArgumentParser.cpp \
+source/ArgumentParser.cpp \
 source/main.cpp \
 source/Obstacles/CarlingFish.cpp \
 source/Obstacles/Cylinder.cpp \
