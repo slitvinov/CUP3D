@@ -67,18 +67,8 @@ x, y, z = FishSamples(1.4, 0.8, 0.8, fish, 0.2)
 x = 3.0 + np.asarray(x)
 y = 2.0 + np.asarray(y)
 z = 2.0 + np.asarray(z)
-f = open("settingsEllipsoidSwarm1.sh", "w")
-f.write(\
-  "#!/bin/bash\n\
-NNODE=256\n\
-BPDX=${BPDX:-8}\n\
-BPDY=${BPDY:-4}\n\
-BPDZ=${BPDZ:-4}\n\
-NU=${NU:-0.00001}\n\
-PSOLVER=\"iterative\"\n\
-\n\
-\n\
-FACTORY=\n"                                   )
+f = open("fish.sh", "w")
+f.write("FACTORY=\n")
 for j in range(fish):
     if j == 0:
         f.write(
@@ -90,10 +80,3 @@ for j in range(fish):
             'FACTORY+="StefanFish L=' + str(L) +
             ' T=1.0 xpos={} ypos={} zpos={} CorrectPosition=true CorrectZ=true CorrectRoll=true heightProfile=danio widthProfile=stefan\n\"\n'
             .format(x[j], y[j], z[j]))
-f.write('\nOPTIONS=\n\
-OPTIONS+=" -extentx 8.0"\n\
-OPTIONS+=" -bpdx ${BPDX} -bpdy ${BPDY} -bpdz ${BPDZ}"\n\
-OPTIONS+=" -CFL 0.4 -nu ${NU}"\n\
-OPTIONS+=" -levelMax 7 -levelStart 4 -Rtol 5.0 -Ctol 0.1"\n\
-OPTIONS+=" -bMeanConstraint 2 "\n\
-OPTIONS+=" -poissonSolver ${PSOLVER}"\n')
