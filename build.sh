@@ -1,4 +1,4 @@
-mpic++ \
+${MPICC=mpic++} \
 -std=c++17 \
 -DNDEBUG \
 -O3 \
