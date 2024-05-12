@@ -8,9 +8,6 @@ exec mpiexec ./main \
      -dumpOmegaX 1 \
      -dumpOmegaY 1 \
      -dumpOmegaZ 1 \
-     -dumpVelocityX 1 \
-     -dumpVelocityY 1 \
-     -dumpVelocityZ 1 \
      -extentx 8 \
      -factory-content \
      'StefanFish L=0.2 T=1.0 xpos=3.4 ypos=1.5 zpos=1.8 CorrectPosition=true CorrectZ=true CorrectRoll=true heightProfile=danio widthProfile=stefan bFixFrameOfRef=1
