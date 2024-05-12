@@ -8,7 +8,6 @@ ${MPICC=mpic++} \
 -DCUP_BLOCK_SIZEY=8 \
 -DCUP_BLOCK_SIZEZ=8 \
 -DCUP_NO_MACROS_HEADER \
--ICubism \
 -DDIMENSION=3 \
 -o main \
 source/ArgumentParser.cpp \
