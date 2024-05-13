@@ -16,4 +16,4 @@ OMP_NUM_THREADS=1 exec mpiexec -n 2 ${exe=./main} \
      -poissonSolver iterative \
      -Rtol 5 \
      -tdump 0.5 \
-     -tend 5.0 \
+     -tend 5 \
