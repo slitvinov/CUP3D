@@ -1,10 +1,11 @@
 import h5py
 import numpy as np
+import sys
 import os
 import re
 import xml.etree.ElementTree
 
-path = "data/chi_000000940.xmf"
+path = sys.argv[1]
 x = xml.etree.ElementTree.parse(path)
 root = x.getroot()
 hdf_data = root.find('.//DataItem[@Format="HDF"]')
