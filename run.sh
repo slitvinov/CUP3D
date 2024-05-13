@@ -1,4 +1,4 @@
-OMP_NUM_THREADS=1 exec mpiexec ./main \
+OMP_NUM_THREADS=1 exec mpiexec ${exe=./main} \
      -bMeanConstraint 2 \
      -bpdx 2 \
      -bpdy 2 \
