@@ -10,7 +10,6 @@ ${MPICC=mpic++} \
 -DCUP_NO_MACROS_HEADER \
 -I. \
 -DDIMENSION=3 \
--static \
 -o main \
 source/ArgumentParser.cpp \
 source/main.cpp \
