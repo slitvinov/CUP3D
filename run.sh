@@ -1,6 +1,6 @@
-exec mpiexec ./main \
+OMP_NUM_THREADS=1 exec mpiexec ./main \
      -bMeanConstraint 2 \
-     -bpdx 4 \
+     -bpdx 2 \
      -bpdy 2 \
      -bpdz 2 \
      -CFL 0.4 \
@@ -8,10 +8,10 @@ exec mpiexec ./main \
      -dumpOmegaX 1 \
      -dumpOmegaY 1 \
      -dumpOmegaZ 1 \
-     -extentx 4 \
+     -extentx 2 \
      -factory-content \
-     'StefanFish L=0.2 T=1.0 xpos=1 ypos=0.5 zpos=1 CorrectPosition=true CorrectZ=true CorrectRoll=true heightProfile=danio widthProfile=stefan bFixFrameOfRef=1
-      StefanFish L=0.2 T=1.0 xpos=1 ypos=1.5 zpos=1 CorrectPosition=true CorrectZ=true CorrectRoll=true heightProfile=danio widthProfile=stefan' \
+     'StefanFish L=0.2 T=1.0 xpos=0.5 ypos=0.5 zpos=1 CorrectPosition=true CorrectZ=true CorrectRoll=true heightProfile=danio widthProfile=stefan bFixFrameOfRef=1
+      StefanFish L=0.2 T=1.0 xpos=0.5 ypos=1.5 zpos=1 CorrectPosition=true CorrectZ=true CorrectRoll=true heightProfile=danio widthProfile=stefan' \
      -levelMax 6 \
      -levelStart 4 \
      -nu 0.00001 \
