@@ -42,7 +42,7 @@ def plot(path):
             yy.append(y)
             zz.append(z)
             offset += size
-    points.set_data(np.concatenate(zz), np.concatenate(xx))
+    points.set_data(np.concatenate(zz), np.concatenate(yy))
 
 plt.axis((0, 1, 0, 1))
 plt.xticks([], [])

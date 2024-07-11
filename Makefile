@@ -58,7 +58,7 @@ source/SimulationData.cpp \
 source/Utils/BufferedLogger.cpp \
 
 main: $(S:.cpp=.o)
-	$(MPICXX) -o main $(S:.cpp=.o) $(GSL_LDFLAGS) -fopenmp
+	$(MPICXX) -o main $(S:.cpp=.o) $(GSL_LDFLAGS) $(LDFLAGS) -fopenmp
 .cpp.o:
 	$(MPICXX) -o $@ -c $< $(CUBISMFLAGS) $(CXXFLAGS) $(GSL_CFLAGS)
 clean:
