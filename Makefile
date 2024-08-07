@@ -4,8 +4,8 @@
 .SUFFIXES: .o
 
 MPICXX = h5c++.mpich
-GSL_CFLAGS = `pkg-config --cflags gsl`
-GSL_LDFLAGS = `pkg-config --libs gsl`
+GSL_CFLAGS != pkg-config --cflags gsl
+GSL_LDFLAGS != pkg-config --libs gsl
 CUBISMFLAGS = \
 -DCUP_ALIGNMENT=64 \
 -DCUP_BLOCK_SIZEX=8 \
