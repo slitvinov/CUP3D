@@ -3,7 +3,7 @@
 .SUFFIXES: .cpp
 .SUFFIXES: .o
 
-MPICXX = h5c++.mpich
+MPICXX = mpicxx
 GSL_CFLAGS != pkg-config --cflags gsl
 GSL_LDFLAGS != pkg-config --libs gsl
 CUBISMFLAGS = \
