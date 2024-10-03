@@ -58,9 +58,9 @@ protected:
                          ///< StencilInfo struct)
   bool use_averages;     ///< if true, fine blocks average down their cells to
                          ///< provide halo cells for coarse blocks (2nd order
-                     ///< accurate). If false, they perform a 3rd-order accurate
-                     ///< interpolation instead (which is the accuracy needed to
-                     ///< compute 2nd derivatives).
+  ///< accurate). If false, they perform a 3rd-order accurate
+  ///< interpolation instead (which is the accuracy needed to
+  ///< compute 2nd derivatives).
   GridType *m_refGrid; ///< Point to TGrid instance
   int NX;              ///< GridBlock size in the x-direction.
   int NY;              ///< GridBlock size in the y-direction.

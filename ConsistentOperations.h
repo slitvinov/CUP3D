@@ -1,8 +1,8 @@
 #pragma once
 
 // Functions suggested in "Numerical symmetry-preserving techniques for
-// low-dissipation shock-capturing schemes" equation (19) for summation that does
-// not favor a spatial direction
+// low-dissipation shock-capturing schemes" equation (19) for summation that
+// does not favor a spatial direction
 
 namespace cubism {
 #ifdef PRESERVE_SYMMETRY

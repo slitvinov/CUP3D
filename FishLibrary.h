@@ -203,8 +203,8 @@ public:
     //                                       the fish surface
 
     // if s = 0 then width = 0, height = 0 and the function is not
-    // differentiable. in this case, we DEFINE the "normal" vector as the tangent
-    // vector dr/ds (i.e. the fish is looking forward)
+    // differentiable. in this case, we DEFINE the "normal" vector as the
+    // tangent vector dr/ds (i.e. the fish is looking forward)
     if (idx == 0) {
       nx = (rX[idx + 1] - rX[idx]) / (rS[idx + 1] - rS[idx]);
       ny = (rY[idx + 1] - rY[idx]) / (rS[idx + 1] - rS[idx]);

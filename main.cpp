@@ -428,7 +428,7 @@ void AdvectionDiffusion::operator()(const Real dt) {
 
 CubismUP_3D_NAMESPACE_END
 
-CubismUP_3D_NAMESPACE_BEGIN
+    CubismUP_3D_NAMESPACE_BEGIN
 
 //#define WENO
 #ifdef PRESERVE_SYMMETRY
@@ -926,401 +926,409 @@ void AdvectionDiffusionImplicit::operator()(const Real dt) { euler(sim.dt); }
 
 CubismUP_3D_NAMESPACE_END
 
+    namespace cubism {
 
-namespace cubism {
-
-///////////////////////////////////////////////////////////
-// Value
-///////////////////////////////////////////////////////////
-double Value::asDouble(double def) {
-  if (content == "") {
-    std::ostringstream sbuf;
-    sbuf << def;
-    content = sbuf.str();
-  }
-  return (double)atof(content.c_str());
-}
-
-int Value::asInt(int def) {
-  if (content == "") {
-    std::ostringstream sbuf;
-    sbuf << def;
-    content = sbuf.str();
-  }
-  return atoi(content.c_str());
-}
-
-bool Value::asBool(bool def) {
-  if (content == "") {
-    if (def)
-      content = "true";
-    else
-      content = "false";
-  }
-  if (content == "0")
-    return false;
-  if (content == "false")
-    return false;
-
-  return true;
-}
-
-std::string Value::asString(const std::string &def) {
-  if (content == "")
-    content = def;
-
-  return content;
-}
-
-std::ostream &operator<<(std::ostream &lhs, const Value &rhs) {
-  lhs << rhs.content;
-  return lhs;
-}
-
-///////////////////////////////////////////////////////////
-// CommandlineParser
-///////////////////////////////////////////////////////////
-static inline void _normalizeKey(std::string &key) {
-  if (key[0] == '-')
-    key.erase(0, 1);
-  if (key[0] == '+')
-    key.erase(0, 1);
-}
-
-static inline bool _existKey(const std::string &key,
-                             const std::map<std::string, Value> &container) {
-  return container.find(key) != container.end();
-}
-
-Value &CommandlineParser::operator()(std::string key) {
-  _normalizeKey(key);
-  if (bStrictMode) {
-    if (!_existKey(key, mapArguments)) {
-      printf("Runtime option NOT SPECIFIED! ABORTING! name: %s\n", key.data());
-      abort();
+  ///////////////////////////////////////////////////////////
+  // Value
+  ///////////////////////////////////////////////////////////
+  double Value::asDouble(double def) {
+    if (content == "") {
+      std::ostringstream sbuf;
+      sbuf << def;
+      content = sbuf.str();
     }
+    return (double)atof(content.c_str());
   }
 
-  if (bVerbose)
-    printf("%s is %s\n", key.data(), mapArguments[key].asString().data());
-  return mapArguments[key];
-}
-
-bool CommandlineParser::check(std::string key) const {
-  _normalizeKey(key);
-  return _existKey(key, mapArguments);
-}
-
-bool CommandlineParser::_isnumber(const std::string &s) const {
-  char *end = NULL;
-  strtod(s.c_str(), &end);
-  return end != s.c_str(); // only care if the number is numeric or not.  This
-                           // includes nan and inf
-}
-
-CommandlineParser::CommandlineParser(const int argc, char **argv)
-    : iArgC(argc), vArgV(argv), bStrictMode(false), bVerbose(true) {
-  // parse commandline <key> <value> pairs.  Key passed on the command
-  // line must start with a leading dash (-). For example:
-  // -mykey myvalue0 [myvalue1 ...]
-  for (int i = 1; i < argc; i++)
-    if (argv[i][0] == '-') {
-      std::string values = "";
-      int itemCount = 0;
-
-      // check if the current key i is a list of values. If yes,
-      // concatenate them into a string
-      for (int j = i + 1; j < argc; j++) {
-        // if the current value is numeric and (possibly) negative,
-        // do not interpret it as a key.
-        // XXX: [fabianw@mavt.ethz.ch; 2019-03-28] WARNING:
-        // This will treat -nan as a NUMBER and not as a KEY
-        std::string sval(argv[j]);
-        const bool leadingDash = (sval[0] == '-');
-        const bool isNumeric = _isnumber(sval);
-        if (leadingDash && !isNumeric)
-          break;
-        else {
-          if (std::strcmp(values.c_str(), ""))
-            values += ' ';
-
-          values += argv[j];
-          itemCount++;
-        }
-      }
-
-      if (itemCount == 0)
-        values = "true";
-
-      std::string key(argv[i]);
-      key.erase(0, 1);   // remove leading '-'
-      if (key[0] == '+') // for key concatenation
-      {
-        key.erase(0, 1);
-        if (!_existKey(key, mapArguments))
-          mapArguments[key] = Value(values); // skip leading white space
-        else
-          mapArguments[key] += Value(values);
-      } else // regular key
-      {
-        if (!_existKey(key, mapArguments))
-          mapArguments[key] = Value(values);
-      }
-
-      i += itemCount;
+  int Value::asInt(int def) {
+    if (content == "") {
+      std::ostringstream sbuf;
+      sbuf << def;
+      content = sbuf.str();
     }
-
-  mute();
-  // printf("found %ld arguments of %d\n",mapArguments.size(),argc);
-}
-
-void CommandlineParser::save_options(const std::string &path) {
-  std::string options;
-  for (std::map<std::string, Value>::iterator it = mapArguments.begin();
-       it != mapArguments.end(); it++) {
-    options += it->first + " " + it->second.asString() + " ";
+    return atoi(content.c_str());
   }
-  std::string filepath = path + "/argumentparser.log";
-  FILE *f = fopen(filepath.data(), "a");
-  if (f == NULL) {
-    fprintf(stderr, "impossible to write %s.\n", filepath.data());
-    return;
-  }
-  fprintf(f, "%s\n", options.data());
-  fclose(f);
-}
 
-void CommandlineParser::print_args() {
-  for (std::map<std::string, Value>::iterator it = mapArguments.begin();
-       it != mapArguments.end(); it++) {
-    std::cout.width(50);
-    std::cout.fill('.');
-    std::cout << std::left << it->first;
-    std::cout << ": " << it->second.asString() << std::endl;
-  }
-}
-
-///////////////////////////////////////////////////////////
-// ArgumentParser
-///////////////////////////////////////////////////////////
-void ArgumentParser::_ignoreComments(std::istream &stream,
-                                     const char commentChar) {
-  stream >> std::ws;
-  int nextchar = stream.peek();
-  while (nextchar == commentChar) {
-    stream.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-    stream >> std::ws;
-    nextchar = stream.peek();
-  }
-}
-
-void ArgumentParser::_parseFile(std::ifstream &stream, ArgMap &container) {
-  // read (key value) pairs from input file, ignore comments
-  // beginning with commentStart
-  _ignoreComments(stream, commentStart);
-  while (!stream.eof()) {
-    std::string line, key, val;
-    std::getline(stream, line);
-    std::istringstream lineStream(line);
-    lineStream >> key;
-    lineStream >> val;
-    _ignoreComments(lineStream, commentStart);
-    while (!lineStream.eof()) {
-      std::string multiVal;
-      lineStream >> multiVal;
-      val += (" " + multiVal);
-      _ignoreComments(lineStream, commentStart);
+  bool Value::asBool(bool def) {
+    if (content == "") {
+      if (def)
+        content = "true";
+      else
+        content = "false";
     }
+    if (content == "0")
+      return false;
+    if (content == "false")
+      return false;
 
-    const Value V(val);
+    return true;
+  }
+
+  std::string Value::asString(const std::string &def) {
+    if (content == "")
+      content = def;
+
+    return content;
+  }
+
+  std::ostream &operator<<(std::ostream &lhs, const Value &rhs) {
+    lhs << rhs.content;
+    return lhs;
+  }
+
+  ///////////////////////////////////////////////////////////
+  // CommandlineParser
+  ///////////////////////////////////////////////////////////
+  static inline void _normalizeKey(std::string & key) {
     if (key[0] == '-')
       key.erase(0, 1);
-
-    if (key[0] == '+') {
+    if (key[0] == '+')
       key.erase(0, 1);
-      if (!_existKey(key, container)) // skip leading white space
-        container[key] = V;
-      else
-        container[key] += V;
-    } else if (!_existKey(key, container))
-      container[key] = V;
-    _ignoreComments(stream, commentStart);
   }
-}
 
-void ArgumentParser::readFile(const std::string &filepath) {
-  from_files[filepath] = new ArgMap;
-  ArgMap &myFMap = *(from_files[filepath]);
-
-  std::ifstream confFile(filepath.c_str());
-  if (confFile.good()) {
-    _parseFile(confFile, mapArguments);
-    confFile.clear();
-    confFile.seekg(0, std::ios::beg);
-    _parseFile(confFile,
-               myFMap); // we keep a reference for each separate file read
+  static inline bool _existKey(const std::string &key,
+                               const std::map<std::string, Value> &container) {
+    return container.find(key) != container.end();
   }
-  confFile.close();
-}
 
-Value &ArgumentParser::operator()(std::string key) {
-  _normalizeKey(key);
-  const bool bDefaultInCode = !_existKey(key, mapArguments);
-  Value &retval = CommandlineParser::operator()(key);
-  if (bDefaultInCode)
-    from_code[key] = &retval;
-  return retval;
-}
-
-void ArgumentParser::write_runtime_environment() const {
-  time_t rawtime;
-  std::time(&rawtime);
-  struct tm *timeinfo = std::localtime(&rawtime);
-  char buf[256];
-  std::strftime(buf, 256, "%A, %h %d %Y, %r", timeinfo);
-
-  std::ofstream runtime("runtime_environment.conf");
-  runtime << commentStart << " RUNTIME ENVIRONMENT SETTINGS" << std::endl;
-  runtime << commentStart << " ============================" << std::endl;
-  runtime << commentStart << " " << buf << std::endl;
-  runtime << commentStart
-          << " Use this file to set runtime parameter interactively."
-          << std::endl;
-  runtime << commentStart
-          << " The parameter are read every \"refreshperiod\" steps."
-          << std::endl;
-  runtime << commentStart
-          << " When editing this file, you may use comments and string "
-             "concatenation."
-          << std::endl;
-  runtime << commentStart
-          << " The simulation can be terminated without killing it by setting "
-             "\"exit\" to true."
-          << std::endl;
-  runtime << commentStart
-          << " (This will write a serialized restart state. Set \"exitsave\" "
-             "to false if not desired.)"
-          << std::endl;
-  runtime << commentStart << std::endl;
-  runtime << commentStart
-          << " !!! WARNING !!! EDITING THIS FILE CAN POTENTIALLY CRASH YOUR "
-             "SIMULATION !!! WARNING !!!"
-          << std::endl;
-  for (typename std::map<std::string, Value>::const_iterator it =
-           mapArguments.begin();
-       it != mapArguments.end(); ++it)
-    runtime << it->first << '\t' << it->second << std::endl;
-}
-
-void ArgumentParser::read_runtime_environment() {
-  mapRuntime.clear();
-  std::ifstream runtime("runtime_environment.conf");
-  if (runtime.good())
-    _parseFile(runtime, mapRuntime);
-  runtime.close();
-}
-
-Value &ArgumentParser::parseRuntime(std::string key) {
-  _normalizeKey(key);
-  if (!_existKey(key, mapRuntime)) {
-    printf("ERROR: Runtime parsing for key %s NOT FOUND!! Check your "
-           "runtime_environment.conf file\n",
-           key.data());
-    abort();
-  }
-  return mapRuntime[key];
-}
-
-void ArgumentParser::print_args() {
-  std::cout << "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
-               "~~~~~~~"
-            << std::endl;
-  std::cout << "* Summary:" << std::endl;
-  std::cout << "*    Parameter read from command line:                "
-            << from_commandline.size() << std::endl;
-  size_t nFiles = 0;
-  size_t nFileParameter = 0;
-  for (FileMap::const_iterator it = from_files.begin(); it != from_files.end();
-       ++it) {
-    if (it->second->size() > 0) {
-      ++nFiles;
-      nFileParameter += it->second->size();
+  Value &CommandlineParser::operator()(std::string key) {
+    _normalizeKey(key);
+    if (bStrictMode) {
+      if (!_existKey(key, mapArguments)) {
+        printf("Runtime option NOT SPECIFIED! ABORTING! name: %s\n",
+               key.data());
+        abort();
+      }
     }
-  }
-  std::cout << "*    Parameter read from " << std::setw(3) << std::right
-            << nFiles << " file(s):                 " << nFileParameter
-            << std::endl;
-  std::cout << "*    Parameter read from defaults in code:            "
-            << from_code.size() << std::endl;
-  std::cout << "*    Total number of parameter read from all sources: "
-            << mapArguments.size() << std::endl;
-  std::cout << "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
-               "~~~~~~~"
-            << std::endl;
 
-  // command line given arguments
-  if (!from_commandline.empty()) {
-    std::cout << "* Command Line:" << std::endl;
-    std::cout << "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
-                 "~~~~~~~~~"
-              << std::endl;
-    for (ArgMap::iterator it = from_commandline.begin();
-         it != from_commandline.end(); it++) {
+    if (bVerbose)
+      printf("%s is %s\n", key.data(), mapArguments[key].asString().data());
+    return mapArguments[key];
+  }
+
+  bool CommandlineParser::check(std::string key) const {
+    _normalizeKey(key);
+    return _existKey(key, mapArguments);
+  }
+
+  bool CommandlineParser::_isnumber(const std::string &s) const {
+    char *end = NULL;
+    strtod(s.c_str(), &end);
+    return end != s.c_str(); // only care if the number is numeric or not.  This
+                             // includes nan and inf
+  }
+
+  CommandlineParser::CommandlineParser(const int argc, char **argv)
+      : iArgC(argc), vArgV(argv), bStrictMode(false), bVerbose(true) {
+    // parse commandline <key> <value> pairs.  Key passed on the command
+    // line must start with a leading dash (-). For example:
+    // -mykey myvalue0 [myvalue1 ...]
+    for (int i = 1; i < argc; i++)
+      if (argv[i][0] == '-') {
+        std::string values = "";
+        int itemCount = 0;
+
+        // check if the current key i is a list of values. If yes,
+        // concatenate them into a string
+        for (int j = i + 1; j < argc; j++) {
+          // if the current value is numeric and (possibly) negative,
+          // do not interpret it as a key.
+          // XXX: [fabianw@mavt.ethz.ch; 2019-03-28] WARNING:
+          // This will treat -nan as a NUMBER and not as a KEY
+          std::string sval(argv[j]);
+          const bool leadingDash = (sval[0] == '-');
+          const bool isNumeric = _isnumber(sval);
+          if (leadingDash && !isNumeric)
+            break;
+          else {
+            if (std::strcmp(values.c_str(), ""))
+              values += ' ';
+
+            values += argv[j];
+            itemCount++;
+          }
+        }
+
+        if (itemCount == 0)
+          values = "true";
+
+        std::string key(argv[i]);
+        key.erase(0, 1);   // remove leading '-'
+        if (key[0] == '+') // for key concatenation
+        {
+          key.erase(0, 1);
+          if (!_existKey(key, mapArguments))
+            mapArguments[key] = Value(values); // skip leading white space
+          else
+            mapArguments[key] += Value(values);
+        } else // regular key
+        {
+          if (!_existKey(key, mapArguments))
+            mapArguments[key] = Value(values);
+        }
+
+        i += itemCount;
+      }
+
+    mute();
+    // printf("found %ld arguments of %d\n",mapArguments.size(),argc);
+  }
+
+  void CommandlineParser::save_options(const std::string &path) {
+    std::string options;
+    for (std::map<std::string, Value>::iterator it = mapArguments.begin();
+         it != mapArguments.end(); it++) {
+      options += it->first + " " + it->second.asString() + " ";
+    }
+    std::string filepath = path + "/argumentparser.log";
+    FILE *f = fopen(filepath.data(), "a");
+    if (f == NULL) {
+      fprintf(stderr, "impossible to write %s.\n", filepath.data());
+      return;
+    }
+    fprintf(f, "%s\n", options.data());
+    fclose(f);
+  }
+
+  void CommandlineParser::print_args() {
+    for (std::map<std::string, Value>::iterator it = mapArguments.begin();
+         it != mapArguments.end(); it++) {
       std::cout.width(50);
       std::cout.fill('.');
       std::cout << std::left << it->first;
       std::cout << ": " << it->second.asString() << std::endl;
     }
-    std::cout << "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
-                 "~~~~~~~~~"
-              << std::endl;
   }
 
-  // options read from input files
-  if (!from_files.empty()) {
-    for (FileMap::iterator itFile = from_files.begin();
-         itFile != from_files.end(); itFile++) {
-      if (!itFile->second->empty()) {
-        std::cout << "* File: " << itFile->first << std::endl;
-        std::cout << "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
-                     "~~~~~~~~~~~~~"
-                  << std::endl;
-        ArgMap &fileArgs = *(itFile->second);
-        for (ArgMap::iterator it = fileArgs.begin(); it != fileArgs.end();
-             it++) {
-          std::cout.width(50);
-          std::cout.fill('.');
-          std::cout << std::left << it->first;
-          std::cout << ": " << it->second.asString() << std::endl;
-        }
-        std::cout << "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
-                     "~~~~~~~~~~~~~"
-                  << std::endl;
+  ///////////////////////////////////////////////////////////
+  // ArgumentParser
+  ///////////////////////////////////////////////////////////
+  void ArgumentParser::_ignoreComments(std::istream & stream,
+                                       const char commentChar) {
+    stream >> std::ws;
+    int nextchar = stream.peek();
+    while (nextchar == commentChar) {
+      stream.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+      stream >> std::ws;
+      nextchar = stream.peek();
+    }
+  }
+
+  void ArgumentParser::_parseFile(std::ifstream & stream, ArgMap & container) {
+    // read (key value) pairs from input file, ignore comments
+    // beginning with commentStart
+    _ignoreComments(stream, commentStart);
+    while (!stream.eof()) {
+      std::string line, key, val;
+      std::getline(stream, line);
+      std::istringstream lineStream(line);
+      lineStream >> key;
+      lineStream >> val;
+      _ignoreComments(lineStream, commentStart);
+      while (!lineStream.eof()) {
+        std::string multiVal;
+        lineStream >> multiVal;
+        val += (" " + multiVal);
+        _ignoreComments(lineStream, commentStart);
+      }
+
+      const Value V(val);
+      if (key[0] == '-')
+        key.erase(0, 1);
+
+      if (key[0] == '+') {
+        key.erase(0, 1);
+        if (!_existKey(key, container)) // skip leading white space
+          container[key] = V;
+        else
+          container[key] += V;
+      } else if (!_existKey(key, container))
+        container[key] = V;
+      _ignoreComments(stream, commentStart);
+    }
+  }
+
+  void ArgumentParser::readFile(const std::string &filepath) {
+    from_files[filepath] = new ArgMap;
+    ArgMap &myFMap = *(from_files[filepath]);
+
+    std::ifstream confFile(filepath.c_str());
+    if (confFile.good()) {
+      _parseFile(confFile, mapArguments);
+      confFile.clear();
+      confFile.seekg(0, std::ios::beg);
+      _parseFile(confFile,
+                 myFMap); // we keep a reference for each separate file read
+    }
+    confFile.close();
+  }
+
+  Value &ArgumentParser::operator()(std::string key) {
+    _normalizeKey(key);
+    const bool bDefaultInCode = !_existKey(key, mapArguments);
+    Value &retval = CommandlineParser::operator()(key);
+    if (bDefaultInCode)
+      from_code[key] = &retval;
+    return retval;
+  }
+
+  void ArgumentParser::write_runtime_environment() const {
+    time_t rawtime;
+    std::time(&rawtime);
+    struct tm *timeinfo = std::localtime(&rawtime);
+    char buf[256];
+    std::strftime(buf, 256, "%A, %h %d %Y, %r", timeinfo);
+
+    std::ofstream runtime("runtime_environment.conf");
+    runtime << commentStart << " RUNTIME ENVIRONMENT SETTINGS" << std::endl;
+    runtime << commentStart << " ============================" << std::endl;
+    runtime << commentStart << " " << buf << std::endl;
+    runtime << commentStart
+            << " Use this file to set runtime parameter interactively."
+            << std::endl;
+    runtime << commentStart
+            << " The parameter are read every \"refreshperiod\" steps."
+            << std::endl;
+    runtime << commentStart
+            << " When editing this file, you may use comments and string "
+               "concatenation."
+            << std::endl;
+    runtime
+        << commentStart
+        << " The simulation can be terminated without killing it by setting "
+           "\"exit\" to true."
+        << std::endl;
+    runtime << commentStart
+            << " (This will write a serialized restart state. Set \"exitsave\" "
+               "to false if not desired.)"
+            << std::endl;
+    runtime << commentStart << std::endl;
+    runtime << commentStart
+            << " !!! WARNING !!! EDITING THIS FILE CAN POTENTIALLY CRASH YOUR "
+               "SIMULATION !!! WARNING !!!"
+            << std::endl;
+    for (typename std::map<std::string, Value>::const_iterator it =
+             mapArguments.begin();
+         it != mapArguments.end(); ++it)
+      runtime << it->first << '\t' << it->second << std::endl;
+  }
+
+  void ArgumentParser::read_runtime_environment() {
+    mapRuntime.clear();
+    std::ifstream runtime("runtime_environment.conf");
+    if (runtime.good())
+      _parseFile(runtime, mapRuntime);
+    runtime.close();
+  }
+
+  Value &ArgumentParser::parseRuntime(std::string key) {
+    _normalizeKey(key);
+    if (!_existKey(key, mapRuntime)) {
+      printf("ERROR: Runtime parsing for key %s NOT FOUND!! Check your "
+             "runtime_environment.conf file\n",
+             key.data());
+      abort();
+    }
+    return mapRuntime[key];
+  }
+
+  void ArgumentParser::print_args() {
+    std::cout
+        << "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+           "~~~~~~~"
+        << std::endl;
+    std::cout << "* Summary:" << std::endl;
+    std::cout << "*    Parameter read from command line:                "
+              << from_commandline.size() << std::endl;
+    size_t nFiles = 0;
+    size_t nFileParameter = 0;
+    for (FileMap::const_iterator it = from_files.begin();
+         it != from_files.end(); ++it) {
+      if (it->second->size() > 0) {
+        ++nFiles;
+        nFileParameter += it->second->size();
       }
     }
-  }
+    std::cout << "*    Parameter read from " << std::setw(3) << std::right
+              << nFiles << " file(s):                 " << nFileParameter
+              << std::endl;
+    std::cout << "*    Parameter read from defaults in code:            "
+              << from_code.size() << std::endl;
+    std::cout << "*    Total number of parameter read from all sources: "
+              << mapArguments.size() << std::endl;
+    std::cout
+        << "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+           "~~~~~~~"
+        << std::endl;
 
-  // defaults defined in code
-  if (!from_code.empty()) {
-    std::cout << "* Defaults in Code:" << std::endl;
-    std::cout << "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
-                 "~~~~~~~~~"
-              << std::endl;
-    for (pArgMap::iterator it = from_code.begin(); it != from_code.end();
-         it++) {
-      std::cout.width(50);
-      std::cout.fill('.');
-      std::cout << std::left << it->first;
-      std::cout << ": " << it->second->asString() << std::endl;
+    // command line given arguments
+    if (!from_commandline.empty()) {
+      std::cout << "* Command Line:" << std::endl;
+      std::cout
+          << "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+             "~~~~~~~~~"
+          << std::endl;
+      for (ArgMap::iterator it = from_commandline.begin();
+           it != from_commandline.end(); it++) {
+        std::cout.width(50);
+        std::cout.fill('.');
+        std::cout << std::left << it->first;
+        std::cout << ": " << it->second.asString() << std::endl;
+      }
+      std::cout
+          << "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+             "~~~~~~~~~"
+          << std::endl;
     }
-    std::cout << "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
-                 "~~~~~~~~~"
+
+    // options read from input files
+    if (!from_files.empty()) {
+      for (FileMap::iterator itFile = from_files.begin();
+           itFile != from_files.end(); itFile++) {
+        if (!itFile->second->empty()) {
+          std::cout << "* File: " << itFile->first << std::endl;
+          std::cout
+              << "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+                 "~~~~~~~~~~~~~"
               << std::endl;
+          ArgMap &fileArgs = *(itFile->second);
+          for (ArgMap::iterator it = fileArgs.begin(); it != fileArgs.end();
+               it++) {
+            std::cout.width(50);
+            std::cout.fill('.');
+            std::cout << std::left << it->first;
+            std::cout << ": " << it->second.asString() << std::endl;
+          }
+          std::cout
+              << "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+                 "~~~~~~~~~~~~~"
+              << std::endl;
+        }
+      }
+    }
+
+    // defaults defined in code
+    if (!from_code.empty()) {
+      std::cout << "* Defaults in Code:" << std::endl;
+      std::cout
+          << "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+             "~~~~~~~~~"
+          << std::endl;
+      for (pArgMap::iterator it = from_code.begin(); it != from_code.end();
+           it++) {
+        std::cout.width(50);
+        std::cout.fill('.');
+        std::cout << std::left << it->first;
+        std::cout << ": " << it->second->asString() << std::endl;
+      }
+      std::cout
+          << "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+             "~~~~~~~~~"
+          << std::endl;
+    }
   }
-}
 
 } // namespace cubism
-
 
 namespace cubismup3d {
 
@@ -1541,7 +1549,7 @@ CarlingFish::CarlingFish(SimulationData &s, ArgumentParser &p) : Fish(s, p) {
 
 CubismUP_3D_NAMESPACE_END
 
-CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
+    CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
 
 namespace {
 
@@ -1700,7 +1708,7 @@ void ComputeDissipation::operator()(const Real dt) {
 
 CubismUP_3D_NAMESPACE_END
 
-CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
+    CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
 
 namespace DCylinderObstacle {
 struct FillBlocks : FillBlocksBase<FillBlocks> {
@@ -1849,8 +1857,7 @@ void Cylinder::finalize() {
 
 CubismUP_3D_NAMESPACE_END
 
-
-CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
+    CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
 
 CylinderNozzle::CylinderNozzle(SimulationData &s, ArgumentParser &p)
     : Cylinder(s, p), Nactuators(p("-Nactuators").asInt(2)),
@@ -2044,337 +2051,337 @@ std::vector<Real> CylinderNozzle::state(const int agentID) {
 
 CubismUP_3D_NAMESPACE_END
 
+    /*
+    Optimization comments:
+      - The innermost loop has to be very simple in order for the compiler to
+        optimize it. Temporary accumulators and storage arrays have to be used
+    to enable vectorization.
 
-/*
-Optimization comments:
-  - The innermost loop has to be very simple in order for the compiler to
-    optimize it. Temporary accumulators and storage arrays have to be used to
-    enable vectorization.
+      - In order to vectorize the stencil, the shifted west and east pointers to
+    p have to be provided separately, without the compiler knowing that they are
+        related to the same buffer.
 
-  - In order to vectorize the stencil, the shifted west and east pointers to p
-    have to be provided separately, without the compiler knowing that they are
-    related to the same buffer.
+      - The same would be true for south, north, back and front shifts, but we
+    pad the p block not with +/-1 padding but with +/-4, and put a proper offset
+        (depending on sizeof(Real)) to have everything nicely aligned with
+    respect to the 32B boundary. This was tested only on AVX-256, but should
+    work for AVX-512 as well.
 
-  - The same would be true for south, north, back and front shifts, but we pad
-    the p block not with +/-1 padding but with +/-4, and put a proper offset
-    (depending on sizeof(Real)) to have everything nicely aligned with respect
-    to the 32B boundary. This was tested only on AVX-256, but should work for
-    AVX-512 as well.
+      - For correctness, the p pointers must not have __restrict__, since p,
+        pW and pE do overlap. (Not important here though, since we removed the
+        convergence for loop, see below). All other arrays do have __restrict__,
+    so this does not affect vectorization anyway.
 
-  - For correctness, the p pointers must not have __restrict__, since p,
-    pW and pE do overlap. (Not important here though, since we removed the
-    convergence for loop, see below). All other arrays do have __restrict__, so
-    this does not affect vectorization anyway.
+      - The outer for loop that repeats the kernel until convergence breaks the
+        vectorization of the stencil in gcc, hence it was removed from this
+    file.
 
-  - The outer for loop that repeats the kernel until convergence breaks the
-    vectorization of the stencil in gcc, hence it was removed from this file.
+      - Putting this loop into another function does not help, since the
+    compiler merges the two functions and breaks the vectorization. This can be
+    fixed by adding `static __attribute__((noinline))` to the kernel function,
+    but it is a bit risky, and doesn't seem to improve the generated code. The
+    cost of the bare function call here is about 3ns.
 
-  - Putting this loop into another function does not help, since the compiler
-    merges the two functions and breaks the vectorization. This can be fixed by
-    adding `static __attribute__((noinline))` to the kernel function, but it is
-    a bit risky, and doesn't seem to improve the generated code. The cost of
-    the bare function call here is about 3ns.
-
-  - Not tested here, but unaligned access can be up to 2x slower than aligned,
-    so it is important to ensure alignment.
-    https://www.agner.org/optimize/blog/read.php?i=423
-
-
-Compilation hints:
-  - If gcc is used, the Ax--p stencil won't be vectorized unless version 11 or
-    later is used.
-
-  - -ffast-math might affect ILP and reductions. Not verified.
-
-  - Changing the order of operations may cause the compiler to produce
-    different operation order and hence cause the number of convergence
-    iterations to change.
-
-  - To show the assembly, use e.g.
-      objdump -dS -Mintel --no-show-raw-insn DiffusionSolverAMRKernels.cpp.o >
-DiffusionSolverAMRKErnels.cpp.lst
-
-  - With gcc 11, it might be necessary to use "-g -gdwarf-4" instead of "-g"
-    for objdump to work. For more information look here:
-    https://gcc.gnu.org/gcc-11/changes.html
+      - Not tested here, but unaligned access can be up to 2x slower than
+    aligned, so it is important to ensure alignment.
+        https://www.agner.org/optimize/blog/read.php?i=423
 
 
-Benchmarks info for Broadwell CPU with AVX2 (256-bit):
-  - Computational limit is 2x 256-bit SIMD FMAs per cycle == 16 FLOPs/cycle.
+    Compilation hints:
+      - If gcc is used, the Ax--p stencil won't be vectorized unless version 11
+    or later is used.
 
-  - Memory limit for L1 cache is 2x256-bit reads and 1x256-bit write per cycle.
-    See "Haswell and Broadwell pipeline", section "Read and write bandwidth":
-    https://www.agner.org/optimize/microarchitecture.pdf
+      - -ffast-math might affect ILP and reductions. Not verified.
 
-    These amount to 64B reads and 32B writes per cycle, however we get about
-    80% of that, consistent with benchmarks here:
-    https://www.agner.org/optimize/blog/read.php?i=423
+      - Changing the order of operations may cause the compiler to produce
+        different operation order and hence cause the number of convergence
+        iterations to change.
 
-  - The kernels below are memory bound.
-*/
+      - To show the assembly, use e.g.
+          objdump -dS -Mintel --no-show-raw-insn DiffusionSolverAMRKernels.cpp.o
+    > DiffusionSolverAMRKErnels.cpp.lst
 
-namespace cubismup3d {
-namespace diffusion_kernels {
+      - With gcc 11, it might be necessary to use "-g -gdwarf-4" instead of "-g"
+        for objdump to work. For more information look here:
+        https://gcc.gnu.org/gcc-11/changes.html
 
-// Note: kDivEpsilon is too small for single precision!
-static constexpr Real kDivEpsilon = 1e-55;
-static constexpr Real kNormRelCriterion = 1e-7;
-static constexpr Real kNormAbsCriterion = 1e-16;
-static constexpr Real kSqrNormRelCriterion =
-    kNormRelCriterion * kNormRelCriterion;
-static constexpr Real kSqrNormAbsCriterion =
-    kNormAbsCriterion * kNormAbsCriterion;
 
-/*
-// Reference non-vectorized implementation of the kernel.
-Real kernelDiffusionGetZInnerReference(
-    PaddedBlock & __restrict__ p,
-    Block & __restrict__ Ax,
-    Block & __restrict__ r,
-    Block & __restrict__ block,
-    const Real sqrNorm0,
-    const Real rr)
-{
-  Real a2 = 0;
-  for (int iz = 0; iz < NZ; ++iz)
-  for (int iy = 0; iy < NY; ++iy)
-  for (int ix = 0; ix < NX; ++ix) {
-    Ax[iz][iy][ix] = p[iz + 1][iy + 1][ix + xPad - 1]
-                   + p[iz + 1][iy + 1][ix + xPad + 1]
-                   + p[iz + 1][iy + 0][ix + xPad]
-                   + p[iz + 1][iy + 2][ix + xPad]
-                   + p[iz + 0][iy + 1][ix + xPad]
-                   + p[iz + 2][iy + 1][ix + xPad]
-                   - 6 * p[iz + 1][iy + 1][ix + xPad];
-    a2 += p[iz + 1][iy + 1][ix + xPad] * Ax[iz][iy][ix];
-  }
+    Benchmarks info for Broadwell CPU with AVX2 (256-bit):
+      - Computational limit is 2x 256-bit SIMD FMAs per cycle == 16 FLOPs/cycle.
 
-  const Real a = rr / (a2 + kDivEpsilon);
-  Real sqrNorm = 0;
-  for (int iz = 0; iz < NZ; ++iz)
-  for (int iy = 0; iy < NY; ++iy)
-  for (int ix = 0; ix < NX; ++ix) {
-    block[iz][iy][ix] += a * p[iz + 1][iy + 1][ix + xPad];
-    r[iz][iy][ix] -= a * Ax[iz][iy][ix];
-    sqrNorm += r[iz][iy][ix] * r[iz][iy][ix];
-  }
+      - Memory limit for L1 cache is 2x256-bit reads and 1x256-bit write per
+    cycle. See "Haswell and Broadwell pipeline", section "Read and write
+    bandwidth": https://www.agner.org/optimize/microarchitecture.pdf
 
-  const Real beta = sqrNorm / (rr + kDivEpsilon);
-  const Real rrNew = sqrNorm;
-  const Real norm = std::sqrt(sqrNorm) / N;
+        These amount to 64B reads and 32B writes per cycle, however we get about
+        80% of that, consistent with benchmarks here:
+        https://www.agner.org/optimize/blog/read.php?i=423
 
-  if (norm / std::sqrt(sqrNorm0) < kNormRelCriterion || norm <
-kNormAbsCriterion) return 0;
+      - The kernels below are memory bound.
+    */
 
-  for (int iz = 0; iz < NZ; ++iz)
-  for (int iy = 0; iy < NY; ++iy)
-  for (int ix = 0; ix < NX; ++ix) {
-    p[iz + 1][iy + 1][ix + xPad] =
-        r[iz][iy][ix] + beta * p[iz + 1][iy + 1][ix + xPad];
-  }
+    namespace cubismup3d {
+  namespace diffusion_kernels {
 
-  return rrNew;
-}
-*/
+  // Note: kDivEpsilon is too small for single precision!
+  static constexpr Real kDivEpsilon = 1e-55;
+  static constexpr Real kNormRelCriterion = 1e-7;
+  static constexpr Real kNormAbsCriterion = 1e-16;
+  static constexpr Real kSqrNormRelCriterion =
+      kNormRelCriterion * kNormRelCriterion;
+  static constexpr Real kSqrNormAbsCriterion =
+      kNormAbsCriterion * kNormAbsCriterion;
 
-/// Update `r -= a * Ax` and return `sum(r^2)`.
-static inline Real subAndSumSqr(Block &__restrict__ r_,
-                                const Block &__restrict__ Ax_, Real a) {
-  // The block structure is not important here, we can treat it as a contiguous
-  // array. However, we group into groups of length 16, to help with ILP and
-  // vectorization.
-  constexpr int MX = 16;
-  constexpr int MY = NX * NY * NZ / MX;
-  using SquashedBlock = Real[MY][MX];
-  static_assert(NX * NY % MX == 0 && sizeof(Block) == sizeof(SquashedBlock));
-  SquashedBlock &__restrict__ r = (SquashedBlock &)r_;
-  SquashedBlock &__restrict__ Ax = (SquashedBlock &)Ax_;
-
-  // This kernel reaches neither the compute nor the memory bound.
-  // The problem could be high latency of FMA instructions.
-  Real s[MX] = {};
-  for (int jy = 0; jy < MY; ++jy) {
-    for (int jx = 0; jx < MX; ++jx)
-      r[jy][jx] -= a * Ax[jy][jx];
-    for (int jx = 0; jx < MX; ++jx)
-      s[jx] += r[jy][jx] * r[jy][jx];
-  }
-  return sum(s);
-}
-
-template <typename T>
-static inline T *assumeAligned(T *ptr, unsigned align, unsigned offset = 0) {
-  if (sizeof(Real) == 8 || sizeof(Real) == 4) {
-    // if ((uintptr_t)ptr % align != offset)
-    //   throw std::runtime_error("wrong alignment");
-    assert((uintptr_t)ptr % align == offset);
-
-    // Works with gcc, clang and icc.
-    return (T *)__builtin_assume_aligned(ptr, align, offset);
-  } else {
-    return ptr; // No alignment assumptions for long double.
-  }
-}
-
-Real kernelDiffusionGetZInner(PaddedBlock &p_, const Real *pW_, const Real *pE_,
-                              Block &__restrict__ Ax_, Block &__restrict__ r_,
-                              Block &__restrict__ block_, const Real sqrNorm0,
-                              const Real rr, const Real coefficient) {
-  PaddedBlock &p = *assumeAligned(&p_, 64, 64 - xPad * sizeof(Real));
-  const PaddedBlock &pW =
-      *(PaddedBlock *)pW_; // Aligned to 64B + 24 (for doubles).
-  const PaddedBlock &pE =
-      *(PaddedBlock *)pE_; // Aligned to 64B + 40 (for doubles).
-  Block &__restrict__ Ax = *assumeAligned(&Ax_, 64);
-  Block &__restrict__ r = *assumeAligned(&r_, 64);
-  Block &__restrict__ block = *assumeAligned(&block_, kBlockAlignment);
-
-  // Broadwell: 6.0-6.6 FLOP/cycle, depending probably on array alignments.
-  Real a2Partial[NX] = {};
-  for (int iz = 0; iz < NZ; ++iz)
-    for (int iy = 0; iy < NY; ++iy) {
-      // On Broadwell and earlier it might be beneficial to turn some of these
-      // a+b additions into FMAs of form 1*a+b, because those CPUs can do 2
-      // FMAs/cycle and only 1 ADD/cycle. However, it wouldn't be simple to
-      // convience the compiler to do so, and it wouldn't matter from Skylake
-      // on. https://www.agner.org/optimize/blog/read.php?i=415
-
-      Real tmpAx[NX];
-      for (int ix = 0; ix < NX; ++ix) {
-        tmpAx[ix] = pW[iz + 1][iy + 1][ix + xPad] +
-                    pE[iz + 1][iy + 1][ix + xPad] +
-                    coefficient * p[iz + 1][iy + 1][ix + xPad];
-      }
-
-      // This kernel is memory bound. The compiler should figure out that some
-      // loads can be reused between consecutive iy.
-
-      // Merging the following two loops (i.e. to ensure symmetry preservation
-      // when there is no -ffast-math) kills vectorization in gcc 11.
-      for (int ix = 0; ix < NX; ++ix)
-        tmpAx[ix] += p[iz + 1][iy][ix + xPad];
-      for (int ix = 0; ix < NX; ++ix)
-        tmpAx[ix] += p[iz + 1][iy + 2][ix + xPad];
-
-      for (int ix = 0; ix < NX; ++ix)
-        tmpAx[ix] += p[iz][iy + 1][ix + xPad];
-      for (int ix = 0; ix < NX; ++ix)
-        tmpAx[ix] += p[iz + 2][iy + 1][ix + xPad];
-
-      for (int ix = 0; ix < NX; ++ix)
-        Ax[iz][iy][ix] = tmpAx[ix];
-
-      for (int ix = 0; ix < NX; ++ix)
-        a2Partial[ix] += p[iz + 1][iy + 1][ix + xPad] * tmpAx[ix];
+  /*
+  // Reference non-vectorized implementation of the kernel.
+  Real kernelDiffusionGetZInnerReference(
+      PaddedBlock & __restrict__ p,
+      Block & __restrict__ Ax,
+      Block & __restrict__ r,
+      Block & __restrict__ block,
+      const Real sqrNorm0,
+      const Real rr)
+  {
+    Real a2 = 0;
+    for (int iz = 0; iz < NZ; ++iz)
+    for (int iy = 0; iy < NY; ++iy)
+    for (int ix = 0; ix < NX; ++ix) {
+      Ax[iz][iy][ix] = p[iz + 1][iy + 1][ix + xPad - 1]
+                     + p[iz + 1][iy + 1][ix + xPad + 1]
+                     + p[iz + 1][iy + 0][ix + xPad]
+                     + p[iz + 1][iy + 2][ix + xPad]
+                     + p[iz + 0][iy + 1][ix + xPad]
+                     + p[iz + 2][iy + 1][ix + xPad]
+                     - 6 * p[iz + 1][iy + 1][ix + xPad];
+      a2 += p[iz + 1][iy + 1][ix + xPad] * Ax[iz][iy][ix];
     }
-  const Real a2 = sum(a2Partial);
-  const Real a = rr / (a2 + kDivEpsilon);
 
-  // Interleaving this kernel with the next one seems to improve the
-  // maximum performance by 5-10% (after fine-tuning MX in the subAndSumSqr
-  // part), but it increases the variance a lot so it is not clear whether it
-  // is faster on average. For now, keeping it separate.
-  for (int iz = 0; iz < NZ; ++iz)
+    const Real a = rr / (a2 + kDivEpsilon);
+    Real sqrNorm = 0;
+    for (int iz = 0; iz < NZ; ++iz)
     for (int iy = 0; iy < NY; ++iy)
-      for (int ix = 0; ix < NX; ++ix)
-        block[iz][iy][ix] += a * p[iz + 1][iy + 1][ix + xPad];
+    for (int ix = 0; ix < NX; ++ix) {
+      block[iz][iy][ix] += a * p[iz + 1][iy + 1][ix + xPad];
+      r[iz][iy][ix] -= a * Ax[iz][iy][ix];
+      sqrNorm += r[iz][iy][ix] * r[iz][iy][ix];
+    }
 
-  // Kernel: 2 reads + 1 write + 4 FLOPs/cycle -> should be memory bound.
-  // Broadwell: 9.2 FLOP/cycle, 37+18.5 B/cycle -> latency bound?
-  // r -= a * Ax, sqrSum = sum(r^2)
-  const Real sqrSum = subAndSumSqr(r, Ax, a);
+    const Real beta = sqrNorm / (rr + kDivEpsilon);
+    const Real rrNew = sqrNorm;
+    const Real norm = std::sqrt(sqrNorm) / N;
 
-  const Real beta = sqrSum / (rr + kDivEpsilon);
-  const Real sqrNorm = (Real)1 / (N * N) * sqrSum;
+    if (norm / std::sqrt(sqrNorm0) < kNormRelCriterion || norm <
+  kNormAbsCriterion) return 0;
 
-  if (sqrNorm < kSqrNormRelCriterion * sqrNorm0 ||
-      sqrNorm < kSqrNormAbsCriterion)
-    return -1.0;
-
-  // Kernel: 2 reads + 1 write + 2 FLOPs per cell -> limit is L1 cache.
-  // Broadwell: 6.5 FLOP/cycle, 52+26 B/cycle
-  for (int iz = 0; iz < NZ; ++iz)
+    for (int iz = 0; iz < NZ; ++iz)
     for (int iy = 0; iy < NY; ++iy)
-      for (int ix = 0; ix < NX; ++ix) {
-        p[iz + 1][iy + 1][ix + xPad] =
-            r[iz][iy][ix] + beta * p[iz + 1][iy + 1][ix + xPad];
+    for (int ix = 0; ix < NX; ++ix) {
+      p[iz + 1][iy + 1][ix + xPad] =
+          r[iz][iy][ix] + beta * p[iz + 1][iy + 1][ix + xPad];
+    }
+
+    return rrNew;
+  }
+  */
+
+  /// Update `r -= a * Ax` and return `sum(r^2)`.
+  static inline Real subAndSumSqr(Block &__restrict__ r_,
+                                  const Block &__restrict__ Ax_, Real a) {
+    // The block structure is not important here, we can treat it as a
+    // contiguous array. However, we group into groups of length 16, to help
+    // with ILP and vectorization.
+    constexpr int MX = 16;
+    constexpr int MY = NX * NY * NZ / MX;
+    using SquashedBlock = Real[MY][MX];
+    static_assert(NX * NY % MX == 0 && sizeof(Block) == sizeof(SquashedBlock));
+    SquashedBlock &__restrict__ r = (SquashedBlock &)r_;
+    SquashedBlock &__restrict__ Ax = (SquashedBlock &)Ax_;
+
+    // This kernel reaches neither the compute nor the memory bound.
+    // The problem could be high latency of FMA instructions.
+    Real s[MX] = {};
+    for (int jy = 0; jy < MY; ++jy) {
+      for (int jx = 0; jx < MX; ++jx)
+        r[jy][jx] -= a * Ax[jy][jx];
+      for (int jx = 0; jx < MX; ++jx)
+        s[jx] += r[jy][jx] * r[jy][jx];
+    }
+    return sum(s);
+  }
+
+  template <typename T>
+  static inline T *assumeAligned(T *ptr, unsigned align, unsigned offset = 0) {
+    if (sizeof(Real) == 8 || sizeof(Real) == 4) {
+      // if ((uintptr_t)ptr % align != offset)
+      //   throw std::runtime_error("wrong alignment");
+      assert((uintptr_t)ptr % align == offset);
+
+      // Works with gcc, clang and icc.
+      return (T *)__builtin_assume_aligned(ptr, align, offset);
+    } else {
+      return ptr; // No alignment assumptions for long double.
+    }
+  }
+
+  Real kernelDiffusionGetZInner(PaddedBlock &p_, const Real *pW_,
+                                const Real *pE_, Block &__restrict__ Ax_,
+                                Block &__restrict__ r_,
+                                Block &__restrict__ block_, const Real sqrNorm0,
+                                const Real rr, const Real coefficient) {
+    PaddedBlock &p = *assumeAligned(&p_, 64, 64 - xPad * sizeof(Real));
+    const PaddedBlock &pW =
+        *(PaddedBlock *)pW_; // Aligned to 64B + 24 (for doubles).
+    const PaddedBlock &pE =
+        *(PaddedBlock *)pE_; // Aligned to 64B + 40 (for doubles).
+    Block &__restrict__ Ax = *assumeAligned(&Ax_, 64);
+    Block &__restrict__ r = *assumeAligned(&r_, 64);
+    Block &__restrict__ block = *assumeAligned(&block_, kBlockAlignment);
+
+    // Broadwell: 6.0-6.6 FLOP/cycle, depending probably on array alignments.
+    Real a2Partial[NX] = {};
+    for (int iz = 0; iz < NZ; ++iz)
+      for (int iy = 0; iy < NY; ++iy) {
+        // On Broadwell and earlier it might be beneficial to turn some of these
+        // a+b additions into FMAs of form 1*a+b, because those CPUs can do 2
+        // FMAs/cycle and only 1 ADD/cycle. However, it wouldn't be simple to
+        // convience the compiler to do so, and it wouldn't matter from Skylake
+        // on. https://www.agner.org/optimize/blog/read.php?i=415
+
+        Real tmpAx[NX];
+        for (int ix = 0; ix < NX; ++ix) {
+          tmpAx[ix] = pW[iz + 1][iy + 1][ix + xPad] +
+                      pE[iz + 1][iy + 1][ix + xPad] +
+                      coefficient * p[iz + 1][iy + 1][ix + xPad];
+        }
+
+        // This kernel is memory bound. The compiler should figure out that some
+        // loads can be reused between consecutive iy.
+
+        // Merging the following two loops (i.e. to ensure symmetry preservation
+        // when there is no -ffast-math) kills vectorization in gcc 11.
+        for (int ix = 0; ix < NX; ++ix)
+          tmpAx[ix] += p[iz + 1][iy][ix + xPad];
+        for (int ix = 0; ix < NX; ++ix)
+          tmpAx[ix] += p[iz + 1][iy + 2][ix + xPad];
+
+        for (int ix = 0; ix < NX; ++ix)
+          tmpAx[ix] += p[iz][iy + 1][ix + xPad];
+        for (int ix = 0; ix < NX; ++ix)
+          tmpAx[ix] += p[iz + 2][iy + 1][ix + xPad];
+
+        for (int ix = 0; ix < NX; ++ix)
+          Ax[iz][iy][ix] = tmpAx[ix];
+
+        for (int ix = 0; ix < NX; ++ix)
+          a2Partial[ix] += p[iz + 1][iy + 1][ix + xPad] * tmpAx[ix];
       }
+    const Real a2 = sum(a2Partial);
+    const Real a = rr / (a2 + kDivEpsilon);
 
-  const Real rrNew = sqrSum;
-  return rrNew;
-}
+    // Interleaving this kernel with the next one seems to improve the
+    // maximum performance by 5-10% (after fine-tuning MX in the subAndSumSqr
+    // part), but it increases the variance a lot so it is not clear whether it
+    // is faster on average. For now, keeping it separate.
+    for (int iz = 0; iz < NZ; ++iz)
+      for (int iy = 0; iy < NY; ++iy)
+        for (int ix = 0; ix < NX; ++ix)
+          block[iz][iy][ix] += a * p[iz + 1][iy + 1][ix + xPad];
 
-void getZImplParallel(const std::vector<cubism::BlockInfo> &vInfo,
-                      const Real nu, const Real dt) {
-  const size_t Nblocks = vInfo.size();
+    // Kernel: 2 reads + 1 write + 4 FLOPs/cycle -> should be memory bound.
+    // Broadwell: 9.2 FLOP/cycle, 37+18.5 B/cycle -> latency bound?
+    // r -= a * Ax, sqrSum = sum(r^2)
+    const Real sqrSum = subAndSumSqr(r, Ax, a);
 
-  // We could enable this, we don't really care about denormals.
-  // _MM_SET_DENORMALS_ZERO_MODE(_MM_DENORMALS_ZERO_ON);
+    const Real beta = sqrSum / (rr + kDivEpsilon);
+    const Real sqrNorm = (Real)1 / (N * N) * sqrSum;
 
-  // A struct to enforce relative alignment between matrices. The relative
-  // alignment of Ax and r MUST NOT be a multiple of 4KB due to cache bank
-  // conflicts. See "Haswell and Broadwell pipeline", section
-  // "Cache and memory access" here:
-  // https://www.agner.org/optimize/microarchitecture.pdf
-  struct Tmp {
-    // It seems like some offsets with respect to the page boundary of 4KB are
-    // faster than the others. (This is accomplished by adding an offset here
-    // and using alignas(4096) below). However, this is likely CPU-dependent,
-    // so we don't hardcode such fine-tunings here.
-    // char offset[0xec0];
-    Block r;
-    // Ensure p[0+1][0+1][0+xPad] is 64B-aligned for AVX-512 to work.
-    char padding1[64 - xPad * sizeof(Real)];
-    PaddedBlock p;
-    char padding2[xPad * sizeof(Real)];
-    Block Ax;
-  };
-  alignas(64) Tmp tmp{}; // See the kernels cpp file for required alignments.
-  Block &r = tmp.r;
-  Block &Ax = tmp.Ax;
-  PaddedBlock &p = tmp.p;
+    if (sqrNorm < kSqrNormRelCriterion * sqrNorm0 ||
+        sqrNorm < kSqrNormAbsCriterion)
+      return -1.0;
 
-#pragma omp for
-  for (size_t i = 0; i < Nblocks; ++i) {
-    static_assert(sizeof(ScalarBlock) == sizeof(Block));
-    assert((uintptr_t)vInfo[i].ptrBlock % kBlockAlignment == 0);
-    Block &block =
-        *(Block *)__builtin_assume_aligned(vInfo[i].ptrBlock, kBlockAlignment);
-
-    const Real invh = 1 / vInfo[i].h;
-    Real rrPartial[NX] = {};
+    // Kernel: 2 reads + 1 write + 2 FLOPs per cell -> limit is L1 cache.
+    // Broadwell: 6.5 FLOP/cycle, 52+26 B/cycle
     for (int iz = 0; iz < NZ; ++iz)
       for (int iy = 0; iy < NY; ++iy)
         for (int ix = 0; ix < NX; ++ix) {
-          r[iz][iy][ix] = invh * block[iz][iy][ix];
-          rrPartial[ix] += r[iz][iy][ix] * r[iz][iy][ix];
-          p[iz + 1][iy + 1][ix + xPad] = r[iz][iy][ix];
-          block[iz][iy][ix] = 0;
+          p[iz + 1][iy + 1][ix + xPad] =
+              r[iz][iy][ix] + beta * p[iz + 1][iy + 1][ix + xPad];
         }
-    Real rr = sum(rrPartial);
 
-    const Real sqrNorm0 = (Real)1 / (N * N) * rr;
+    const Real rrNew = sqrSum;
+    return rrNew;
+  }
 
-    if (sqrNorm0 < 1e-32)
-      continue;
+  void getZImplParallel(const std::vector<cubism::BlockInfo> &vInfo,
+                        const Real nu, const Real dt) {
+    const size_t Nblocks = vInfo.size();
 
-    const Real *pW = &p[0][0][0] - 1;
-    const Real *pE = &p[0][0][0] + 1;
+    // We could enable this, we don't really care about denormals.
+    // _MM_SET_DENORMALS_ZERO_MODE(_MM_DENORMALS_ZERO_ON);
 
-    const Real coefficient = -6.0 - vInfo[i].h * vInfo[i].h / nu / dt;
-    for (int k = 0; k < 100; ++k) {
-      // rr = kernelDiffusionGetZInnerReference(p,Ax, r, block, sqrNorm0, rr);
-      rr = kernelDiffusionGetZInner(p, pW, pE, Ax, r, block, sqrNorm0, rr,
-                                    coefficient);
-      if (rr <= 0)
-        break;
+    // A struct to enforce relative alignment between matrices. The relative
+    // alignment of Ax and r MUST NOT be a multiple of 4KB due to cache bank
+    // conflicts. See "Haswell and Broadwell pipeline", section
+    // "Cache and memory access" here:
+    // https://www.agner.org/optimize/microarchitecture.pdf
+    struct Tmp {
+      // It seems like some offsets with respect to the page boundary of 4KB are
+      // faster than the others. (This is accomplished by adding an offset here
+      // and using alignas(4096) below). However, this is likely CPU-dependent,
+      // so we don't hardcode such fine-tunings here.
+      // char offset[0xec0];
+      Block r;
+      // Ensure p[0+1][0+1][0+xPad] is 64B-aligned for AVX-512 to work.
+      char padding1[64 - xPad * sizeof(Real)];
+      PaddedBlock p;
+      char padding2[xPad * sizeof(Real)];
+      Block Ax;
+    };
+    alignas(64) Tmp tmp{}; // See the kernels cpp file for required alignments.
+    Block &r = tmp.r;
+    Block &Ax = tmp.Ax;
+    PaddedBlock &p = tmp.p;
+
+#pragma omp for
+    for (size_t i = 0; i < Nblocks; ++i) {
+      static_assert(sizeof(ScalarBlock) == sizeof(Block));
+      assert((uintptr_t)vInfo[i].ptrBlock % kBlockAlignment == 0);
+      Block &block = *(Block *)__builtin_assume_aligned(vInfo[i].ptrBlock,
+                                                        kBlockAlignment);
+
+      const Real invh = 1 / vInfo[i].h;
+      Real rrPartial[NX] = {};
+      for (int iz = 0; iz < NZ; ++iz)
+        for (int iy = 0; iy < NY; ++iy)
+          for (int ix = 0; ix < NX; ++ix) {
+            r[iz][iy][ix] = invh * block[iz][iy][ix];
+            rrPartial[ix] += r[iz][iy][ix] * r[iz][iy][ix];
+            p[iz + 1][iy + 1][ix + xPad] = r[iz][iy][ix];
+            block[iz][iy][ix] = 0;
+          }
+      Real rr = sum(rrPartial);
+
+      const Real sqrNorm0 = (Real)1 / (N * N) * rr;
+
+      if (sqrNorm0 < 1e-32)
+        continue;
+
+      const Real *pW = &p[0][0][0] - 1;
+      const Real *pE = &p[0][0][0] + 1;
+
+      const Real coefficient = -6.0 - vInfo[i].h * vInfo[i].h / nu / dt;
+      for (int k = 0; k < 100; ++k) {
+        // rr = kernelDiffusionGetZInnerReference(p,Ax, r, block, sqrNorm0, rr);
+        rr = kernelDiffusionGetZInner(p, pW, pE, Ax, r, block, sqrNorm0, rr,
+                                      coefficient);
+        if (rr <= 0)
+          break;
+      }
     }
   }
-}
 
-} // namespace diffusion_kernels
+  } // namespace diffusion_kernels
 } // namespace cubismup3d
-
 
 CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
 
@@ -2742,7 +2749,7 @@ void Ellipsoid::computeVelocities() {
 
 CubismUP_3D_NAMESPACE_END
 
-CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
+    CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
 
 void ExternalForcing::operator()(const double dt) {
   sim.startProfiler("Forcing Kernel");
@@ -2768,7 +2775,7 @@ CubismUP_3D_NAMESPACE_END
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wshadow"
 
-CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
+    CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
 
 namespace ExternalObstacleObstacle {
 
@@ -3265,8 +3272,7 @@ void ExternalObstacle::create() {
 
 CubismUP_3D_NAMESPACE_END
 
-
-CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
+    CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
 
 Fish::Fish(SimulationData &s, ArgumentParser &p) : Obstacle(s, p) {
   p.unset_strict_mode();
@@ -3774,7 +3780,7 @@ void Fish::loadRestart(FILE *f) {
 
 CubismUP_3D_NAMESPACE_END
 
-CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
+    CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
 
 using UDEFMAT = Real[CUP_BLOCK_SIZEZ][CUP_BLOCK_SIZEY][CUP_BLOCK_SIZEX][3];
 using CHIMAT = Real[CUP_BLOCK_SIZEZ][CUP_BLOCK_SIZEY][CUP_BLOCK_SIZEX];
@@ -4291,10 +4297,10 @@ void PutFishOnBlocks::constructSurface(
   // height(s)*sin(theta)*bin(s)
   // We loop over the discretized version of this equation and for each point of
   // the surface we find the grid point that is the closest. The SDF is computed
-  // for that grid point plus the grid points that are within a distance of 2h of
-  // that point. This is done because we need the SDF in a zone of +-2h of the
-  // actual surface, so that we can use the mollified Heaviside function from
-  // Towers for chi.
+  // for that grid point plus the grid points that are within a distance of 2h
+  // of that point. This is done because we need the SDF in a zone of +-2h of
+  // the actual surface, so that we can use the mollified Heaviside function
+  // from Towers for chi.
 
   // Pointers to discrete values that describe the surface.
   const Real *const rX = cfish->rX, *const norX = cfish->norX,
@@ -4510,12 +4516,12 @@ void PutFishOnBlocks::constructSurface(
 
               // Else, we model the span between two ellipses (cross-sections)
               // as a spherical segment. See also:
-              // http://mathworld.wolfram.com/SphericalSegment.html The spherical
-              // segment is defined by two circles. To define those cyrcles, we
-              // need their centers and a point on them. The points myP,pM,pP (we
-              // are using two of those three here) are the cyrcle points we
-              // need. The centers are found by taking the normal starting from
-              // myP/pM/pP to the line defined by the vector R1:
+              // http://mathworld.wolfram.com/SphericalSegment.html The
+              // spherical segment is defined by two circles. To define those
+              // cyrcles, we need their centers and a point on them. The points
+              // myP,pM,pP (we are using two of those three here) are the cyrcle
+              // points we need. The centers are found by taking the normal
+              // starting from myP/pM/pP to the line defined by the vector R1:
               const Real R1[3] = {rX[secnd_s] - rX[close_s],
                                   rY[secnd_s] - rY[close_s],
                                   rZ[secnd_s] - rZ[close_s]};
@@ -5002,8 +5008,7 @@ void PutNacaOnBlocks::constructInternl(
 
 CubismUP_3D_NAMESPACE_END
 
-
-CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
+    CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
 
 void MidlineShapes::integrateBSpline(const Real *const xc, const Real *const yc,
                                      const int n, const Real length,
@@ -5370,7 +5375,7 @@ void MidlineShapes::computeWidthsHeights(const std::string &heightName,
 
 CubismUP_3D_NAMESPACE_END
 
-CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
+    CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
 
 static Real avgUx_nonUniform(const std::vector<BlockInfo> &myInfo,
                              const Real *const uInf, const Real volume) {
@@ -5444,7 +5449,7 @@ void FixMassFlux::operator()(const double dt) {
 
 CubismUP_3D_NAMESPACE_END
 
-CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
+    CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
 
 namespace {
 
@@ -5754,7 +5759,7 @@ void ComputeForces::operator()(const Real dt) {
 
 CubismUP_3D_NAMESPACE_END
 
-class PoissonSolverBase;
+    class PoissonSolverBase;
 
 CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
 
@@ -6196,8 +6201,7 @@ void InitialConditions::operator()(const Real dt) {
 
 CubismUP_3D_NAMESPACE_END
 
-
-CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
+    CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
 
 class NacaMidlineData : public FishMidlineData {
   Real *const rK;
@@ -6395,8 +6399,7 @@ void Naca::update() {
 
 CubismUP_3D_NAMESPACE_END
 
-
-CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
+    CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
 
 using UDEFMAT = Real[CUP_BLOCK_SIZEZ][CUP_BLOCK_SIZEY][CUP_BLOCK_SIZEX][3];
 using CHIMAT = Real[CUP_BLOCK_SIZEZ][CUP_BLOCK_SIZEY][CUP_BLOCK_SIZEX];
@@ -7124,9 +7127,7 @@ void Obstacle::_writeDiagForcesToFile() {
 
 CubismUP_3D_NAMESPACE_END
 
-
-
-CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
+    CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
 using VectorType = ObstacleVector::VectorType;
 
 /*
@@ -7233,7 +7234,7 @@ void ObstacleFactory::addObstacles(const std::string &factoryContent) {
 
 CubismUP_3D_NAMESPACE_END
 
-CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
+    CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
 
 namespace {
 
@@ -7627,10 +7628,10 @@ void CreateObstacles::operator()(const Real dt) {
 
 CubismUP_3D_NAMESPACE_END
 
-// define this to update obstacles with old (mrag-like) approach of integrating
-// momenta contained in chi before the penalization step:
+    // define this to update obstacles with old (mrag-like) approach of
+    // integrating momenta contained in chi before the penalization step:
 
-CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
+    CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
 
 namespace {
 
@@ -7874,7 +7875,7 @@ void UpdateObstacles::operator()(const Real dt) {
 
 CubismUP_3D_NAMESPACE_END
 
-CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
+    CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
 
 namespace {
 
@@ -8480,8 +8481,7 @@ void Penalization::operator()(const Real dt) {
 
 CubismUP_3D_NAMESPACE_END
 
-
-CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
+    CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
 
 namespace PipeObstacle {
 struct FillBlocks : FillBlocksBase<FillBlocks> {
@@ -8579,8 +8579,7 @@ void Pipe::finalize() {
 
 CubismUP_3D_NAMESPACE_END
 
-
-CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
+    CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
 
 // static constexpr Real EPSILON = std::numeric_limits<Real>::epsilon();
 
@@ -8781,356 +8780,356 @@ void Plate::finalize() {
 }
 
 CubismUP_3D_NAMESPACE_END
-//
-//  CubismUP_3D
-//  Copyright (c) 2023 CSE-Lab, ETH Zurich, Switzerland.
-//  Distributed under the terms of the MIT license.
-//
-//  Created by Michalis Chatzimanolakis (michaich@ethz.ch).
-//
+    //
+    //  CubismUP_3D
+    //  Copyright (c) 2023 CSE-Lab, ETH Zurich, Switzerland.
+    //  Distributed under the terms of the MIT license.
+    //
+    //  Created by Michalis Chatzimanolakis (michaich@ethz.ch).
+    //
 
+    namespace cubismup3d {
 
-namespace cubismup3d {
+  void PoissonSolverAMR::solve() {
+    // Algorithm 11 from the paper:
+    //"The communication-hiding pipelined BiCGstab method for the parallel
+    // solution of large unsymmetric linear systems" by S. Cools, W. Vanroose
+    // This
+    // is a BiCGstab with less global communication (reductions) that are
+    // overlapped with computation.
 
-void PoissonSolverAMR::solve() {
-  // Algorithm 11 from the paper:
-  //"The communication-hiding pipelined BiCGstab method for the parallel
-  //solution of large unsymmetric linear systems" by S. Cools, W. Vanroose This
-  // is a BiCGstab with less global communication (reductions) that are
-  // overlapped with computation.
+    // Warning: 'input'  initially contains the RHS of the system!
+    // Warning: 'output' initially contains the initial solution guess x0!
+    const auto &AxInfo =
+        sim.lhsInfo(); // input ->getBlocksInfo(); //will store the LHS result
+    const auto &zInfo = sim.presInfo(); // output->getBlocksInfo(); //will store
+                                        // the input 'x' when LHS is computed
+    const size_t Nblocks = zInfo.size(); // total blocks of this rank
+    const int BSX = VectorBlock::sizeX;  // block size in x direction
+    const int BSY = VectorBlock::sizeY;  // block size in y direction
+    const int BSZ = VectorBlock::sizeZ;  // block size in z direction
+    const size_t N =
+        BSX * BSY * BSZ * Nblocks; // total number of variables of this rank
+    const Real eps = 1e-100; // used in denominators, to not divide by zero
+    const Real max_error =
+        sim.PoissonErrorTol; // error tolerance for Linf norm of residual
+    const Real max_rel_error =
+        sim.PoissonErrorTolRel; // relative error tolerance for Linf(r)/Linf(r0)
+    const int max_restarts = 100;
+    bool serious_breakdown =
+        false;            // shows if the solver will restart in this iteration
+    bool useXopt = false; //(is almost always true) use the solution that had
+                          // the smallest residual
+    int restarts = 0;     // count how many restarts have been made
+    Real min_norm =
+        1e50;          // residual norm (for best solution, see also 'useXopt')
+    Real norm_1 = 0.0; // used to decide if the solver will restart
+    Real norm_2 = 0.0; // used to decide if the solver will restart
+    const MPI_Comm m_comm = sim.comm;
+    const bool verbose = sim.rank == 0;
 
-  // Warning: 'input'  initially contains the RHS of the system!
-  // Warning: 'output' initially contains the initial solution guess x0!
-  const auto &AxInfo =
-      sim.lhsInfo(); // input ->getBlocksInfo(); //will store the LHS result
-  const auto &zInfo = sim.presInfo(); // output->getBlocksInfo(); //will store
-                                      // the input 'x' when LHS is computed
-  const size_t Nblocks = zInfo.size(); // total blocks of this rank
-  const int BSX = VectorBlock::sizeX;  // block size in x direction
-  const int BSY = VectorBlock::sizeY;  // block size in y direction
-  const int BSZ = VectorBlock::sizeZ;  // block size in z direction
-  const size_t N =
-      BSX * BSY * BSZ * Nblocks; // total number of variables of this rank
-  const Real eps = 1e-100;       // used in denominators, to not divide by zero
-  const Real max_error =
-      sim.PoissonErrorTol; // error tolerance for Linf norm of residual
-  const Real max_rel_error =
-      sim.PoissonErrorTolRel; // relative error tolerance for Linf(r)/Linf(r0)
-  const int max_restarts = 100;
-  bool serious_breakdown =
-      false;            // shows if the solver will restart in this iteration
-  bool useXopt = false; //(is almost always true) use the solution that had the
-                        //smallest residual
-  int restarts = 0;     // count how many restarts have been made
-  Real min_norm = 1e50; // residual norm (for best solution, see also 'useXopt')
-  Real norm_1 = 0.0;    // used to decide if the solver will restart
-  Real norm_2 = 0.0;    // used to decide if the solver will restart
-  const MPI_Comm m_comm = sim.comm;
-  const bool verbose = sim.rank == 0;
-
-  phat.resize(N);
-  rhat.resize(N);
-  shat.resize(N);
-  what.resize(N);
-  zhat.resize(N);
-  qhat.resize(N);
-  s.resize(N);
-  w.resize(N);
-  z.resize(N);
-  t.resize(N);
-  v.resize(N);
-  q.resize(N);
-  r.resize(N);
-  y.resize(N);
-  x.resize(N);
-  r0.resize(N);
-  b.resize(N);     // RHS of the system will be stored here
-  x_opt.resize(N); // solution with minimum residual
+    phat.resize(N);
+    rhat.resize(N);
+    shat.resize(N);
+    what.resize(N);
+    zhat.resize(N);
+    qhat.resize(N);
+    s.resize(N);
+    w.resize(N);
+    z.resize(N);
+    t.resize(N);
+    v.resize(N);
+    q.resize(N);
+    r.resize(N);
+    y.resize(N);
+    x.resize(N);
+    r0.resize(N);
+    b.resize(N);     // RHS of the system will be stored here
+    x_opt.resize(N); // solution with minimum residual
 
 // initialize b,r,x
 #pragma omp parallel for
-  for (size_t i = 0; i < Nblocks; i++) {
-    ScalarBlock &__restrict__ rhs = *(ScalarBlock *)AxInfo[i].ptrBlock;
-    const ScalarBlock &__restrict__ zz = *(ScalarBlock *)zInfo[i].ptrBlock;
+    for (size_t i = 0; i < Nblocks; i++) {
+      ScalarBlock &__restrict__ rhs = *(ScalarBlock *)AxInfo[i].ptrBlock;
+      const ScalarBlock &__restrict__ zz = *(ScalarBlock *)zInfo[i].ptrBlock;
 
-    if (sim.bMeanConstraint == 1 || sim.bMeanConstraint > 2)
-      if (AxInfo[i].index[0] == 0 && AxInfo[i].index[1] == 0 &&
-          AxInfo[i].index[2] == 0)
-        rhs(0, 0, 0).s = 0.0;
+      if (sim.bMeanConstraint == 1 || sim.bMeanConstraint > 2)
+        if (AxInfo[i].index[0] == 0 && AxInfo[i].index[1] == 0 &&
+            AxInfo[i].index[2] == 0)
+          rhs(0, 0, 0).s = 0.0;
 
-    for (int iz = 0; iz < BSZ; iz++)
-      for (int iy = 0; iy < BSY; iy++)
-        for (int ix = 0; ix < BSX; ix++) {
-          const int j = i * BSX * BSY * BSZ + iz * BSX * BSY + iy * BSX + ix;
-          b[j] = rhs(ix, iy, iz).s;
-          r[j] = rhs(ix, iy, iz).s;
-          x[j] = zz(ix, iy, iz).s;
-        }
-  }
-
-  // In what follows, we indicate by (*n*) the n-th step of the algorithm
-
-  //(*2*) r0 = b - A*x0, r0hat = M^{-1}*r0, w0=A*r0hat, w0hat=M^{-1}w0
-  _lhs(x, r0);
-#pragma omp parallel for
-  for (size_t i = 0; i < N; i++) {
-    r0[i] = r[i] - r0[i];
-    r[i] = r0[i];
-  }
-  _preconditioner(r0, rhat);
-  _lhs(rhat, w);
-  _preconditioner(w, what);
-
-  //(*3*) t0=A*w0hat, alpha0 = (r0,r0) / (r0,w0), beta=0
-  _lhs(what, t);
-  Real alpha = 0.0;
-  Real norm = 0.0;
-  Real beta = 0.0;
-  Real omega = 0.0;
-  Real r0r_prev;
-  {
-    Real temp0 = 0.0;
-    Real temp1 = 0.0;
-#pragma omp parallel for reduction(+ : temp0, temp1, norm)
-    for (size_t j = 0; j < N; j++) {
-      temp0 += r0[j] * r0[j];
-      temp1 += r0[j] * w[j];
-      norm += r0[j] * r0[j];
-    }
-    Real temporary[3] = {temp0, temp1, norm};
-    MPI_Allreduce(MPI_IN_PLACE, temporary, 3, MPI_Real, MPI_SUM, m_comm);
-    alpha = temporary[0] / (temporary[1] + eps);
-    r0r_prev = temporary[0];
-    norm = std::sqrt(temporary[2]);
-    if (verbose)
-      std::cout << "[Poisson solver]: initial error norm:" << norm << "\n";
-  }
-  const Real init_norm = norm;
-
-  //(*4*) for k=0,1,...
-  int k;
-  for (k = 0; k < 1000; k++) {
-    Real qy = 0.0;
-    Real yy = 0.0;
-
-    //(*5*),(*6*),...,(*11*)
-    if (k % 50 != 0) {
-#pragma omp parallel for reduction(+ : qy, yy)
-      for (size_t j = 0; j < N; j++) {
-        phat[j] = rhat[j] + beta * (phat[j] - omega * shat[j]);
-        s[j] = w[j] + beta * (s[j] - omega * z[j]);
-        shat[j] = what[j] + beta * (shat[j] - omega * zhat[j]);
-        z[j] = t[j] + beta * (z[j] - omega * v[j]);
-        q[j] = r[j] - alpha * s[j];
-        qhat[j] = rhat[j] - alpha * shat[j];
-        y[j] = w[j] - alpha * z[j];
-        qy += q[j] * y[j];
-        yy += y[j] * y[j];
-      }
-    } else {
-// every 50 iterations we use the residual replacement strategy, to prevent loss
-// of accuracy and compute stuff with the exact (not pipelined) versions
-#pragma omp parallel for
-      for (size_t j = 0; j < N; j++) {
-        phat[j] = rhat[j] + beta * (phat[j] - omega * shat[j]);
-      }
-      _lhs(phat, s);
-      _preconditioner(s, shat);
-      _lhs(shat, z);
-#pragma omp parallel for reduction(+ : qy, yy)
-      for (size_t j = 0; j < N; j++) {
-        q[j] = r[j] - alpha * s[j];
-        qhat[j] = rhat[j] - alpha * shat[j];
-        y[j] = w[j] - alpha * z[j];
-        qy += q[j] * y[j];
-        yy += y[j] * y[j];
-      }
+      for (int iz = 0; iz < BSZ; iz++)
+        for (int iy = 0; iy < BSY; iy++)
+          for (int ix = 0; ix < BSX; ix++) {
+            const int j = i * BSX * BSY * BSZ + iz * BSX * BSY + iy * BSX + ix;
+            b[j] = rhs(ix, iy, iz).s;
+            r[j] = rhs(ix, iy, iz).s;
+            x[j] = zz(ix, iy, iz).s;
+          }
     }
 
-    //(*12*) begin reduction (q,y),(y,y)
-    MPI_Request request;
-    Real quantities[7];
-    quantities[0] = qy;
-    quantities[1] = yy;
-    MPI_Iallreduce(MPI_IN_PLACE, &quantities, 2, MPI_Real, MPI_SUM, m_comm,
-                   &request);
+    // In what follows, we indicate by (*n*) the n-th step of the algorithm
 
-    //(*13*) computation zhat = M^{-1}*z
-    _preconditioner(z, zhat);
-
-    //(*14*) computation v = A*zhat
-    _lhs(zhat, v);
-
-    //(*15*) end reduction
-    MPI_Waitall(1, &request, MPI_STATUSES_IGNORE);
-    qy = quantities[0];
-    yy = quantities[1];
-
-    //(*16*) omega = (q,y)/(y,y)
-    omega = qy / (yy + eps);
-
-    //(*17*),(*18*),(*19*),(*20*)
-    Real r0r = 0.0;
-    Real r0w = 0.0;
-    Real r0s = 0.0;
-    Real r0z = 0.0;
-    norm = 0.0;
-    norm_1 = 0.0;
-    norm_2 = 0.0;
-    if (k % 50 != 0) {
-#pragma omp parallel for reduction(+ : r0r, r0w, r0s, r0z, norm_1, norm_2, norm)
-      for (size_t j = 0; j < N; j++) {
-        x[j] = x[j] + alpha * phat[j] + omega * qhat[j];
-        r[j] = q[j] - omega * y[j];
-        rhat[j] = qhat[j] - omega * (what[j] - alpha * zhat[j]);
-        w[j] = y[j] - omega * (t[j] - alpha * v[j]);
-        r0r += r0[j] * r[j];
-        r0w += r0[j] * w[j];
-        r0s += r0[j] * s[j];
-        r0z += r0[j] * z[j];
-        norm += r[j] * r[j];
-        norm_1 += r[j] * r[j];
-        norm_2 += r0[j] * r0[j];
-      }
-    } else {
-// every 50 iterations we use the residual replacement strategy, to prevent loss
-// of accuracy and compute stuff with the exact (not pipelined) versions
+    //(*2*) r0 = b - A*x0, r0hat = M^{-1}*r0, w0=A*r0hat, w0hat=M^{-1}w0
+    _lhs(x, r0);
 #pragma omp parallel for
-      for (size_t j = 0; j < N; j++) {
-        x[j] = x[j] + alpha * phat[j] + omega * qhat[j];
-      }
-      _lhs(x, r);
-#pragma omp parallel for
-      for (size_t j = 0; j < N; j++) {
-        r[j] = b[j] - r[j];
-      }
-      _preconditioner(r, rhat);
-      _lhs(rhat, w);
-#pragma omp parallel for reduction(+ : r0r, r0w, r0s, r0z, norm_1, norm_2, norm)
-      for (size_t j = 0; j < N; j++) {
-        r0r += r0[j] * r[j];
-        r0w += r0[j] * w[j];
-        r0s += r0[j] * s[j];
-        r0z += r0[j] * z[j];
-        norm += r[j] * r[j];
-        norm_1 += r[j] * r[j];
-        norm_2 += r0[j] * r0[j];
-      }
+    for (size_t i = 0; i < N; i++) {
+      r0[i] = r[i] - r0[i];
+      r[i] = r0[i];
     }
-    quantities[0] = r0r;
-    quantities[1] = r0w;
-    quantities[2] = r0s;
-    quantities[3] = r0z;
-    quantities[4] = norm_1;
-    quantities[5] = norm_2;
-    quantities[6] = norm;
-
-    //(*21*) begin reductions
-    MPI_Iallreduce(MPI_IN_PLACE, &quantities, 7, MPI_Real, MPI_SUM, m_comm,
-                   &request);
-
-    //(*22*) computation what = M^{-1}*w
+    _preconditioner(r0, rhat);
+    _lhs(rhat, w);
     _preconditioner(w, what);
 
-    //(*23*) computation t = A*what
+    //(*3*) t0=A*w0hat, alpha0 = (r0,r0) / (r0,w0), beta=0
     _lhs(what, t);
-
-    //(*24*) end reductions
-    MPI_Waitall(1, &request, MPI_STATUSES_IGNORE);
-    r0r = quantities[0];
-    r0w = quantities[1];
-    r0s = quantities[2];
-    r0z = quantities[3];
-    norm_1 = quantities[4];
-    norm_2 = quantities[5];
-    norm = std::sqrt(quantities[6]);
-
-    //(*25*)
-    beta = alpha / (omega + eps) * r0r / (r0r_prev + eps);
-
-    //(*26*)
-    alpha = r0r / (r0w + beta * r0s - beta * omega * r0z);
-    Real alphat = 1.0 / (omega + eps) + r0w / (r0r + eps) -
-                  beta * omega * r0z / (r0r + eps);
-    alphat = 1.0 / (alphat + eps);
-    if (std::fabs(alphat) < 10 * std::fabs(alpha))
-      alpha = alphat;
-
-    r0r_prev = r0r;
-    // Check if restart should be made. If so, current solution estimate is used
-    // as an initial guess and solver starts again.
-    serious_breakdown = r0r * r0r < 1e-16 * norm_1 * norm_2;
-    if (serious_breakdown && restarts < max_restarts) {
-      restarts++;
-      if (verbose)
-        std::cout << "  [Poisson solver]: Restart at iteration: " << k
-                  << " norm: " << norm << std::endl;
-
-#pragma omp parallel for
-      for (size_t i = 0; i < N; i++)
-        r0[i] = r[i];
-
-      _preconditioner(r0, rhat);
-      _lhs(rhat, w);
-
-      alpha = 0.0;
+    Real alpha = 0.0;
+    Real norm = 0.0;
+    Real beta = 0.0;
+    Real omega = 0.0;
+    Real r0r_prev;
+    {
       Real temp0 = 0.0;
       Real temp1 = 0.0;
-#pragma omp parallel for reduction(+ : temp0, temp1)
+#pragma omp parallel for reduction(+ : temp0, temp1, norm)
       for (size_t j = 0; j < N; j++) {
         temp0 += r0[j] * r0[j];
         temp1 += r0[j] * w[j];
+        norm += r0[j] * r0[j];
       }
-      MPI_Request request2;
-      Real temporary[2] = {temp0, temp1};
-      MPI_Iallreduce(MPI_IN_PLACE, temporary, 2, MPI_Real, MPI_SUM, m_comm,
-                     &request2);
-
-      _preconditioner(w, what);
-      _lhs(what, t);
-
-      MPI_Waitall(1, &request2, MPI_STATUSES_IGNORE);
-
+      Real temporary[3] = {temp0, temp1, norm};
+      MPI_Allreduce(MPI_IN_PLACE, temporary, 3, MPI_Real, MPI_SUM, m_comm);
       alpha = temporary[0] / (temporary[1] + eps);
       r0r_prev = temporary[0];
-      beta = 0.0;
-      omega = 0.0;
-    }
-
-    if (norm < min_norm) {
-      useXopt = true;
-      min_norm = norm;
-#pragma omp parallel for
-      for (size_t i = 0; i < N; i++)
-        x_opt[i] = x[i];
-    }
-    if (norm < max_error || norm / (init_norm + eps) < max_rel_error) {
+      norm = std::sqrt(temporary[2]);
       if (verbose)
-        std::cout << "  [Poisson solver]: Converged after " << k
-                  << " iterations.\n";
-      break;
+        std::cout << "[Poisson solver]: initial error norm:" << norm << "\n";
+    }
+    const Real init_norm = norm;
+
+    //(*4*) for k=0,1,...
+    int k;
+    for (k = 0; k < 1000; k++) {
+      Real qy = 0.0;
+      Real yy = 0.0;
+
+      //(*5*),(*6*),...,(*11*)
+      if (k % 50 != 0) {
+#pragma omp parallel for reduction(+ : qy, yy)
+        for (size_t j = 0; j < N; j++) {
+          phat[j] = rhat[j] + beta * (phat[j] - omega * shat[j]);
+          s[j] = w[j] + beta * (s[j] - omega * z[j]);
+          shat[j] = what[j] + beta * (shat[j] - omega * zhat[j]);
+          z[j] = t[j] + beta * (z[j] - omega * v[j]);
+          q[j] = r[j] - alpha * s[j];
+          qhat[j] = rhat[j] - alpha * shat[j];
+          y[j] = w[j] - alpha * z[j];
+          qy += q[j] * y[j];
+          yy += y[j] * y[j];
+        }
+      } else {
+// every 50 iterations we use the residual replacement strategy, to prevent loss
+// of accuracy and compute stuff with the exact (not pipelined) versions
+#pragma omp parallel for
+        for (size_t j = 0; j < N; j++) {
+          phat[j] = rhat[j] + beta * (phat[j] - omega * shat[j]);
+        }
+        _lhs(phat, s);
+        _preconditioner(s, shat);
+        _lhs(shat, z);
+#pragma omp parallel for reduction(+ : qy, yy)
+        for (size_t j = 0; j < N; j++) {
+          q[j] = r[j] - alpha * s[j];
+          qhat[j] = rhat[j] - alpha * shat[j];
+          y[j] = w[j] - alpha * z[j];
+          qy += q[j] * y[j];
+          yy += y[j] * y[j];
+        }
+      }
+
+      //(*12*) begin reduction (q,y),(y,y)
+      MPI_Request request;
+      Real quantities[7];
+      quantities[0] = qy;
+      quantities[1] = yy;
+      MPI_Iallreduce(MPI_IN_PLACE, &quantities, 2, MPI_Real, MPI_SUM, m_comm,
+                     &request);
+
+      //(*13*) computation zhat = M^{-1}*z
+      _preconditioner(z, zhat);
+
+      //(*14*) computation v = A*zhat
+      _lhs(zhat, v);
+
+      //(*15*) end reduction
+      MPI_Waitall(1, &request, MPI_STATUSES_IGNORE);
+      qy = quantities[0];
+      yy = quantities[1];
+
+      //(*16*) omega = (q,y)/(y,y)
+      omega = qy / (yy + eps);
+
+      //(*17*),(*18*),(*19*),(*20*)
+      Real r0r = 0.0;
+      Real r0w = 0.0;
+      Real r0s = 0.0;
+      Real r0z = 0.0;
+      norm = 0.0;
+      norm_1 = 0.0;
+      norm_2 = 0.0;
+      if (k % 50 != 0) {
+#pragma omp parallel for reduction(+ : r0r, r0w, r0s, r0z, norm_1, norm_2, norm)
+        for (size_t j = 0; j < N; j++) {
+          x[j] = x[j] + alpha * phat[j] + omega * qhat[j];
+          r[j] = q[j] - omega * y[j];
+          rhat[j] = qhat[j] - omega * (what[j] - alpha * zhat[j]);
+          w[j] = y[j] - omega * (t[j] - alpha * v[j]);
+          r0r += r0[j] * r[j];
+          r0w += r0[j] * w[j];
+          r0s += r0[j] * s[j];
+          r0z += r0[j] * z[j];
+          norm += r[j] * r[j];
+          norm_1 += r[j] * r[j];
+          norm_2 += r0[j] * r0[j];
+        }
+      } else {
+// every 50 iterations we use the residual replacement strategy, to prevent loss
+// of accuracy and compute stuff with the exact (not pipelined) versions
+#pragma omp parallel for
+        for (size_t j = 0; j < N; j++) {
+          x[j] = x[j] + alpha * phat[j] + omega * qhat[j];
+        }
+        _lhs(x, r);
+#pragma omp parallel for
+        for (size_t j = 0; j < N; j++) {
+          r[j] = b[j] - r[j];
+        }
+        _preconditioner(r, rhat);
+        _lhs(rhat, w);
+#pragma omp parallel for reduction(+ : r0r, r0w, r0s, r0z, norm_1, norm_2, norm)
+        for (size_t j = 0; j < N; j++) {
+          r0r += r0[j] * r[j];
+          r0w += r0[j] * w[j];
+          r0s += r0[j] * s[j];
+          r0z += r0[j] * z[j];
+          norm += r[j] * r[j];
+          norm_1 += r[j] * r[j];
+          norm_2 += r0[j] * r0[j];
+        }
+      }
+      quantities[0] = r0r;
+      quantities[1] = r0w;
+      quantities[2] = r0s;
+      quantities[3] = r0z;
+      quantities[4] = norm_1;
+      quantities[5] = norm_2;
+      quantities[6] = norm;
+
+      //(*21*) begin reductions
+      MPI_Iallreduce(MPI_IN_PLACE, &quantities, 7, MPI_Real, MPI_SUM, m_comm,
+                     &request);
+
+      //(*22*) computation what = M^{-1}*w
+      _preconditioner(w, what);
+
+      //(*23*) computation t = A*what
+      _lhs(what, t);
+
+      //(*24*) end reductions
+      MPI_Waitall(1, &request, MPI_STATUSES_IGNORE);
+      r0r = quantities[0];
+      r0w = quantities[1];
+      r0s = quantities[2];
+      r0z = quantities[3];
+      norm_1 = quantities[4];
+      norm_2 = quantities[5];
+      norm = std::sqrt(quantities[6]);
+
+      //(*25*)
+      beta = alpha / (omega + eps) * r0r / (r0r_prev + eps);
+
+      //(*26*)
+      alpha = r0r / (r0w + beta * r0s - beta * omega * r0z);
+      Real alphat = 1.0 / (omega + eps) + r0w / (r0r + eps) -
+                    beta * omega * r0z / (r0r + eps);
+      alphat = 1.0 / (alphat + eps);
+      if (std::fabs(alphat) < 10 * std::fabs(alpha))
+        alpha = alphat;
+
+      r0r_prev = r0r;
+      // Check if restart should be made. If so, current solution estimate is
+      // used as an initial guess and solver starts again.
+      serious_breakdown = r0r * r0r < 1e-16 * norm_1 * norm_2;
+      if (serious_breakdown && restarts < max_restarts) {
+        restarts++;
+        if (verbose)
+          std::cout << "  [Poisson solver]: Restart at iteration: " << k
+                    << " norm: " << norm << std::endl;
+
+#pragma omp parallel for
+        for (size_t i = 0; i < N; i++)
+          r0[i] = r[i];
+
+        _preconditioner(r0, rhat);
+        _lhs(rhat, w);
+
+        alpha = 0.0;
+        Real temp0 = 0.0;
+        Real temp1 = 0.0;
+#pragma omp parallel for reduction(+ : temp0, temp1)
+        for (size_t j = 0; j < N; j++) {
+          temp0 += r0[j] * r0[j];
+          temp1 += r0[j] * w[j];
+        }
+        MPI_Request request2;
+        Real temporary[2] = {temp0, temp1};
+        MPI_Iallreduce(MPI_IN_PLACE, temporary, 2, MPI_Real, MPI_SUM, m_comm,
+                       &request2);
+
+        _preconditioner(w, what);
+        _lhs(what, t);
+
+        MPI_Waitall(1, &request2, MPI_STATUSES_IGNORE);
+
+        alpha = temporary[0] / (temporary[1] + eps);
+        r0r_prev = temporary[0];
+        beta = 0.0;
+        omega = 0.0;
+      }
+
+      if (norm < min_norm) {
+        useXopt = true;
+        min_norm = norm;
+#pragma omp parallel for
+        for (size_t i = 0; i < N; i++)
+          x_opt[i] = x[i];
+      }
+      if (norm < max_error || norm / (init_norm + eps) < max_rel_error) {
+        if (verbose)
+          std::cout << "  [Poisson solver]: Converged after " << k
+                    << " iterations.\n";
+        break;
+      }
+    }
+
+    if (verbose) {
+      std::cout << " Error norm (relative) = " << min_norm << "/" << max_error
+                << std::endl;
+    }
+
+    Real *solution = useXopt ? x_opt.data() : x.data();
+#pragma omp parallel for
+    for (size_t i = 0; i < Nblocks; i++) {
+      ScalarBlock &P = (*sim.pres)(i);
+      for (int iz = 0; iz < BSZ; iz++)
+        for (int iy = 0; iy < BSY; iy++)
+          for (int ix = 0; ix < BSX; ix++) {
+            const int j = i * BSX * BSY * BSZ + iz * BSX * BSY + iy * BSX + ix;
+            P(ix, iy, iz).s = solution[j];
+          }
     }
   }
-
-  if (verbose) {
-    std::cout << " Error norm (relative) = " << min_norm << "/" << max_error
-              << std::endl;
-  }
-
-  Real *solution = useXopt ? x_opt.data() : x.data();
-#pragma omp parallel for
-  for (size_t i = 0; i < Nblocks; i++) {
-    ScalarBlock &P = (*sim.pres)(i);
-    for (int iz = 0; iz < BSZ; iz++)
-      for (int iy = 0; iy < BSY; iy++)
-        for (int ix = 0; ix < BSX; ix++) {
-          const int j = i * BSX * BSY * BSZ + iz * BSX * BSY + iy * BSX + ix;
-          P(ix, iy, iz).s = solution[j];
-        }
-  }
-}
 } // namespace cubismup3d
-
 
 /*
 Optimization comments:
@@ -9481,7 +9480,6 @@ std::shared_ptr<PoissonSolverBase> makePoissonSolver(SimulationData &s) {
 //
 //  Created by Michalis Chatzimanolakis (michaich@ethz.ch).
 //
-
 
 CubismUP_3D_NAMESPACE_BEGIN
 
@@ -9968,8 +9966,7 @@ void PressureProjection::operator()(const Real dt) {
 
 CubismUP_3D_NAMESPACE_END
 
-
-CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
+    CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
 
 std::shared_ptr<Simulation>
 createSimulation(const MPI_Comm comm, const std::vector<std::string> &argv) {
@@ -10241,8 +10238,8 @@ void Simulation::deserialize() {
   // The only field that is needed for restarting is velocity. Chi is derived
   // from the files we read for obstacles. Here we also read pres so that the
   // Poisson solver has the same initial guess, which in turn leads to restarted
-  // simulations having the exact same result as non-restarted ones (we also read
-  // pres because we need to read at least one ScalarGrid, see hack below).
+  // simulations having the exact same result as non-restarted ones (we also
+  // read pres because we need to read at least one ScalarGrid, see hack below).
   ReadHDF5_MPI<StreamerVector, Real>(*(sim.vel), "vel_" + ss.str(),
                                      sim.path4serialization);
   ReadHDF5_MPI<StreamerScalar, Real>(*(sim.pres), "pres_" + ss.str(),
@@ -10401,15 +10398,13 @@ void Simulation::insertOperator(std::shared_ptr<Operator> op) {
 }
 
 CubismUP_3D_NAMESPACE_END
-//
-//  CubismUP_3D
-//  Copyright (c) 2018 CSE-Lab, ETH Zurich, Switzerland.
-//  Distributed under the terms of the MIT license.
-//
+    //
+    //  CubismUP_3D
+    //  Copyright (c) 2018 CSE-Lab, ETH Zurich, Switzerland.
+    //  Distributed under the terms of the MIT license.
+    //
 
-
-
-CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
+    CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
 
 BCflag cubismBCX;
 BCflag cubismBCY;
@@ -10697,14 +10692,13 @@ void SimulationData::readRestartFiles() {
 }
 
 CubismUP_3D_NAMESPACE_END
-//
-//  CubismUP_3D
-//  Copyright (c) 2023 CSE-Lab, ETH Zurich, Switzerland.
-//  Distributed under the terms of the MIT license.
-//
+    //
+    //  CubismUP_3D
+    //  Copyright (c) 2023 CSE-Lab, ETH Zurich, Switzerland.
+    //  Distributed under the terms of the MIT license.
+    //
 
-
-using namespace cubism;
+    using namespace cubism;
 
 CubismUP_3D_NAMESPACE_BEGIN
 
@@ -11052,7 +11046,7 @@ std::vector<Real> SmartNaca::state(const int agentID) {
 
 CubismUP_3D_NAMESPACE_END
 
-CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
+    CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
 
 namespace SphereObstacle {
 struct FillBlocks : FillBlocksBase<FillBlocks> {
@@ -11172,7 +11166,7 @@ void Sphere::computeVelocities() {
 
 CubismUP_3D_NAMESPACE_END
 
-CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
+    CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
 
 void CurvatureDefinedFishData::execute(const Real time, const Real l_tnext,
                                        const std::vector<Real> &input) {
@@ -12062,8 +12056,7 @@ StefanFish::getShear(const std::array<Real, 3> pSurf) const {
   return std::array<Real, 3>{{myF[0], myF[1], myF[2]}}; // return shear
 };
 
-CubismUP_3D_NAMESPACE_END
-int main(int argc, char **argv) {
+CubismUP_3D_NAMESPACE_END int main(int argc, char **argv) {
   int provided;
   const auto SECURITY = MPI_THREAD_FUNNELED;
   MPI_Init_thread(&argc, &argv, SECURITY, &provided);

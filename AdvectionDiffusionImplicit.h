@@ -218,7 +218,7 @@ public:
   void solve() {
     // Algorithm 11 from the paper:
     //"The communication-hiding pipelined BiCGstab method for the parallel
-    //solution of large unsymmetric linear systems" by S. Cools, W. Vanroose
+    // solution of large unsymmetric linear systems" by S. Cools, W. Vanroose
     // This is a BiCGstab with less global communication (reductions) that are
     // overlapped with computation.
 
@@ -243,7 +243,7 @@ public:
     bool serious_breakdown =
         false;            // shows if the solver will restart in this iteration
     bool useXopt = false; //(is almost always true) use the solution that had
-                          //the smallest residual
+                          // the smallest residual
     Real min_norm =
         1e50;          // residual norm (for best solution, see also 'useXopt')
     Real norm_1 = 0.0; // used to decide if the solver will restart
