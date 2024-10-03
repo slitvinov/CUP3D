@@ -6615,7 +6615,6 @@ public:
   Operator(SimulationData &s) noexcept : sim(s) {}
   virtual ~Operator() = default;
   virtual void operator()(Real dt) = 0;
-  virtual std::string getName() = 0;
 };
 class AdvectionDiffusion : public Operator {
   std::vector<Real> vOld;
@@ -6624,7 +6623,6 @@ public:
   AdvectionDiffusion(SimulationData &s) : Operator(s) {}
   ~AdvectionDiffusion() {}
   void operator()(const Real dt);
-  std::string getName() { return "AdvectionDiffusion"; }
 };
 namespace diffusion_kernels {
 static constexpr int NX = ScalarBlock::sizeX;
@@ -7093,7 +7091,6 @@ public:
   ~AdvectionDiffusionImplicit() {}
   void operator()(const Real dt);
   void euler(const Real dt);
-  std::string getName() { return "AdvectionDiffusionImplicit"; }
 };
 class Value {
 private:
@@ -8249,7 +8246,6 @@ class ComputeDissipation : public Operator {
 public:
   ComputeDissipation(SimulationData &s) : Operator(s) {}
   void operator()(const Real dt);
-  std::string getName() { return "Dissipation"; }
 };
 template <typename Derived> struct FillBlocksBase {
   using CHIMAT =
@@ -8278,7 +8274,6 @@ class ExternalForcing : public Operator {
 public:
   ExternalForcing(SimulationData &s) : Operator(s) {}
   void operator()(const double dt);
-  std::string getName() { return "ExternalForcing"; }
 };
 template <typename T> struct Vector3 {
   T &operator[](int k) { return x_[k]; }
@@ -8407,7 +8402,6 @@ class FixMassFlux : public Operator {
 public:
   FixMassFlux(SimulationData &s);
   void operator()(const double dt);
-  std::string getName() { return "FixMassFlux"; }
 };
 class ObstacleVector : public Obstacle {
 public:
@@ -8468,7 +8462,6 @@ class ComputeForces : public Operator {
 public:
   ComputeForces(SimulationData &s) : Operator(s) {}
   void operator()(const Real dt);
-  std::string getName() { return "ComputeForces"; }
 };
 class InitialConditions : public Operator {
 public:
@@ -8480,7 +8473,6 @@ public:
       kernel(vInfo[i], *(VectorBlock *)vInfo[i].ptrBlock);
   }
   void operator()(const Real dt);
-  std::string getName() { return "IC"; }
 };
 struct GradChiOnTmp {
   GradChiOnTmp(const SimulationData &s) : sim(s) {}
@@ -8687,7 +8679,6 @@ public:
           }
     }
   }
-  std::string getName() { return "Vorticity"; }
 };
 class KernelQcriterion {
 public:
@@ -8731,7 +8722,6 @@ public:
     const KernelQcriterion K(sim);
     compute<VectorLab>(K, sim.vel);
   }
-  std::string getName() { return "Qcriterion"; }
 };
 class KernelDivergence {
 public:
@@ -8863,7 +8853,6 @@ public:
       outfile.close();
     }
   }
-  std::string getName() { return "Divergence"; }
 };
 struct SimulationData;
 class PoissonSolverBase {
@@ -9105,20 +9094,17 @@ class CreateObstacles : public Operator {
 public:
   CreateObstacles(SimulationData &s) : Operator(s) {}
   void operator()(const Real dt);
-  std::string getName() { return "CreateObstacles"; }
 };
 class UpdateObstacles : public Operator {
 public:
   UpdateObstacles(SimulationData &s) : Operator(s) {}
   void operator()(const Real dt);
-  std::string getName() { return "UpdateObstacles Vel"; }
 };
 class Penalization : public Operator {
 public:
   Penalization(SimulationData &s);
   void operator()(const Real dt);
   void preventCollidingObstacles() const;
-  std::string getName() { return "Penalization"; }
 };
 namespace poisson_kernels {
 static constexpr int NX = ScalarBlock::sizeX;
@@ -9276,7 +9262,6 @@ public:
       }
     }
   }
-  std::string getName() { return "ComputeLHS"; }
 };
 class PoissonSolverAMR : public PoissonSolverBase {
 protected:
@@ -9395,7 +9380,6 @@ public:
   PressureProjection(SimulationData &s);
   ~PressureProjection() = default;
   void operator()(Real dt) override;
-  std::string getName() { return "PressureProjection"; }
 };
 static struct {
   SimulationData *sim;
