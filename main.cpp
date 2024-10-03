@@ -6512,9 +6512,7 @@ using VectorGrid = GridMPI<Grid<VectorBlock, aligned_block_allocator>>;
 using VectorLab = BlockLabMPI<BlockLabBC<VectorGrid, aligned_block_allocator>>;
 using ScalarAMR = MeshAdaptation<ScalarLab>;
 using VectorAMR = MeshAdaptation<VectorLab>;
-namespace cubism {
 class ArgumentParser;
-} // namespace cubism
 class Operator;
 class Obstacle;
 class ObstacleVector;
@@ -6609,7 +6607,7 @@ struct SimulationData {
   SimulationData(SimulationData &&) = delete;
   SimulationData &operator=(const SimulationData &) = delete;
   SimulationData &operator=(SimulationData &&) = delete;
-  SimulationData(MPI_Comm mpicomm, cubism::ArgumentParser &parser);
+  SimulationData(MPI_Comm mpicomm, ArgumentParser &parser);
 };
 class Operator {
 public:
@@ -7097,7 +7095,6 @@ public:
   void euler(const Real dt);
   std::string getName() { return "AdvectionDiffusionImplicit"; }
 };
-namespace cubism {
 class Value {
 private:
   std::string content;
@@ -7172,7 +7169,6 @@ public:
   Value &operator()(std::string key);
   inline bool exist(const std::string &key) const { return check(key); }
 };
-} // namespace cubism
 struct BufferedLoggerImpl;
 class BufferedLogger {
   BufferedLoggerImpl *const impl;
@@ -7420,9 +7416,7 @@ struct ObstacleBlock {
     return ptr;
   }
 };
-namespace cubism {
 class ArgumentParser;
-}
 class Obstacle;
 class ObstacleVector;
 class Obstacle {
@@ -7471,7 +7465,7 @@ public:
 
 protected:
 public:
-  Obstacle(SimulationData &s, cubism::ArgumentParser &parser);
+  Obstacle(SimulationData &s, ArgumentParser &parser);
   Obstacle(SimulationData &s) : sim(s) {}
   virtual void updateLabVelocity(int nSum[3], Real uSum[3]);
   virtual void computeVelocities();
@@ -7539,7 +7533,7 @@ protected:
   virtual void writeSDFOnBlocks(std::vector<VolumeSegment_OBB> &vSegments);
 
 public:
-  Fish(SimulationData &s, cubism::ArgumentParser &p);
+  Fish(SimulationData &s, ArgumentParser &p);
   ~Fish() override;
   virtual void create() override;
   FishMidlineData *myFish = nullptr;
@@ -8488,7 +8482,6 @@ public:
   void operator()(const Real dt);
   std::string getName() { return "IC"; }
 };
-using namespace cubism;
 struct GradChiOnTmp {
   GradChiOnTmp(const SimulationData &s) : sim(s) {}
   const SimulationData &sim;
@@ -8882,18 +8875,16 @@ protected:
   typedef typename ScalarGrid::BlockType BlockType;
 };
 std::shared_ptr<PoissonSolverBase> makePoissonSolver(SimulationData &s);
-namespace cubism {
 class ArgumentParser;
-}
 class ObstacleFactory {
   SimulationData &sim;
 
 public:
   ObstacleFactory(SimulationData &s) : sim(s) {}
-  void addObstacles(cubism::ArgumentParser &parser);
+  void addObstacles(ArgumentParser &parser);
   void addObstacles(const std::string &factoryContent);
 };
-class FactoryFileLineParser : public cubism::ArgumentParser {
+class FactoryFileLineParser : public ArgumentParser {
 protected:
   inline std::string &ltrim(std::string &s) {
     s.erase(s.begin(),
@@ -8912,11 +8903,11 @@ protected:
 
 public:
   FactoryFileLineParser(std::istringstream &is_line)
-      : cubism::ArgumentParser(0, NULL, '#') {
+      : ArgumentParser(0, NULL, '#') {
     std::string key, value;
     while (std::getline(is_line, key, '=')) {
       if (std::getline(is_line, value, ' ')) {
-        mapArguments[trim(key)] = cubism::Value(trim(value));
+        mapArguments[trim(key)] = Value(trim(value));
       }
     }
     mute();
@@ -8924,7 +8915,7 @@ public:
 };
 class StefanFish : public Fish {
 public:
-  StefanFish(SimulationData &s, cubism::ArgumentParser &p);
+  StefanFish(SimulationData &s, ArgumentParser &p);
   bool bCorrectPosition;
   bool bCorrectPositionZ;
   bool bCorrectRoll;
@@ -9416,7 +9407,7 @@ public:
 };
 struct Simulation {
   SimulationData sim;
-  cubism::ArgumentParser parser;
+  ArgumentParser parser;
   void initialGridRefinement();
   void setupOperators();
   void setupGrid();
@@ -10090,7 +10081,6 @@ void AdvectionDiffusionImplicit::euler(const Real dt) {
   }
 }
 void AdvectionDiffusionImplicit::operator()(const Real dt) { euler(sim.dt); }
-namespace cubism {
 double Value::asDouble(double def) {
   if (content == "") {
     std::ostringstream sbuf;
@@ -10271,7 +10261,6 @@ Value &ArgumentParser::operator()(std::string key) {
     from_code[key] = &retval;
   return retval;
 }
-} // namespace cubism
 BufferedLogger logger;
 struct BufferedLoggerImpl {
   struct Stream {
@@ -10318,7 +10307,6 @@ void BufferedLogger::flush(void) {
   for (auto &pair : impl->files)
     impl->flush(pair);
 }
-using namespace cubism;
 namespace {
 class KernelDissipation {
 public:
@@ -10555,7 +10543,6 @@ void getZImplParallel(const std::vector<BlockInfo> &vInfo, const Real nu,
   }
 }
 } // namespace diffusion_kernels
-using namespace cubism;
 void ExternalForcing::operator()(const double dt) {
   const int dir = sim.BCy_flag == wall ? 1 : 2;
   const Real H = sim.extents[dir];
@@ -10572,7 +10559,6 @@ void ExternalForcing::operator()(const double dt) {
         }
   }
 }
-using namespace cubism;
 Fish::Fish(SimulationData &s, ArgumentParser &p) : Obstacle(s, p) {
   p.unset_strict_mode();
   int array_of_blocklengths[2] = {4, 1};
@@ -10935,7 +10921,6 @@ void Fish::create() {
   const intersect_t segmPerBlock = prepare_segPerBlock(vSegments);
   writeSDFOnBlocks(vSegments);
 }
-using namespace cubism;
 using UDEFMAT = Real[CUP_BLOCK_SIZEZ][CUP_BLOCK_SIZEY][CUP_BLOCK_SIZEX][3];
 using CHIMAT = Real[CUP_BLOCK_SIZEZ][CUP_BLOCK_SIZEY][CUP_BLOCK_SIZEX];
 void FishMidlineData::integrateLinearMomentum() {
@@ -11904,7 +11889,6 @@ void PutNacaOnBlocks::constructInternl(
     }
   }
 }
-using namespace cubism;
 void MidlineShapes::integrateBSpline(const Real *const xc, const Real *const yc,
                                      const int n, const Real length,
                                      Real *const rS, Real *const res,
@@ -12177,7 +12161,6 @@ void MidlineShapes::computeWidthsHeights(const std::string &heightName,
     }
   }
 }
-using namespace cubism;
 static Real avgUx_nonUniform(const std::vector<BlockInfo> &myInfo,
                              const Real *const uInf, const Real volume) {
   Real avgUx = 0.;
@@ -12228,7 +12211,6 @@ void FixMassFlux::operator()(const double dt) {
       }
   }
 }
-using namespace cubism;
 namespace {
 struct KernelComputeForces {
   const int big = 5;
@@ -12486,7 +12468,6 @@ void ComputeForces::operator()(const Real dt) {
   sim.obstacle_vector->computeForces();
 }
 class PoissonSolverBase;
-using namespace cubism;
 namespace {
 class KernelIC {
 public:
@@ -12731,7 +12712,6 @@ void InitialConditions::operator()(const Real dt) {
     initialPenalization(sim, dt);
   }
 }
-using namespace cubism;
 class NacaMidlineData : public FishMidlineData {
   Real *const rK;
   Real *const vK;
@@ -12792,7 +12772,6 @@ public:
 #endif
   }
 };
-using namespace cubism;
 using UDEFMAT = Real[CUP_BLOCK_SIZEZ][CUP_BLOCK_SIZEY][CUP_BLOCK_SIZEX][3];
 using CHIMAT = Real[CUP_BLOCK_SIZEZ][CUP_BLOCK_SIZEY][CUP_BLOCK_SIZEX];
 static constexpr Real EPS = std::numeric_limits<Real>::epsilon();
@@ -13218,7 +13197,6 @@ std::array<Real, 3> Obstacle::getYawPitchRoll() const {
                     quaternion[1] * quaternion[1]));
   return std::array<Real, 3>{{yaw, pitch, roll}};
 }
-using namespace cubism;
 using VectorType = ObstacleVector::VectorType;
 static std::shared_ptr<Obstacle>
 _createObstacle(SimulationData &sim, const std::string &objectName,
@@ -13252,7 +13230,7 @@ static void _addObstacles(SimulationData &sim, std::stringstream &stream) {
     sim.obstacle_vector->addObstacle(_createObstacle(sim, l.first, l.second));
   }
 }
-void ObstacleFactory::addObstacles(cubism::ArgumentParser &parser) {
+void ObstacleFactory::addObstacles(ArgumentParser &parser) {
   parser.unset_strict_mode();
   const std::string factory_filename = parser("-factory").asString("factory");
   std::string factory_content = parser("-factory-content").asString("");
@@ -13272,7 +13250,6 @@ void ObstacleFactory::addObstacles(const std::string &factoryContent) {
   std::stringstream stream(factoryContent);
   _addObstacles(sim, stream);
 }
-using namespace cubism;
 namespace {
 using CHIMAT = Real[CUP_BLOCK_SIZEZ][CUP_BLOCK_SIZEY][CUP_BLOCK_SIZEX];
 using UDEFMAT = Real[CUP_BLOCK_SIZEZ][CUP_BLOCK_SIZEY][CUP_BLOCK_SIZEX][3];
@@ -13609,7 +13586,6 @@ void CreateObstacles::operator()(const Real dt) {
   kernelRemoveUdefMomenta(sim);
   sim.obstacle_vector->finalize();
 }
-using namespace cubism;
 namespace {
 using CHIMAT = Real[CUP_BLOCK_SIZEZ][CUP_BLOCK_SIZEY][CUP_BLOCK_SIZEX];
 using UDEFMAT = Real[CUP_BLOCK_SIZEZ][CUP_BLOCK_SIZEY][CUP_BLOCK_SIZEX][3];
@@ -13826,7 +13802,6 @@ void UpdateObstacles::operator()(const Real dt) {
     kernelFinalizeObstacleVel<0>(sim, dt);
   }
 }
-using namespace cubism;
 namespace {
 using CHIMAT = Real[CUP_BLOCK_SIZEZ][CUP_BLOCK_SIZEY][CUP_BLOCK_SIZEX];
 using UDEFMAT = Real[CUP_BLOCK_SIZEZ][CUP_BLOCK_SIZEY][CUP_BLOCK_SIZEX][3];
@@ -14331,7 +14306,6 @@ void Penalization::operator()(const Real dt) {
   }
   kernelFinalizePenalizationForce(sim);
 }
-using namespace cubism;
 static void _normalize(Real *const x, Real *const y, Real *const z) {
   const Real norm = std::sqrt(*x * *x + *y * *y + *z * *z);
   assert(norm > 1e-9);
@@ -15151,7 +15125,6 @@ void PressureProjection::operator()(const Real dt) {
         }
   }
 }
-using namespace cubism;
 Simulation::Simulation(int argc, char **argv, MPI_Comm comm)
     : parser(argc, argv), sim(comm, parser) {}
 void Simulation::init() {
@@ -15326,7 +15299,6 @@ void Simulation::computeVorticity() {
 void Simulation::insertOperator(std::shared_ptr<Operator> op) {
   sim.pipeline.push_back(std::move(op));
 }
-using namespace cubism;
 BCflag cubismBCX;
 BCflag cubismBCY;
 BCflag cubismBCZ;
@@ -15442,7 +15414,6 @@ SimulationData::~SimulationData() {
   delete tmpV_amr;
   delete pres_amr;
 }
-using namespace cubism;
 void CurvatureDefinedFishData::execute(const Real time, const Real l_tnext,
                                        const std::vector<Real> &input) {
   if (input.size() == 1) {
