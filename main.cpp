@@ -1,5 +1,3 @@
-#include "AdvectionDiffusion.h"
-#include "AdvectionDiffusionImplicit.h"
 #include <cstdio>
 #include <string>
 #include <cstring>
@@ -9,9 +7,19 @@
 #include <iostream>
 #include <sstream>
 #include <limits>
+#include <unordered_map>
+#include <cassert>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <gsl/gsl_bspline.h>
+#include <gsl/gsl_statistics.h>
+#include <random>
+#include <gsl/gsl_linalg.h>
+
+#include "AdvectionDiffusion.h"
+#include "AdvectionDiffusionImplicit.h"
 #include "ArgumentParser.h"
 #include "BufferedLogger.h"
-#include <unordered_map>
 #include "CarlingFish.h"
 #include "FishLibrary.h"
 #include "FishShapes.h"
@@ -19,18 +27,14 @@
 #include "Cylinder.h"
 #include "ObstacleLibrary.h"
 #include "CylinderNozzle.h"
+#include "ArgumentParser.h"
 #include "DiffusionSolverAMRKernels.h"
-#include <cassert>
 #include "Ellipsoid.h"
 #include "ExternalForcing.h"
 #include "ExternalObstacle.h"
 #include "happly.h"
-#include <sys/stat.h>
-#include <unistd.h>
 #include "Fish.h"
 #include "HDF5Dumper.h"
-#include <gsl/gsl_bspline.h>
-#include <gsl/gsl_statistics.h>
 #include "FixMassFlux.h"
 #include "FluidSolidForces.h"
 #include "InitialConditions.h"
@@ -38,10 +42,8 @@
 #include "ObstacleVector.h"
 #include "PoissonSolverBase.h"
 #include "Pipe.h"
-#include <random>
 #include "Naca.h"
 #include "Obstacle.h"
-#include <gsl/gsl_linalg.h>
 #include "ObstacleFactory.h"
 #include "FactoryFileLineParser.h"
 #include "SmartNaca.h"
