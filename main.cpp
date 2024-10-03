@@ -10654,8 +10654,6 @@ void ExternalForcing::operator()(const double dt) {
   }
 }
 } // namespace cubismup3d
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wshadow"
 namespace cubismup3d {
 using namespace cubism;
 Fish::Fish(SimulationData &s, ArgumentParser &p) : Obstacle(s, p) {
