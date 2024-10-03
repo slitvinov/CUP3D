@@ -9318,8 +9318,8 @@ public:
   void operator()(Real dt) override;
 };
 struct Simulation {
-  SimulationData sim;
   ArgumentParser parser;
+  SimulationData sim;
   void initialGridRefinement();
   void setupOperators();
   void setupGrid();
