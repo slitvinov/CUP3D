@@ -433,7 +433,6 @@ static void dump(Real time, long nblock, Info *infos, char *path) {
   MPI_File mpi_file;
   FILE *xmf;
   float *xyz, *attr;
-  Real sum;
   snprintf(xyz_path, sizeof xyz_path, "%s.xyz.raw", path);
   snprintf(attr_path, sizeof attr_path, "%s.attr.raw", path);
   snprintf(xdmf_path, sizeof xdmf_path, "%s.xdmf2", path);
@@ -469,11 +468,10 @@ static void dump(Real time, long nblock, Info *infos, char *path) {
             "       </DataItem>\n"
             "     </Geometry>\n"
             "       <Attribute\n"
-            "           AttributeType=\"Vector\"\n"
-            "           Name=\"vel\"\n"
+            "           Name=\"chi\"\n"
             "           Center=\"Cell\">\n"
             "         <DataItem\n"
-            "             Dimensions=\"3 %ld\"\n"
+            "             Dimensions=\"%ld\"\n"
             "             Format=\"Binary\">\n"
             "           %s\n"
             "         </DataItem>\n"
@@ -486,7 +484,7 @@ static void dump(Real time, long nblock, Info *infos, char *path) {
     fclose(xmf);
   }
   xyz = (float *)malloc(3 * 8 * ncell * sizeof *xyz);
-  attr = (float *)malloc(3 * ncell * sizeof *attr);
+  attr = (float *)malloc(ncell * sizeof *attr);
   k = 0;
   l = 0;
   for (i = 0; i < nblock; i++) {
@@ -537,8 +535,6 @@ static void dump(Real time, long nblock, Info *infos, char *path) {
           xyz[k++] = w0;
 
           attr[l++] = b[j++];
-          attr[l++] = b[j++];
-          attr[l++] = b[j++];
         }
   }
   MPI_File_open(MPI_COMM_WORLD, xyz_path, MPI_MODE_CREATE | MPI_MODE_WRONLY,
@@ -550,8 +546,8 @@ static void dump(Real time, long nblock, Info *infos, char *path) {
   free(xyz);
   MPI_File_open(MPI_COMM_WORLD, attr_path, MPI_MODE_CREATE | MPI_MODE_WRONLY,
                 MPI_INFO_NULL, &mpi_file);
-  MPI_File_write_at_all(mpi_file, 3 * offset * sizeof *attr, attr,
-                        3 * ncell * sizeof *attr, MPI_BYTE, MPI_STATUS_IGNORE);
+  MPI_File_write_at_all(mpi_file, offset * sizeof *attr, attr,
+                        ncell * sizeof *attr, MPI_BYTE, MPI_STATUS_IGNORE);
   MPI_File_close(&mpi_file);
   free(attr);
 }
@@ -15318,7 +15314,7 @@ bool Simulation::advance(const Real dt) {
     char path[FILENAME_MAX];
     snprintf(path, sizeof path, "vel.%08d", sim.step);
     fprintf(stderr, "main.cpp: %s\n", path);
-    dump(sim.time, sim.vel->m_vInfo.size(), sim.vel->m_vInfo.data(), path);
+    dump(sim.time, sim.chi->m_vInfo.size(), sim.chi->m_vInfo.data(), path);
   }
   if (sim.step % 20 == 0 || sim.step < 10)
     adaptMesh();
