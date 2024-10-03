@@ -6510,8 +6510,7 @@ using ScalarLab =
     BlockLabMPI<BlockLabNeumann3D<ScalarGrid, aligned_block_allocator>>;
 using VectorBlock = GridBlock<CUP_BLOCK_SIZEX, 3, VectorElement>;
 using VectorGrid = GridMPI<Grid<VectorBlock, aligned_block_allocator>>;
-using VectorLab =
-    BlockLabMPI<BlockLabBC<VectorGrid, aligned_block_allocator>>;
+using VectorLab = BlockLabMPI<BlockLabBC<VectorGrid, aligned_block_allocator>>;
 using ScalarAMR = MeshAdaptation<ScalarLab>;
 using VectorAMR = MeshAdaptation<VectorLab>;
 } // namespace cubismup3d
@@ -10504,8 +10503,8 @@ void ComputeDissipation::operator()(const Real dt) {
     return;
   Real RDX[20] = {0.0};
   KernelDissipation diss(dt, sim.extents.data(), sim.nu, RDX, sim);
-  compute<KernelDissipation, VectorGrid, VectorLab, ScalarGrid,
-                  ScalarLab>(diss, *sim.vel, *sim.pres);
+  compute<KernelDissipation, VectorGrid, VectorLab, ScalarGrid, ScalarLab>(
+      diss, *sim.vel, *sim.pres);
   MPI_Allreduce(MPI_IN_PLACE, RDX, 20, MPI_Real, MPI_SUM, sim.comm);
   size_t loc = sim.velInfo().size();
   size_t tot;
@@ -12590,8 +12589,8 @@ void ComputeForces::operator()(const Real dt) {
   if (sim.obstacle_vector->nObstacles() == 0)
     return;
   KernelComputeForces K(sim);
-  compute<KernelComputeForces, VectorGrid, VectorLab, ScalarGrid,
-                  ScalarLab>(K, *sim.vel, *sim.chi);
+  compute<KernelComputeForces, VectorGrid, VectorLab, ScalarGrid, ScalarLab>(
+      K, *sim.vel, *sim.chi);
   sim.obstacle_vector->computeForces();
 }
 } // namespace cubismup3d
