@@ -6530,14 +6530,12 @@ template <typename T>
 using aligned_block_allocator = aligned_allocator<T, kBlockAlignment>;
 using ScalarElement = cubism::ScalarElement<Real>;
 using ScalarBlock = GridBlock<CUP_BLOCK_SIZEX, 3, ScalarElement>;
-using ScalarGrid =
-    GridMPI<Grid<ScalarBlock, aligned_block_allocator>>;
+using ScalarGrid = GridMPI<Grid<ScalarBlock, aligned_block_allocator>>;
 using ScalarLab =
     cubism::BlockLabMPI<BlockLabNeumann3D<ScalarGrid, aligned_block_allocator>>;
 using VectorElement = cubism::VectorElement<3, Real>;
 using VectorBlock = GridBlock<CUP_BLOCK_SIZEX, 3, VectorElement>;
-using VectorGrid =
-    GridMPI<Grid<VectorBlock, aligned_block_allocator>>;
+using VectorGrid = GridMPI<Grid<VectorBlock, aligned_block_allocator>>;
 using VectorLab =
     cubism::BlockLabMPI<BlockLabBC<VectorGrid, aligned_block_allocator>>;
 using ScalarAMR = cubism::MeshAdaptation<ScalarLab>;
@@ -6689,8 +6687,8 @@ Real kernelDiffusionGetZInner(PaddedBlock &p, const Real *pW, const Real *pE,
                               Block &__restrict__ Ax, Block &__restrict__ r,
                               Block &__restrict__ block, Real sqrNorm0, Real rr,
                               const Real coefficient);
-void getZImplParallel(const std::vector<BlockInfo> &vInfo,
-                      const Real nu, const Real dt);
+void getZImplParallel(const std::vector<BlockInfo> &vInfo, const Real nu,
+                      const Real dt);
 } // namespace diffusion_kernels
 } // namespace cubismup3d
 namespace cubismup3d {
@@ -10628,8 +10626,8 @@ Real kernelDiffusionGetZInner(PaddedBlock &p_, const Real *pW_, const Real *pE_,
   const Real rrNew = sqrSum;
   return rrNew;
 }
-void getZImplParallel(const std::vector<BlockInfo> &vInfo,
-                      const Real nu, const Real dt) {
+void getZImplParallel(const std::vector<BlockInfo> &vInfo, const Real nu,
+                      const Real dt) {
   const size_t Nblocks = vInfo.size();
   struct Tmp {
     Block r;
@@ -13989,8 +13987,7 @@ struct KernelPenalization {
                      const bool _implicitPenalization, ObstacleVector *ov)
       : dt(_dt), lambda(_lambda), implicitPenalization(_implicitPenalization),
         obstacle_vector(ov) {}
-  void operator()(const BlockInfo &info,
-                  const BlockInfo &ChiInfo) const {
+  void operator()(const BlockInfo &info, const BlockInfo &ChiInfo) const {
     for (const auto &obstacle : obstacle_vector->getObstacleVector())
       visit(info, ChiInfo, obstacle.get());
   }
