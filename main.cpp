@@ -7638,75 +7638,6 @@ public:
 #endif
 };
 } // namespace cubismup3d
-#ifndef CubismUP_3D_CarlingFish_h
-#define CubismUP_3D_CarlingFish_h
-namespace cubismup3d {
-class CarlingFishMidlineData;
-class CarlingFish : public Fish {
-public:
-  CarlingFish(SimulationData &s, cubism::ArgumentParser &p);
-};
-} // namespace cubismup3d
-#endif
-#ifndef CubismUP_3D_Frenet_h
-#define CubismUP_3D_Frenet_h
-namespace cubismup3d {
-struct Frenet2D {
-  static void solve(const int Nm, const Real *const rS, const Real *const curv,
-                    const Real *const curv_dt, Real *const rX, Real *const rY,
-                    Real *const vX, Real *const vY, Real *const norX,
-                    Real *const norY, Real *const vNorX, Real *const vNorY) {
-    rX[0] = 0.0;
-    rY[0] = 0.0;
-    norX[0] = 0.0;
-    norY[0] = 1.0;
-    Real ksiX = 1.0;
-    Real ksiY = 0.0;
-    vX[0] = 0.0;
-    vY[0] = 0.0;
-    vNorX[0] = 0.0;
-    vNorY[0] = 0.0;
-    Real vKsiX = 0.0;
-    Real vKsiY = 0.0;
-    for (int i = 1; i < Nm; i++) {
-      const Real dksiX = curv[i - 1] * norX[i - 1];
-      const Real dksiY = curv[i - 1] * norY[i - 1];
-      const Real dnuX = -curv[i - 1] * ksiX;
-      const Real dnuY = -curv[i - 1] * ksiY;
-      const Real dvKsiX =
-          curv_dt[i - 1] * norX[i - 1] + curv[i - 1] * vNorX[i - 1];
-      const Real dvKsiY =
-          curv_dt[i - 1] * norY[i - 1] + curv[i - 1] * vNorY[i - 1];
-      const Real dvNuX = -curv_dt[i - 1] * ksiX - curv[i - 1] * vKsiX;
-      const Real dvNuY = -curv_dt[i - 1] * ksiY - curv[i - 1] * vKsiY;
-      const Real ds = rS[i] - rS[i - 1];
-      rX[i] = rX[i - 1] + ds * ksiX;
-      rY[i] = rY[i - 1] + ds * ksiY;
-      norX[i] = norX[i - 1] + ds * dnuX;
-      norY[i] = norY[i - 1] + ds * dnuY;
-      ksiX += ds * dksiX;
-      ksiY += ds * dksiY;
-      vX[i] = vX[i - 1] + ds * vKsiX;
-      vY[i] = vY[i - 1] + ds * vKsiY;
-      vNorX[i] = vNorX[i - 1] + ds * dvNuX;
-      vNorY[i] = vNorY[i - 1] + ds * dvNuY;
-      vKsiX += ds * dvKsiX;
-      vKsiY += ds * dvKsiY;
-      const Real d1 = ksiX * ksiX + ksiY * ksiY;
-      const Real d2 = norX[i] * norX[i] + norY[i] * norY[i];
-      if (d1 > std::numeric_limits<Real>::epsilon()) {
-        const Real normfac = 1.0 / std::sqrt(d1);
-        ksiX *= normfac;
-        ksiY *= normfac;
-      }
-      if (d2 > std::numeric_limits<Real>::epsilon()) {
-        const Real normfac = 1.0 / std::sqrt(d2);
-        norX[i] *= normfac;
-        norY[i] *= normfac;
-      }
-    }
-  }
-};
 struct Frenet3D {
   static void solve(const int Nm, const Real *const rS, const Real *const curv,
                     const Real *const curv_dt, const Real *const tors,
@@ -7830,8 +7761,6 @@ struct Frenet3D {
     }
   }
 };
-} // namespace cubismup3d
-#endif
 #ifndef CubismUP_3D_Interpolation1D_h
 #define CubismUP_3D_Interpolation1D_h
 namespace cubismup3d {
@@ -10915,129 +10844,6 @@ std::stringstream &BufferedLogger::get_stream(const std::string &filename) {
 void BufferedLogger::flush(void) {
   for (auto &pair : impl->files)
     impl->flush(pair);
-}
-} // namespace cubismup3d
-namespace cubismup3d {
-using namespace cubism;
-class CarlingFishMidlineData : public FishMidlineData {
-public:
-  bool quadraticAmplitude = false;
-
-protected:
-  const Real carlingAmp;
-  static constexpr Real carlingInv = 0.03125;
-  const Real quadraticFactor;
-  inline Real rampFactorSine(const Real t, const Real T) const {
-    return (t < T ? std::sin(0.5 * M_PI * t / T) : 1.0);
-  }
-  inline Real rampFactorVelSine(const Real t, const Real T) const {
-    return (t < T ? 0.5 * M_PI / T * std::cos(0.5 * M_PI * t / T) : 0.0);
-  }
-  inline Real getQuadAmp(const Real s) const {
-    return quadraticFactor *
-           (length - .825 * (s - length) + 1.625 * (s * s / length - length));
-  }
-  inline Real getLinAmp(const Real s) const {
-    return carlingAmp * (s + carlingInv * length);
-  }
-  inline Real getArg(const Real s, const Real t) const {
-    return 2.0 * M_PI * (s / (waveLength * length) - t / Tperiod + phaseShift);
-  }
-
-public:
-  CarlingFishMidlineData(Real L, Real T, Real phi, Real _h, Real A)
-      : FishMidlineData(L, T, phi, _h, A), carlingAmp(.1212121212 * A),
-        quadraticFactor(.1 * A) {}
-  virtual void computeMidline(const Real t, const Real dt) override;
-  template <bool bQuadratic> void _computeMidlinePosVel(const Real t) {
-    const Real rampFac = rampFactorSine(t, Tperiod), dArg = -2 * M_PI / Tperiod;
-    const Real rampFacVel = rampFactorVelSine(t, Tperiod);
-    {
-      const Real arg = getArg(rS[0], t);
-      const Real cosa = std::cos(arg), sina = std::sin(arg);
-      const Real amp = bQuadratic ? getQuadAmp(rS[0]) : getLinAmp(rS[0]);
-      const Real Y = sina * amp, VY = cosa * dArg * amp;
-      rX[0] = 0.0;
-      vX[0] = 0.0;
-      rY[0] = rampFac * Y;
-      vY[0] = rampFac * VY + rampFacVel * Y;
-      rZ[0] = 0.0;
-      vZ[0] = 0.0;
-    }
-    for (int i = 1; i < Nm; ++i) {
-      const Real arg = getArg(rS[i], t);
-      const Real cosa = std::cos(arg), sina = std::sin(arg);
-      const Real amp = bQuadratic ? getQuadAmp(rS[i]) : getLinAmp(rS[i]);
-      const Real Y = sina * amp, VY = cosa * dArg * amp;
-      rY[i] = rampFac * Y;
-      vY[i] = rampFac * VY + rampFacVel * Y;
-      const Real dy = rY[i] - rY[i - 1], ds = rS[i] - rS[i - 1],
-                 dVy = vY[i] - vY[i - 1];
-      const Real dx = std::sqrt(ds * ds - dy * dy);
-      assert(dx > 0);
-      rX[i] = rX[i - 1] + dx;
-      vX[i] = vX[i - 1] - dy / dx * dVy;
-      rZ[i] = 0.0;
-      vZ[i] = 0.0;
-    }
-  }
-};
-void CarlingFishMidlineData::computeMidline(const Real t, const Real dt) {
-  if (quadraticAmplitude)
-    _computeMidlinePosVel<true>(t);
-  else
-    _computeMidlinePosVel<false>(t);
-#pragma omp parallel for schedule(static)
-  for (int i = 0; i < Nm - 1; i++) {
-    const Real ds = rS[i + 1] - rS[i];
-    const Real tX = rX[i + 1] - rX[i];
-    const Real tY = rY[i + 1] - rY[i];
-    const Real tVX = vX[i + 1] - vX[i];
-    const Real tVY = vY[i + 1] - vY[i];
-    norX[i] = -tY / ds;
-    norY[i] = tX / ds;
-    norZ[i] = 0.0;
-    vNorX[i] = -tVY / ds;
-    vNorY[i] = tVX / ds;
-    vNorZ[i] = 0.0;
-    binX[i] = 0.0;
-    binY[i] = 0.0;
-    binZ[i] = 1.0;
-    vBinX[i] = 0.0;
-    vBinY[i] = 0.0;
-    vBinZ[i] = 0.0;
-  }
-  norX[Nm - 1] = norX[Nm - 2];
-  norY[Nm - 1] = norY[Nm - 2];
-  norZ[Nm - 1] = norZ[Nm - 2];
-  vNorX[Nm - 1] = vNorX[Nm - 2];
-  vNorY[Nm - 1] = vNorY[Nm - 2];
-  vNorZ[Nm - 1] = vNorZ[Nm - 2];
-  binX[Nm - 1] = binX[Nm - 2];
-  binY[Nm - 1] = binY[Nm - 2];
-  binZ[Nm - 1] = binZ[Nm - 2];
-  vBinX[Nm - 1] = vBinX[Nm - 2];
-  vBinY[Nm - 1] = vBinY[Nm - 2];
-  vBinZ[Nm - 1] = vBinZ[Nm - 2];
-}
-CarlingFish::CarlingFish(SimulationData &s, ArgumentParser &p) : Fish(s, p) {
-  const Real ampFac = p("-amplitudeFactor").asDouble(1.0);
-  const bool bQuadratic = p("-bQuadratic").asBool(false);
-  const Real Tperiod = p("-T").asDouble(1.0);
-  const Real phaseShift = p("-phi").asDouble(0.0);
-  CarlingFishMidlineData *localFish =
-      new CarlingFishMidlineData(length, Tperiod, phaseShift, sim.hmin, ampFac);
-  assert(myFish == nullptr);
-  myFish = (FishMidlineData *)localFish;
-  localFish->quadraticAmplitude = bQuadratic;
-  std::string heightName = p("-heightProfile").asString("baseline");
-  std::string widthName = p("-widthProfile").asString("baseline");
-  MidlineShapes::computeWidthsHeights(heightName, widthName, length, myFish->rS,
-                                      myFish->height, myFish->width, myFish->Nm,
-                                      sim.rank);
-  if (!sim.rank)
-    printf("CarlingFish: N:%d, L:%f, T:%f, phi:%f, amplitude:%f\n", myFish->Nm,
-           length, Tperiod, phaseShift, ampFac);
 }
 } // namespace cubismup3d
 namespace cubismup3d {
@@ -14951,8 +14757,6 @@ _createObstacle(SimulationData &sim, const std::string &objectName,
     return std::make_shared<Sphere>(sim, lineParser);
   if (objectName == "StefanFish" || objectName == "stefanfish")
     return std::make_shared<StefanFish>(sim, lineParser);
-  if (objectName == "CarlingFish")
-    return std::make_shared<CarlingFish>(sim, lineParser);
   if (objectName == "Naca")
     return std::make_shared<Naca>(sim, lineParser);
   if (objectName == "SmartNaca")
