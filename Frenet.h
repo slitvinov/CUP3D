@@ -1,9 +1,5 @@
 #ifndef CubismUP_3D_Frenet_h
 #define CubismUP_3D_Frenet_h
-
-#include "LDefinitions.h"
-
-
 CubismUP_3D_NAMESPACE_BEGIN
 
     struct Frenet2D {

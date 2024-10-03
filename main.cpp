@@ -2,6 +2,7 @@
 #include <array>
 #include <cassert>
 #include <cctype>
+#include <chrono>
 #include <climits>
 #include <cmath>
 #include <cstdio>
@@ -15,9 +16,13 @@
 #include <hdf5.h>
 #include <iomanip>
 #include <ios>
+#include <iosfwd>
 #include <iostream>
 #include <limits>
+#include <list>
+#include <locale>
 #include <map>
+#include <math.h>
 #include <memory>
 #include <mpi.h>
 #include <numeric>
@@ -26,68 +31,20 @@
 #include <random>
 #include <set>
 #include <sstream>
+#include <stack>
+#include <stdio.h>
 #include <string>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include <type_traits>
 #include <unistd.h>
 #include <unordered_map>
 #include <utility>
 #include <vector>
-#include <iosfwd>
-#include <map>
-#include <string>
-#include <array>
-#include <cassert>
-#include <cstring>
-#include <math.h>
-#include <string>
-#include <array>
-#include <algorithm>
-#include <locale>
-#include <sstream>
-#include <utility>
-#include <limits>
-#include <math.h>
-#include <vector>
-#include <algorithm>
-#include <iomanip>
-#include <iostream>
-#include <list>
-#include <numeric>
-#include <random>
-#include <vector>
-#include <cstdio>
-#include <array>
-#include <cassert>
-#include <iosfwd>
-#include <string>
-#include <map>
-#include <set>
-#include <vector>
-#include <memory>
-#include <mpi.h>
-#include <array>
-#include <limits>
-#include <memory>
-#include <utility>
-#include <vector>
-#include <map>
-#include <stack>
-#include <stdio.h>
-#include <string>
-#include <sys/time.h>
-#include <cmath>
-#include <array>
-#include <iostream>
-#include <fstream>
-#include <cassert>
-#include <iostream>
-#include <vector>
-#include <math.h>
-#include <chrono>
 
 #include "Base.h"
 #include "AlignedAllocator.h"
+#include "SpaceFillingCurve.h"
 #include "BlockInfo.h"
 #include "FluxCorrection.h"
 #include "Grid.h"
@@ -97,8 +54,10 @@
 #include "AMR_SynchronizerMPI.h"
 #include "FluxCorrectionMPI.h"
 #include "GridMPI.h"
+#include "Matrix3D.h"
 #include "BlockLab.h"
 #include "BlockLabMPI.h"
+#include "LoadBalancer.h"
 #include "AMR_MeshAdaptation.h"
 #include "Definitions.h"
 #include "LDefinitions.h"
@@ -160,8 +119,6 @@ template <> inline hid_t get_hdf5_type<double>() { return H5T_NATIVE_DOUBLE; }
 template <> inline hid_t get_hdf5_type<long double>() {
   return H5T_NATIVE_LDOUBLE;
 }
-
-#include "BlockInfo.h"
 
 namespace cubism {
 

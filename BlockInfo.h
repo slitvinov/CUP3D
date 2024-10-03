@@ -1,15 +1,5 @@
 #pragma once
 
-#ifndef DIMENSION
-#define DIMENSION 3
-#endif
-
-#if DIMENSION == 3
-#include "SpaceFillingCurve.h"
-#else
-#include "SpaceFillingCurve2D.h"
-#endif
-
 namespace cubism {
 
 enum State : signed char { Leave = 0, Refine = 1, Compress = -1 };

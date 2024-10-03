@@ -1,9 +1,4 @@
 #pragma once
-
-#include "BlockInfo.h"
-#include "Matrix3D.h"
-#include "StencilInfo.h"
-
 namespace cubism {
 #define memcpy2(a, b, c) memcpy((a), (b), (c))
 

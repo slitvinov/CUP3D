@@ -1,6 +1,5 @@
 #pragma once
 
-#include "LDefinitions.h"
 
 namespace cubismup3d {
 
