@@ -16,6 +16,7 @@
 #include <random>
 #include <gsl/gsl_linalg.h>
 
+#include "Operator.h"
 #include "AdvectionDiffusion.h"
 #include "AdvectionDiffusionImplicit.h"
 #include "ArgumentParser.h"
@@ -58,7 +59,6 @@
 #include "SimulationData.h"
 #include "PressureProjection.h"
 #include "Simulation.h"
-#include "Operator.h"
 #include "Profiler.h"
 
 CubismUP_3D_NAMESPACE_BEGIN
