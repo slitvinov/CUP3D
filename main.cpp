@@ -19,7 +19,7 @@
 #include "Cylinder.h"
 #include "ObstacleLibrary.h"
 #include "CylinderNozzle.h"
-#include <ArgumentParser.h>
+#include "ArgumentParser.h"
 #include "DiffusionSolverAMRKernels.h"
 #include <cassert>
 #include "Ellipsoid.h"
@@ -29,7 +29,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include "Fish.h"
-#include <HDF5Dumper.h>
+#include "HDF5Dumper.h"
 #include <gsl/gsl_bspline.h>
 #include <gsl/gsl_statistics.h>
 #include "FixMassFlux.h"
