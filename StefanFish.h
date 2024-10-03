@@ -11,8 +11,7 @@
 #include "FishLibrary.h"
 #include "FishShapes.h"
 #include "ObstacleVector.h"
-
-#include <ArgumentParser.h>
+#include "ArgumentParser.h"
 
 #include <array>
 #include <cmath>

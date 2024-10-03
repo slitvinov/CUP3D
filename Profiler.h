@@ -18,10 +18,7 @@
 #include <stack>
 #include <stdio.h>
 #include <string>
-
 #include <sys/time.h>
-//#include <tbb/tick_count.h>
-// namespace tbb { class tick_count; }
 
 namespace cubism {
 

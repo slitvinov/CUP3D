@@ -11,7 +11,7 @@
 #include "SimulationData.h"
 #include "Operator.h"
 #include "DiffusionSolverAMRKernels.h"
-#include <BlockInfo.h>
+#include "BlockInfo.h"
 #include <vector>
 #include <cassert>
 #include <cstring>

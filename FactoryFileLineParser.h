@@ -8,9 +8,7 @@
 
 #ifndef CubismUP_3D_FactoryFileLineParser_h
 #define CubismUP_3D_FactoryFileLineParser_h
-
-#include <ArgumentParser.h>
-
+#include "ArgumentParser.h"
 #include <algorithm>
 #include <locale>
 #include <sstream>
