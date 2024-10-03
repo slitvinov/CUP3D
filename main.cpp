@@ -1,3 +1,4 @@
+#define OMPI_SKIP_MPICXX 1
 #include <algorithm>
 #include <array>
 #include <cassert>
@@ -42,8 +43,8 @@
 #include <utility>
 #include <vector>
 
-using Real = double;
-#define MPI_Real MPI_DOUBLE
+typedef double Real;
+static const MPI_Datatype MPI_Real = MPI_DOUBLE;
 namespace cubismup3d {
 
 template <typename T, int kAlignment> class aligned_allocator {
@@ -9282,9 +9283,6 @@ public:
 };
 
 } // namespace cubism
-
-// https://github.com/open-mpi/ompi/issues/5157#issuecomment-388495496
-#define OMPI_SKIP_MPICXX 1 // silence annoying openmpi warnings
 
 using namespace cubism;
 
