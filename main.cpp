@@ -6554,7 +6554,6 @@ using ScalarAMR = cubism::MeshAdaptation<ScalarLab>;
 using VectorAMR = cubism::MeshAdaptation<VectorLab>;
 } // namespace cubismup3d
 namespace cubism {
-class Profiler;
 class ArgumentParser;
 } // namespace cubism
 namespace cubismup3d {
@@ -6565,7 +6564,6 @@ class PoissonSolverBase;
 struct SimulationData {
   MPI_Comm comm;
   int rank;
-  cubism::Profiler *profiler = nullptr;
   ScalarGrid *chi = nullptr;
   ScalarGrid *pres = nullptr;
   VectorGrid *vel = nullptr;
@@ -6635,7 +6633,6 @@ struct SimulationData {
   Real uMax_forced = 0;
   bool bFixMassFlux = false;
   int freqDiagnostics = 0;
-  int freqProfiler = 0;
   int saveFreq = 0;
   Real dumpTime = 0;
   Real nextSaveTime = 0;
@@ -6647,9 +6644,6 @@ struct SimulationData {
   bool implicitDiffusion;
   Real DiffusionErrorTol;
   Real DiffusionErrorTolRel;
-  void startProfiler(std::string name) const;
-  void stopProfiler() const;
-  void printResetProfiler();
   void _preprocessArguments();
   ~SimulationData();
   SimulationData() = delete;
@@ -9537,171 +9531,6 @@ public:
   void operator()(Real dt) override;
   std::string getName() { return "PressureProjection"; }
 };
-} // namespace cubismup3d
-namespace cubism {
-const bool bVerboseProfiling = false;
-class ProfileAgent {
-  typedef timeval ClockTime;
-  enum ProfileAgentState {
-    ProfileAgentState_Created,
-    ProfileAgentState_Started,
-    ProfileAgentState_Stopped
-  };
-  ClockTime m_tStart, m_tEnd;
-  ProfileAgentState m_state;
-  long double m_dAccumulatedTime;
-  int m_nMeasurements;
-  int m_nMoney;
-  static void _getTime(ClockTime &time) { gettimeofday(&time, NULL); }
-  static double _getElapsedTime(const ClockTime &tS, const ClockTime &tE) {
-    return (tE.tv_sec - tS.tv_sec) + 1e-6 * (tE.tv_usec - tS.tv_usec);
-  }
-  void _reset() {
-    m_tStart = ClockTime();
-    m_tEnd = ClockTime();
-    m_dAccumulatedTime = 0;
-    m_nMeasurements = 0;
-    m_nMoney = 0;
-    m_state = ProfileAgentState_Created;
-  }
-
-public:
-  ProfileAgent()
-      : m_tStart(), m_tEnd(), m_state(ProfileAgentState_Created),
-        m_dAccumulatedTime(0), m_nMeasurements(0), m_nMoney(0) {}
-  void start() {
-    assert(m_state == ProfileAgentState_Created ||
-           m_state == ProfileAgentState_Stopped);
-    if (bVerboseProfiling) {
-      printf("start\n");
-    }
-    _getTime(m_tStart);
-    m_state = ProfileAgentState_Started;
-  }
-  void stop(int nMoney = 0) {
-    assert(m_state == ProfileAgentState_Started);
-    if (bVerboseProfiling) {
-      printf("stop\n");
-    }
-    _getTime(m_tEnd);
-    m_dAccumulatedTime += _getElapsedTime(m_tStart, m_tEnd);
-    m_nMeasurements++;
-    m_nMoney += nMoney;
-    m_state = ProfileAgentState_Stopped;
-  }
-  friend class Profiler;
-};
-struct ProfileSummaryItem {
-  std::string sName;
-  double dTime;
-  int nMoney;
-  int nSamples;
-  double dAverageTime;
-  ProfileSummaryItem(std::string sName_, double dTime_, int nMoney_,
-                     int nSamples_)
-      : sName(sName_), dTime(dTime_), nMoney(nMoney_), nSamples(nSamples_),
-        dAverageTime(dTime_ / nSamples_) {}
-};
-class Profiler {
-protected:
-  std::map<std::string, ProfileAgent *> m_mapAgents;
-  std::stack<std::string> m_mapStoppedAgents;
-
-public:
-  void push_start(std::string sAgentName) {
-    if (m_mapStoppedAgents.size() > 0)
-      getAgent(m_mapStoppedAgents.top()).stop();
-    m_mapStoppedAgents.push(sAgentName);
-    getAgent(sAgentName).start();
-  }
-  void pop_stop() {
-    std::string sCurrentAgentName = m_mapStoppedAgents.top();
-    getAgent(sCurrentAgentName).stop();
-    m_mapStoppedAgents.pop();
-    if (m_mapStoppedAgents.size() == 0)
-      return;
-    getAgent(m_mapStoppedAgents.top()).start();
-  }
-  void clear() {
-    for (std::map<std::string, ProfileAgent *>::iterator it =
-             m_mapAgents.begin();
-         it != m_mapAgents.end(); it++) {
-      delete it->second;
-      it->second = NULL;
-    }
-    m_mapAgents.clear();
-  }
-  Profiler() : m_mapAgents() {}
-  ~Profiler() { clear(); }
-  void printSummary(FILE *outFile = NULL) const {
-    std::vector<ProfileSummaryItem> v = createSummary();
-    double dTotalTime = 0;
-    double dTotalTime2 = 0;
-    for (std::vector<ProfileSummaryItem>::const_iterator it = v.begin();
-         it != v.end(); it++)
-      dTotalTime += it->dTime;
-    for (std::vector<ProfileSummaryItem>::const_iterator it = v.begin();
-         it != v.end(); it++)
-      dTotalTime2 += it->dTime - it->nSamples * 1.30e-6;
-    for (std::vector<ProfileSummaryItem>::const_iterator it = v.begin();
-         it != v.end(); it++) {
-      const ProfileSummaryItem &item = *it;
-      const double avgTime = item.dAverageTime;
-      printf("[%15s]: \t%02.0f-%02.0f%%\t%03.3e (%03.3e) s\t%03.3f (%03.3f) "
-             "s\t(%d samples)\n",
-             item.sName.data(), 100 * item.dTime / dTotalTime,
-             100 * (item.dTime - item.nSamples * 1.3e-6) / dTotalTime2, avgTime,
-             avgTime - 1.30e-6, item.dTime,
-             item.dTime - item.nSamples * 1.30e-6, item.nSamples);
-      if (outFile)
-        fprintf(outFile, "[%15s]: \t%02.2f%%\t%03.3f s\t(%d samples)\n",
-                item.sName.data(), 100 * item.dTime / dTotalTime, avgTime,
-                item.nSamples);
-    }
-    printf("[Total time]: \t%f\n", dTotalTime);
-    if (outFile)
-      fprintf(outFile, "[Total time]: \t%f\n", dTotalTime);
-    if (outFile)
-      fflush(outFile);
-    if (outFile)
-      fclose(outFile);
-  }
-  std::vector<ProfileSummaryItem>
-  createSummary(bool bSkipIrrelevantEntries = true) const {
-    std::vector<ProfileSummaryItem> result;
-    result.reserve(m_mapAgents.size());
-    for (std::map<std::string, ProfileAgent *>::const_iterator it =
-             m_mapAgents.begin();
-         it != m_mapAgents.end(); it++) {
-      const ProfileAgent &agent = *it->second;
-      if (!bSkipIrrelevantEntries || agent.m_dAccumulatedTime > 1e-3)
-        result.push_back(ProfileSummaryItem(it->first, agent.m_dAccumulatedTime,
-                                            agent.m_nMoney,
-                                            agent.m_nMeasurements));
-    }
-    return result;
-  }
-  void reset() {
-    for (std::map<std::string, ProfileAgent *>::const_iterator it =
-             m_mapAgents.begin();
-         it != m_mapAgents.end(); it++)
-      it->second->_reset();
-  }
-  ProfileAgent &getAgent(std::string sName) {
-    if (bVerboseProfiling) {
-      printf("%s ", sName.data());
-    }
-    std::map<std::string, ProfileAgent *>::const_iterator it =
-        m_mapAgents.find(sName);
-    const bool bFound = it != m_mapAgents.end();
-    if (bFound)
-      return *it->second;
-    ProfileAgent *agent = new ProfileAgent();
-    m_mapAgents[sName] = agent;
-    return *agent;
-  }
-  friend class ProfileAgent;
-};
 } // namespace cubism
 namespace cubismup3d {
 class Simulation {
@@ -10862,7 +10691,6 @@ void getZImplParallel(const std::vector<cubism::BlockInfo> &vInfo,
 namespace cubismup3d {
 using namespace cubism;
 void ExternalForcing::operator()(const double dt) {
-  sim.startProfiler("Forcing Kernel");
   const int dir = sim.BCy_flag == wall ? 1 : 2;
   const Real H = sim.extents[dir];
   const Real gradPdt = 8 * sim.uMax_forced * sim.nu / H / H * dt;
@@ -10877,7 +10705,6 @@ void ExternalForcing::operator()(const double dt) {
           v(x, y, z).u[DIRECTION] += gradPdt;
         }
   }
-  sim.stopProfiler();
 }
 } // namespace cubismup3d
 #pragma GCC diagnostic push
@@ -12519,7 +12346,6 @@ static Real avgUx_nonUniform(const std::vector<BlockInfo> &myInfo,
 }
 FixMassFlux::FixMassFlux(SimulationData &s) : Operator(s) {}
 void FixMassFlux::operator()(const double dt) {
-  sim.startProfiler("FixedMassFlux");
   const std::vector<BlockInfo> &velInfo = sim.velInfo();
   const Real volume = sim.extents[0] * sim.extents[1] * sim.extents[2];
   const Real y_max = sim.extents[1];
@@ -12549,7 +12375,6 @@ void FixMassFlux::operator()(const double dt) {
           v(x, y, z).u[0] += aux;
       }
   }
-  sim.stopProfiler();
 }
 } // namespace cubismup3d
 namespace cubismup3d {
@@ -15525,7 +15350,6 @@ void Simulation::initialGridRefinement() {
   }
 }
 void Simulation::adaptMesh() {
-  sim.startProfiler("Mesh refinement");
   computeVorticity();
   compute<ScalarLab>(GradChiOnTmp(sim), sim.chi);
   sim.tmpV_amr->Tag();
@@ -15539,7 +15363,6 @@ void Simulation::adaptMesh() {
   sim.pres_amr->Adapt(sim.time, false, false);
   sim.vel_amr->Adapt(sim.time, false, false);
   sim.MeshChanged = sim.pres->UpdateFluxCorrection;
-  sim.stopProfiler();
 }
 const std::vector<std::shared_ptr<Obstacle>> &Simulation::getShapes() const {
   return sim.obstacle_vector->getObstacleVector();
@@ -15662,14 +15485,10 @@ bool Simulation::advance(const Real dt) {
   if (sim.step % 20 == 0 || sim.step < 10)
     adaptMesh();
   for (size_t c = 0; c < sim.pipeline.size(); c++) {
-    sim.startProfiler(sim.pipeline[c]->getName());
     (*sim.pipeline[c])(dt);
-    sim.stopProfiler();
   }
   sim.step++;
   sim.time += dt;
-  if (sim.rank == 0 && sim.freqProfiler > 0 && sim.step % sim.freqProfiler == 0)
-    sim.printResetProfiler();
   if ((sim.endTime > 0 && sim.time > sim.endTime) ||
       (sim.nsteps != 0 && sim.step >= sim.nsteps)) {
     return true;
@@ -15723,7 +15542,6 @@ SimulationData::SimulationData(MPI_Comm mpicomm, ArgumentParser &parser)
   lambda = parser("-lambda").asDouble(1e6);
   DLM = parser("-use-dlm").asDouble(0);
   freqDiagnostics = parser("-freqDiagnostics").asInt(100);
-  freqProfiler = parser("-freqProfiler").asInt(0);
   PoissonErrorTol = parser("-poissonTol").asDouble(1e-6);
   PoissonErrorTolRel = parser("-poissonTolRel").asDouble(1e-4);
   bMeanConstraint = parser("-bMeanConstraint").asInt(1);
@@ -15759,8 +15577,6 @@ SimulationData::SimulationData(MPI_Comm mpicomm, ArgumentParser &parser)
   dumpVelocityZ = parser("-dumpVelocityZ").asBool(false);
 }
 void SimulationData::_preprocessArguments() {
-  assert(profiler == nullptr);
-  profiler = new cubism::Profiler();
   if (bpdx < 1 || bpdy < 1 || bpdz < 1) {
     fprintf(stderr, "Invalid bpd: %d x %d x %d\n", bpdx, bpdy, bpdz);
     fflush(0);
@@ -15792,7 +15608,6 @@ void SimulationData::_preprocessArguments() {
   assert(dumpTime >= 0.0);
 }
 SimulationData::~SimulationData() {
-  delete profiler;
   delete obstacle_vector;
   delete chi;
   delete vel;
@@ -15804,14 +15619,6 @@ SimulationData::~SimulationData() {
   delete lhs_amr;
   delete tmpV_amr;
   delete pres_amr;
-}
-void SimulationData::startProfiler(std::string name) const {
-  profiler->push_start(name);
-}
-void SimulationData::stopProfiler() const { profiler->pop_stop(); }
-void SimulationData::printResetProfiler() {
-  profiler->printSummary();
-  profiler->reset();
 }
 } // namespace cubismup3d
 namespace cubismup3d {
