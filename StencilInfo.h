@@ -1,9 +1,5 @@
 #pragma once
 
-#include <cassert>
-#include <iostream>
-#include <vector>
-
 namespace cubism {
 
 /**

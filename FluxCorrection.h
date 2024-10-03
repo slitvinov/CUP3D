@@ -1,9 +1,5 @@
 #pragma once
 
-#include <map>
-#include <algorithm>
-#include "BlockInfo.h"
-
 namespace cubism {
 
 /**

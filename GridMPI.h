@@ -1,24 +1,5 @@
 #pragma once
 
-#include <map>
-#include <mpi.h>
-#include <set>
-#include <vector>
-
-#include "StencilInfo.h"
-#include "BlockInfo.h"
-#include "AMR_SynchronizerMPI.h"
-#include "FluxCorrectionMPI.h"
-#include "Grid.h"
-
-#include <unistd.h>
-#include <ios>
-#include <iostream>
-#include <fstream>
-#include <string>
-#include <sstream>
-#include <string>
-
 namespace cubism {
 
 /** Similar to Grid, but with functionalities for multiple MPI processes.

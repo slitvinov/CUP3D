@@ -1,8 +1,5 @@
 #pragma once
 
-#include "BlockLab.h"
-#include "AMR_SynchronizerMPI.h"
-
 namespace cubism {
 
 /** \brief Similar to BlockLab, but should be used with simulations that support
