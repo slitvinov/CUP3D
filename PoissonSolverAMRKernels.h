@@ -1,8 +1,4 @@
 #pragma once
-
-#include "LDefinitions.h"
-#include "BlockInfo.h"
-
 namespace cubismup3d {
 namespace poisson_kernels {
 

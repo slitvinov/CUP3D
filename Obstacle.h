@@ -1,8 +1,4 @@
 #pragma once
-
-#include "ObstacleBlock.h"
-#include "SimulationData.h"
-
 namespace cubism {
 class ArgumentParser;
 }

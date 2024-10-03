@@ -1,8 +1,5 @@
 #ifndef CubismUP_3D_Pipe_h
 #define CubismUP_3D_Pipe_h
-
-#include "Obstacle.h"
-
 CubismUP_3D_NAMESPACE_BEGIN
 
     class Pipe : public Obstacle {
