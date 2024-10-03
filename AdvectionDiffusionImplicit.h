@@ -1,14 +1,5 @@
 #pragma once
 
-#include "Operator.h"
-
-#include "SimulationData.h"
-#include "Operator.h"
-#include "DiffusionSolverAMRKernels.h"
-#include "BlockInfo.h"
-#include <vector>
-#include <cassert>
-#include <cstring>
 
 CubismUP_3D_NAMESPACE_BEGIN
 
