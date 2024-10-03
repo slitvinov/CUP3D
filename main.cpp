@@ -1189,34 +1189,6 @@ inline void unpack_subregion(
 }
 } // namespace cubism
 namespace cubism {
-#ifdef PRESERVE_SYMMETRY
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-function"
-template <typename T> static T ConsistentSum(const T a, const T b, const T c) {
-  const T s1 = a + (b + c);
-  const T s2 = b + (c + a);
-  const T s3 = c + (a + b);
-  return 0.5 * (std::min({s1, s2, s3}) + std::max({s1, s2, s3}));
-}
-template <typename T>
-static T ConsistentSum(const T a, const T b, const T c, const T d) {
-  const T s1 = (a + b) + (c + d);
-  const T s2 = (c + a) + (b + d);
-  const T s3 = (b + c) + (a + d);
-  return 0.5 * (std::min({s1, s2, s3}) + std::max({s1, s2, s3}));
-}
-template <typename T>
-static T ConsistentAverage(const T e000, const T e001, const T e010,
-                           const T e011, const T e100, const T e101,
-                           const T e110, const T e111) {
-  const T a = e000 + e111;
-  const T b = e001 + e110;
-  const T c = e010 + e101;
-  const T d = e100 + e011;
-  return 0.125 * ConsistentSum(a, b, c, d);
-}
-#pragma GCC diagnostic pop
-#endif
 } // namespace cubism
 namespace cubism {
 template <typename T> class GrowingVector {
@@ -1883,17 +1855,6 @@ template <typename Real, typename TGrid> class SynchronizerMPI_AMR {
             const int XX = (abs(code[0]) == 1) ? 2 * (ix - code[0] * nX) +
                                                      std::min(0, code[0]) * nX
                                                : ix;
-#ifdef PRESERVE_SYMMETRY
-            dst[pos] =
-                ConsistentAverage(src[XX + (YY + (ZZ)*nY) * nX],
-                                  src[XX + (YY + (ZZ + 1) * nY) * nX],
-                                  src[XX + (YY + 1 + (ZZ)*nY) * nX],
-                                  src[XX + (YY + 1 + (ZZ + 1) * nY) * nX],
-                                  src[XX + 1 + (YY + (ZZ)*nY) * nX],
-                                  src[XX + 1 + (YY + (ZZ + 1) * nY) * nX],
-                                  src[XX + 1 + (YY + 1 + (ZZ)*nY) * nX],
-                                  src[XX + 1 + (YY + 1 + (ZZ + 1) * nY) * nX]);
-#else
             dst[pos] = 0.125 * (src[XX + (YY + (ZZ)*nY) * nX] +
                                 src[XX + (YY + (ZZ + 1) * nY) * nX] +
                                 src[XX + (YY + 1 + (ZZ)*nY) * nX] +
@@ -1902,7 +1863,6 @@ template <typename Real, typename TGrid> class SynchronizerMPI_AMR {
                                 src[XX + 1 + (YY + (ZZ + 1) * nY) * nX] +
                                 src[XX + 1 + (YY + 1 + (ZZ)*nY) * nX] +
                                 src[XX + 1 + (YY + 1 + (ZZ + 1) * nY) * nX]);
-#endif
             pos++;
           }
         }
@@ -1922,27 +1882,6 @@ template <typename Real, typename TGrid> class SynchronizerMPI_AMR {
                                                : ix;
             for (int c = 0; c < NC; c++) {
               int comp = stencil.selcomponents[c];
-#ifdef PRESERVE_SYMMETRY
-              dst[pos] = ConsistentAverage(
-                  (*(src + gptfloats * ((XX) + ((YY) + (ZZ)*nY) * nX) + comp)),
-                  (*(src + gptfloats * ((XX) + ((YY) + (ZZ + 1) * nY) * nX) +
-                     comp)),
-                  (*(src + gptfloats * ((XX) + ((YY + 1) + (ZZ)*nY) * nX) +
-                     comp)),
-                  (*(src +
-                     gptfloats * ((XX) + ((YY + 1) + (ZZ + 1) * nY) * nX) +
-                     comp)),
-                  (*(src + gptfloats * ((XX + 1) + ((YY) + (ZZ)*nY) * nX) +
-                     comp)),
-                  (*(src +
-                     gptfloats * ((XX + 1) + ((YY) + (ZZ + 1) * nY) * nX) +
-                     comp)),
-                  (*(src + gptfloats * ((XX + 1) + ((YY + 1) + (ZZ)*nY) * nX) +
-                     comp)),
-                  (*(src +
-                     gptfloats * ((XX + 1) + ((YY + 1) + (ZZ + 1) * nY) * nX) +
-                     comp)));
-#else
               dst[pos] =
                   0.125 *
                   ((*(src + gptfloats * ((XX) + ((YY) + (ZZ)*nY) * nX) +
@@ -1964,7 +1903,6 @@ template <typename Real, typename TGrid> class SynchronizerMPI_AMR {
                    (*(src +
                       gptfloats * ((XX + 1) + ((YY + 1) + (ZZ + 1) * nY) * nX) +
                       comp)));
-#endif
               pos++;
             }
           }
@@ -2001,25 +1939,6 @@ template <typename Real, typename TGrid> class SynchronizerMPI_AMR {
                          std::min(0, code[0]) * (e[0] - s[0]);
           for (int c = 0; c < NC; c++) {
             int comp = stencil.selcomponents[c];
-#ifdef PRESERVE_SYMMETRY
-            dst[pos] = ConsistentAverage(
-                (*(src + gptfloats * ((XX) + ((YY) + (ZZ)*nY) * nX) + comp)),
-                (*(src + gptfloats * ((XX) + ((YY) + (ZZ + 1) * nY) * nX) +
-                   comp)),
-                (*(src + gptfloats * ((XX) + ((YY + 1) + (ZZ)*nY) * nX) +
-                   comp)),
-                (*(src + gptfloats * ((XX) + ((YY + 1) + (ZZ + 1) * nY) * nX) +
-                   comp)),
-                (*(src + gptfloats * ((XX + 1) + ((YY) + (ZZ)*nY) * nX) +
-                   comp)),
-                (*(src + gptfloats * ((XX + 1) + ((YY) + (ZZ + 1) * nY) * nX) +
-                   comp)),
-                (*(src + gptfloats * ((XX + 1) + ((YY + 1) + (ZZ)*nY) * nX) +
-                   comp)),
-                (*(src +
-                   gptfloats * ((XX + 1) + ((YY + 1) + (ZZ + 1) * nY) * nX) +
-                   comp)));
-#else
             dst[pos] =
                 0.125 *
                 ((*(src + gptfloats * ((XX) + ((YY) + (ZZ)*nY) * nX) + comp)) +
@@ -2038,7 +1957,6 @@ template <typename Real, typename TGrid> class SynchronizerMPI_AMR {
                  (*(src +
                     gptfloats * ((XX + 1) + ((YY + 1) + (ZZ + 1) * nY) * nX) +
                     comp)));
-#endif
             pos++;
           }
         }
@@ -3999,46 +3917,10 @@ protected:
                           const ElementType &e2, const ElementType &e3,
                           const ElementType &e4, const ElementType &e5,
                           const ElementType &e6, const ElementType &e7) {
-#ifdef PRESERVE_SYMMETRY
-    return ConsistentAverage<ElementType>(e0, e1, e2, e3, e4, e5, e6, e7);
-#else
     return 0.125 * (e0 + e1 + e2 + e3 + e4 + e5 + e6 + e7);
-#endif
   }
   virtual void TestInterp(ElementType *C[3][3][3], ElementType *R, int x, int y,
                           int z) {
-#ifdef PRESERVE_SYMMETRY
-    const ElementType dudx = 0.125 * ((*C[2][1][1]) - (*C[0][1][1]));
-    const ElementType dudy = 0.125 * ((*C[1][2][1]) - (*C[1][0][1]));
-    const ElementType dudz = 0.125 * ((*C[1][1][2]) - (*C[1][1][0]));
-    const ElementType dudxdy = 0.015625 * (((*C[0][0][1]) + (*C[2][2][1])) -
-                                           ((*C[2][0][1]) + (*C[0][2][1])));
-    const ElementType dudxdz = 0.015625 * (((*C[0][1][0]) + (*C[2][1][2])) -
-                                           ((*C[2][1][0]) + (*C[0][1][2])));
-    const ElementType dudydz = 0.015625 * (((*C[1][0][0]) + (*C[1][2][2])) -
-                                           ((*C[1][2][0]) + (*C[1][0][2])));
-    const ElementType lap =
-        *C[1][1][1] + 0.03125 * (ConsistentSum((*C[0][1][1]) + (*C[2][1][1]),
-                                               (*C[1][0][1]) + (*C[1][2][1]),
-                                               (*C[1][1][0]) + (*C[1][1][2])) -
-                                 6.0 * (*C[1][1][1]));
-    R[0] = lap + (ConsistentSum((-1.0) * dudx, (-1.0) * dudy, (-1.0) * dudz) +
-                  ConsistentSum(dudxdy, dudxdz, dudydz));
-    R[1] = lap + (ConsistentSum(dudx, (-1.0) * dudy, (-1.0) * dudz) +
-                  ConsistentSum((-1.0) * dudxdy, (-1.0) * dudxdz, dudydz));
-    R[2] = lap + (ConsistentSum((-1.0) * dudx, dudy, (-1.0) * dudz) +
-                  ConsistentSum((-1.0) * dudxdy, dudxdz, (-1.0) * dudydz));
-    R[3] = lap + (ConsistentSum(dudx, dudy, (-1.0) * dudz) +
-                  ConsistentSum(dudxdy, (-1.0) * dudxdz, (-1.0) * dudydz));
-    R[4] = lap + (ConsistentSum((-1.0) * dudx, (-1.0) * dudy, dudz) +
-                  ConsistentSum(dudxdy, (-1.0) * dudxdz, (-1.0) * dudydz));
-    R[5] = lap + (ConsistentSum(dudx, (-1.0) * dudy, dudz) +
-                  ConsistentSum((-1.0) * dudxdy, dudxdz, (-1.0) * dudydz));
-    R[6] = lap + (ConsistentSum((-1.0) * dudx, dudy, dudz) +
-                  ConsistentSum((-1.0) * dudxdy, (-1.0) * dudxdz, dudydz));
-    R[7] = lap + (ConsistentSum(dudx, dudy, dudz) +
-                  ConsistentSum(dudxdy, dudxdz, dudydz));
-#else
     const ElementType dudx = 0.125 * ((*C[2][1][1]) - (*C[0][1][1]));
     const ElementType dudy = 0.125 * ((*C[1][2][1]) - (*C[1][0][1]));
     const ElementType dudz = 0.125 * ((*C[1][1][2]) - (*C[1][1][0]));
@@ -4060,7 +3942,6 @@ protected:
     R[5] = lap + dudx - dudy + dudz - dudxdy + dudxdz - dudydz;
     R[6] = lap - dudx + dudy + dudz - dudxdy - dudxdz + dudydz;
     R[7] = lap + dudx + dudy + dudz + dudxdy + dudxdz + dudydz;
-#endif
   }
   void FineToCoarseExchange(const BlockInfo &info, const int *const code,
                             const int *const s, const int *const e) {
@@ -4394,9 +4275,6 @@ protected:
       }
     }
   }
-#ifdef PRESERVE_SYMMETRY
-  __attribute__((optimize("-O1")))
-#endif
   void
   CoarseFineInterpolation(const BlockInfo &info) {
     const int nX = BlockType::sizeX;
@@ -5481,22 +5359,12 @@ protected:
             for (int k = 0; k < nz; k += 2)
               for (int j = 0; j < ny; j += 2)
                 for (int i = 0; i < nx; i += 2) {
-#ifdef PRESERVE_SYMMETRY
-                  const ElementType B1 = b(i, j, k) + b(i + 1, j + 1, k + 1);
-                  const ElementType B2 = b(i + 1, j, k) + b(i, j + 1, k + 1);
-                  const ElementType B3 = b(i, j + 1, k) + b(i + 1, j, k + 1);
-                  const ElementType B4 = b(i, j, k + 1) + b(i + 1, j + 1, k);
-                  (*Blocks[0])(i / 2 + offsetX[I], j / 2 + offsetY[J],
-                               k / 2 + offsetZ[K]) =
-                      0.125 * ConsistentSum<ElementType>(B1, B2, B3, B4);
-#else
                   (*Blocks[0])(i / 2 + offsetX[I], j / 2 + offsetY[J],
                                k / 2 + offsetZ[K]) =
                       0.125 * ((b(i, j, k) + b(i + 1, j + 1, k + 1)) +
                                (b(i + 1, j, k) + b(i, j + 1, k + 1)) +
                                (b(i, j + 1, k) + b(i + 1, j, k + 1)) +
                                (b(i + 1, j + 1, k) + b(i, j, k + 1)));
-#endif
                 }
           }
     const long long np = grid->getZforward(
@@ -5726,62 +5594,6 @@ protected:
                 const ElementType dudydz =
                     0.25 * ((Lab(x, y + 1, z + 1) + Lab(x, y - 1, z - 1)) -
                             (Lab(x, y + 1, z - 1) + Lab(x, y - 1, z + 1)));
-#ifdef PRESERVE_SYMMETRY
-                const ElementType d2 =
-                    0.03125 * ConsistentSum<ElementType>(dudx2, dudy2, dudz2);
-                b(i, j, k) =
-                    Lab(x, y, z) +
-                    (0.25 * ConsistentSum<ElementType>(
-                                -(1.0) * dudx, -(1.0) * dudy, -(1.0) * dudz) +
-                     d2) +
-                    0.0625 * ConsistentSum(dudxdy, dudxdz, dudydz);
-                b(i + 1, j, k) =
-                    Lab(x, y, z) +
-                    (0.25 * ConsistentSum<ElementType>(dudx, -(1.0) * dudy,
-                                                       -(1.0) * dudz) +
-                     d2) +
-                    0.0625 *
-                        ConsistentSum(-(1.0) * dudxdy, -(1.0) * dudxdz, dudydz);
-                b(i, j + 1, k) =
-                    Lab(x, y, z) +
-                    (0.25 * ConsistentSum<ElementType>(-(1.0) * dudx, dudy,
-                                                       -(1.0) * dudz) +
-                     d2) +
-                    0.0625 *
-                        ConsistentSum(-(1.0) * dudxdy, dudxdz, -(1.0) * dudydz);
-                b(i + 1, j + 1, k) =
-                    Lab(x, y, z) +
-                    (0.25 *
-                         ConsistentSum<ElementType>(dudx, dudy, -(1.0) * dudz) +
-                     d2) +
-                    0.0625 *
-                        ConsistentSum(dudxdy, -(1.0) * dudxdz, -(1.0) * dudydz);
-                b(i, j, k + 1) =
-                    Lab(x, y, z) +
-                    (0.25 * ConsistentSum<ElementType>(-(1.0) * dudx,
-                                                       -(1.0) * dudy, dudz) +
-                     d2) +
-                    0.0625 *
-                        ConsistentSum(dudxdy, -(1.0) * dudxdz, -(1.0) * dudydz);
-                b(i + 1, j, k + 1) =
-                    Lab(x, y, z) +
-                    (0.25 *
-                         ConsistentSum<ElementType>(dudx, -(1.0) * dudy, dudz) +
-                     d2) +
-                    0.0625 *
-                        ConsistentSum(-(1.0) * dudxdy, dudxdz, -(1.0) * dudydz);
-                b(i, j + 1, k + 1) =
-                    Lab(x, y, z) +
-                    (0.25 *
-                         ConsistentSum<ElementType>(-(1.0) * dudx, dudy, dudz) +
-                     d2) +
-                    0.0625 *
-                        ConsistentSum(-(1.0) * dudxdy, -(1.0) * dudxdz, dudydz);
-                b(i + 1, j + 1, k + 1) =
-                    Lab(x, y, z) +
-                    (0.25 * ConsistentSum<ElementType>(dudx, dudy, dudz) + d2) +
-                    0.0625 * ConsistentSum(dudxdy, dudxdz, dudydz);
-#else
                 b(i, j, k) = Lab(x, y, z) +
                              0.25 * (-(1.0) * dudx - dudy - dudz) +
                              0.03125 * (dudx2 + dudy2 + dudz2) +
@@ -5813,7 +5625,6 @@ protected:
                                          0.25 * (dudx + dudy + dudz) +
                                          0.03125 * (dudx2 + dudy2 + dudz2) +
                                          0.0625 * (dudxdy + dudxdz + dudydz);
-#endif
               }
         }
   }
@@ -10518,12 +10329,7 @@ public:
     const KernelVorticity K(sim);
     compute<VectorLab>(K, sim.vel, sim.tmpV);
     const std::vector<BlockInfo> &myInfo = sim.tmpVInfo();
-#ifdef PRESERVE_SYMMETRY
-    Real omega_max_min[6] = {0.};
-#pragma omp parallel for reduction(max : omega_max_min[:6])
-#else
 #pragma omp parallel for
-#endif
     for (size_t i = 0; i < myInfo.size(); i++) {
       const BlockInfo &info = myInfo[i];
       VectorBlock &b = *(VectorBlock *)info.ptrBlock;
@@ -10534,34 +10340,8 @@ public:
             b(x, y, z).u[0] *= fac;
             b(x, y, z).u[1] *= fac;
             b(x, y, z).u[2] *= fac;
-#ifdef PRESERVE_SYMMETRY
-            omega_max_min[0] = std::max(omega_max_min[0], b(x, y, z).u[0]);
-            omega_max_min[1] = std::max(omega_max_min[1], b(x, y, z).u[1]);
-            omega_max_min[2] = std::max(omega_max_min[2], b(x, y, z).u[2]);
-            omega_max_min[3] = std::max(omega_max_min[3], -b(x, y, z).u[0]);
-            omega_max_min[4] = std::max(omega_max_min[4], -b(x, y, z).u[1]);
-            omega_max_min[5] = std::max(omega_max_min[5], -b(x, y, z).u[2]);
-#endif
           }
     }
-#ifdef PRESERVE_SYMMETRY
-    MPI_Reduce(sim.rank == 0 ? MPI_IN_PLACE : omega_max_min, omega_max_min, 6,
-               MPI_Real, MPI_MAX, 0, sim.comm);
-    if (sim.rank == 0 && sim.verbose) {
-      std::cout << "Vorticity (x): max=" << omega_max_min[0]
-                << " min=" << -omega_max_min[3]
-                << " difference: " << omega_max_min[0] - omega_max_min[3]
-                << std::endl;
-      std::cout << "Vorticity (y): max=" << omega_max_min[1]
-                << " min=" << -omega_max_min[4]
-                << " difference: " << omega_max_min[1] - omega_max_min[4]
-                << std::endl;
-      std::cout << "Vorticity (z): max=" << omega_max_min[2]
-                << " min=" << -omega_max_min[5]
-                << " difference: " << omega_max_min[2] - omega_max_min[5]
-                << std::endl;
-    }
-#endif
   }
   std::string getName() { return "Vorticity"; }
 };
@@ -11173,18 +10953,10 @@ class ComputeLHS : public Operator {
       for (int z = 0; z < Nz; ++z)
         for (int y = 0; y < Ny; ++y)
           for (int x = 0; x < Nx; ++x) {
-#ifdef PRESERVE_SYMMETRY
-            o(x, y, z).s =
-                h * (ConsistentSum(lab(x - 1, y, z).s + lab(x + 1, y, z).s,
-                                   lab(x, y - 1, z).s + lab(x, y + 1, z).s,
-                                   lab(x, y, z - 1).s + lab(x, y, z + 1).s) -
-                     6.0 * lab(x, y, z).s);
-#else
             o(x, y, z) =
                 h * (lab(x - 1, y, z) + lab(x + 1, y, z) + lab(x, y - 1, z) +
                      lab(x, y + 1, z) + lab(x, y, z - 1) + lab(x, y, z + 1) -
                      6.0 * lab(x, y, z));
-#endif
           }
       BlockCase<ScalarBlock> *tempCase =
           (BlockCase<ScalarBlock> *)(lhsInfo[info.blockID].auxiliary);
@@ -12207,11 +11979,7 @@ std::shared_ptr<Simulation>
 createSimulation(MPI_Comm comm, const std::vector<std::string> &argv);
 } // namespace cubismup3d
 namespace cubismup3d {
-#ifdef PRESERVE_SYMMETRY
-#define DISABLE_OPTIMIZATIONS __attribute__((optimize("-O1")))
-#else
 #define DISABLE_OPTIMIZATIONS
-#endif
 struct KernelAdvectDiffuse {
   KernelAdvectDiffuse(const SimulationData &s, const Real a_coef)
       : sim(s), coef(a_coef) {}
@@ -12551,11 +12319,7 @@ void AdvectionDiffusion::operator()(const Real dt) {
 }
 } // namespace cubismup3d
 namespace cubismup3d {
-#ifdef PRESERVE_SYMMETRY
-#define DISABLE_OPTIMIZATIONS __attribute__((optimize("-O1")))
-#else
 #define DISABLE_OPTIMIZATIONS
-#endif
 struct KernelDiffusionRHS {
   SimulationData &sim;
   StencilInfo stencil = StencilInfo(-1, -1, -1, 2, 2, 2, false, {0, 1, 2});
@@ -19716,18 +19480,10 @@ struct KernelDivPressure {
     for (int z = 0; z < Nz; ++z)
       for (int y = 0; y < Ny; ++y)
         for (int x = 0; x < Nx; ++x)
-#ifdef PRESERVE_SYMMETRY
-          b(x, y, z).u[0] =
-              fac * (ConsistentSum(lab(x + 1, y, z).s + lab(x - 1, y, z).s,
-                                   lab(x, y + 1, z).s + lab(x, y - 1, z).s,
-                                   lab(x, y, z + 1).s + lab(x, y, z - 1).s) -
-                     6.0 * lab(x, y, z).s);
-#else
           b(x, y, z).u[0] = fac * (lab(x + 1, y, z).s + lab(x - 1, y, z).s +
                                    lab(x, y + 1, z).s + lab(x, y - 1, z).s +
                                    lab(x, y, z + 1).s + lab(x, y, z - 1).s -
                                    6.0 * lab(x, y, z).s);
-#endif
     BlockCase<VectorBlock> *tempCase =
         (BlockCase<VectorBlock> *)(tmpVInfo[info.blockID].auxiliary);
     if (tempCase == nullptr)
@@ -19810,14 +19566,8 @@ struct KernelPressureRHS {
             const VectorElement &LW = lab(x - 1, y, z), &LE = lab(x + 1, y, z);
             const VectorElement &LS = lab(x, y - 1, z), &LN = lab(x, y + 1, z);
             const VectorElement &LF = lab(x, y, z - 1), &LB = lab(x, y, z + 1);
-#ifdef PRESERVE_SYMMETRY
-            p(x, y, z).s =
-                fac * ConsistentSum(LE.u[0] - LW.u[0], LN.u[1] - LS.u[1],
-                                    LB.u[2] - LF.u[2]);
-#else
             p(x, y, z).s = fac * (LE.u[0] - LW.u[0] + LN.u[1] - LS.u[1] +
                                   LB.u[2] - LF.u[2]);
-#endif
           }
           {
             const VectorElement &LW = uDefLab(x - 1, y, z),
@@ -19826,13 +19576,8 @@ struct KernelPressureRHS {
                                 &LN = uDefLab(x, y + 1, z);
             const VectorElement &LF = uDefLab(x, y, z - 1),
                                 &LB = uDefLab(x, y, z + 1);
-#ifdef PRESERVE_SYMMETRY
-            const Real divUs = ConsistentSum(
-                LE.u[0] - LW.u[0], LN.u[1] - LS.u[1], LB.u[2] - LF.u[2]);
-#else
             const Real divUs =
                 LE.u[0] - LW.u[0] + LN.u[1] - LS.u[1] + LB.u[2] - LF.u[2];
-#endif
             p(x, y, z).s += -c(x, y, z).s * fac * divUs;
           }
         }
