@@ -1,8 +1,5 @@
 #ifndef CubismUP_3D_Sphere_h
 #define CubismUP_3D_Sphere_h
-
-#include "Obstacle.h"
-
 CubismUP_3D_NAMESPACE_BEGIN
 
     class Sphere : public Obstacle {

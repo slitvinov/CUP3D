@@ -1,14 +1,4 @@
 #pragma once
-
-#include "SimulationData.h"
-#include "Operator.h"
-#include "PoissonSolverBase.h"
-#include "PoissonSolverAMRKernels.h"
-#include "BlockInfo.h"
-#include <vector>
-#include <cassert>
-#include <cstring>
-
 namespace cubismup3d {
 
 class ComputeLHS : public Operator {

@@ -1,18 +1,4 @@
 #pragma once
-
-#include "Fish.h"
-#include "StefanFish.h"
-#include "FishLibrary.h"
-#include "FishShapes.h"
-#include "ObstacleVector.h"
-#include "ArgumentParser.h"
-
-#include <array>
-#include <cmath>
-#include <sstream>
-#include <iomanip>
-#include <queue>
-
 CubismUP_3D_NAMESPACE_BEGIN
 
     class StefanFish : public Fish {

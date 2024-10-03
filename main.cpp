@@ -22,6 +22,7 @@
 #include <mpi.h>
 #include <numeric>
 #include <omp.h>
+#include <queue>
 #include <random>
 #include <set>
 #include <sstream>
@@ -89,8 +90,8 @@
 #include "ObstaclesCreate.h"
 #include "ObstaclesUpdate.h"
 #include "Penalization.h"
-#include "PoissonSolverAMR.h"
 #include "PoissonSolverAMRKernels.h"
+#include "PoissonSolverAMR.h"
 #include "PressureProjection.h"
 #include "Profiler.h"
 
