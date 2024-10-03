@@ -6785,7 +6785,6 @@ struct SimulationData {
   int freqDiagnostics = 0;
   int freqProfiler = 0;
   int saveFreq = 0;
-  bool bDump = false;
   bool verbose = false;
   bool muteAll = false;
   Real dumpTime = 0;
@@ -6802,8 +6801,6 @@ struct SimulationData {
   void stopProfiler() const;
   void printResetProfiler();
   void _preprocessArguments();
-  void writeRestartFiles();
-  void readRestartFiles();
   ~SimulationData();
   SimulationData() = delete;
   SimulationData(const SimulationData &) = delete;
@@ -11958,8 +11955,6 @@ protected:
 public:
   SimulationData sim;
   void initialGridRefinement();
-  void serialize(const std::string append = std::string());
-  void deserialize();
   void setupOperators();
   void setupGrid();
   void _ic();
@@ -19771,16 +19766,7 @@ void Simulation::init() {
   (*sim.pipeline[0])(0);
   if (sim.verbose)
     std::cout << "[CUP3D] Initializing Flow Field.. " << std::endl;
-  FILE *fField = fopen("field.restart", "r");
-  if (fField == NULL) {
-    if (sim.verbose)
-      std::cout << "[CUP3D] Performing Initial Refinement of Grid.. "
-                << std::endl;
-    initialGridRefinement();
-  } else {
-    fclose(fField);
-    deserialize();
-  }
+  initialGridRefinement();
 }
 void Simulation::initialGridRefinement() {
   (*sim.pipeline[0])(0);
@@ -19868,89 +19854,6 @@ void Simulation::setupOperators() {
       printf("\t - %s\n", sim.pipeline[c]->getName().c_str());
   }
 }
-void Simulation::serialize(const std::string append) {
-  sim.startProfiler("DumpHDF5_MPI");
-  {
-    logger.flush();
-    std::stringstream name;
-    name << "restart_" << std::setfill('0') << std::setw(9) << sim.step;
-    DumpHDF5_MPI<StreamerScalar, Real>(*sim.pres, sim.time,
-                                       "pres_" + name.str(),
-                                       sim.path4serialization, false);
-    DumpHDF5_MPI<StreamerVector, Real>(*sim.vel, sim.time, "vel_" + name.str(),
-                                       sim.path4serialization, false);
-    sim.writeRestartFiles();
-  }
-  std::stringstream name;
-  if (append == "")
-    name << "_";
-  else
-    name << append;
-  name << std::setfill('0') << std::setw(9) << sim.step;
-  if (sim.dumpOmega || sim.dumpOmegaX || sim.dumpOmegaY || sim.dumpOmegaZ)
-    computeVorticity();
-  if (sim.dumpP)
-    DumpHDF5_MPI2<cubism::StreamerScalar, Real, ScalarGrid>(
-        *sim.pres, sim.time, "pres" + name.str(), sim.path4serialization);
-  if (sim.dumpChi)
-    DumpHDF5_MPI2<cubism::StreamerScalar, Real, ScalarGrid>(
-        *sim.chi, sim.time, "chi" + name.str(), sim.path4serialization);
-  if (sim.dumpOmega)
-    DumpHDF5_MPI2<cubism::StreamerVector, Real, VectorGrid>(
-        *sim.tmpV, sim.time, "tmp" + name.str(), sim.path4serialization);
-  if (sim.dumpVelocity)
-    DumpHDF5_MPI2<cubism::StreamerVector, Real, VectorGrid>(
-        *sim.vel, sim.time, "vel" + name.str(), sim.path4serialization);
-  if (sim.dumpOmegaX)
-    DumpHDF5_MPI2<StreamerVectorX, Real, VectorGrid>(
-        *sim.tmpV, sim.time, "tmpX" + name.str(), sim.path4serialization);
-  if (sim.dumpOmegaY)
-    DumpHDF5_MPI2<StreamerVectorY, Real, VectorGrid>(
-        *sim.tmpV, sim.time, "tmpY" + name.str(), sim.path4serialization);
-  if (sim.dumpOmegaZ)
-    DumpHDF5_MPI2<StreamerVectorZ, Real, VectorGrid>(
-        *sim.tmpV, sim.time, "tmpZ" + name.str(), sim.path4serialization);
-  if (sim.dumpVelocityX)
-    DumpHDF5_MPI2<StreamerVectorX, Real, VectorGrid>(
-        *sim.vel, sim.time, "velX" + name.str(), sim.path4serialization);
-  if (sim.dumpVelocityY)
-    DumpHDF5_MPI2<StreamerVectorY, Real, VectorGrid>(
-        *sim.vel, sim.time, "velY" + name.str(), sim.path4serialization);
-  if (sim.dumpVelocityZ)
-    DumpHDF5_MPI2<StreamerVectorZ, Real, VectorGrid>(
-        *sim.vel, sim.time, "velZ" + name.str(), sim.path4serialization);
-  sim.stopProfiler();
-}
-void Simulation::deserialize() {
-  sim.readRestartFiles();
-  std::stringstream ss;
-  ss << "restart_" << std::setfill('0') << std::setw(9) << sim.step;
-  const std::vector<BlockInfo> &chiInfo = sim.chi->getBlocksInfo();
-  const std::vector<BlockInfo> &velInfo = sim.vel->getBlocksInfo();
-  const std::vector<BlockInfo> &tmpVInfo = sim.tmpV->getBlocksInfo();
-  const std::vector<BlockInfo> &lhsInfo = sim.lhs->getBlocksInfo();
-  ReadHDF5_MPI<StreamerVector, Real>(*(sim.vel), "vel_" + ss.str(),
-                                     sim.path4serialization);
-  ReadHDF5_MPI<StreamerScalar, Real>(*(sim.pres), "pres_" + ss.str(),
-                                     sim.path4serialization);
-  ReadHDF5_MPI<StreamerScalar, Real>(*(sim.chi), "pres_" + ss.str(),
-                                     sim.path4serialization);
-  ReadHDF5_MPI<StreamerScalar, Real>(*(sim.lhs), "pres_" + ss.str(),
-                                     sim.path4serialization);
-  ReadHDF5_MPI<StreamerVector, Real>(*(sim.tmpV), "vel_" + ss.str(),
-                                     sim.path4serialization);
-#pragma omp parallel for
-  for (size_t i = 0; i < velInfo.size(); i++) {
-    ScalarBlock &CHI = *(ScalarBlock *)chiInfo[i].ptrBlock;
-    CHI.clear();
-    ScalarBlock &LHS = *(ScalarBlock *)lhsInfo[i].ptrBlock;
-    LHS.clear();
-    VectorBlock &TMPV = *(VectorBlock *)tmpVInfo[i].ptrBlock;
-    TMPV.clear();
-  }
-  (*sim.pipeline[0])(0);
-  sim.readRestartFiles();
-}
 void Simulation::simulate() {
   for (;;) {
     const Real dt = calcMaxTimestep();
@@ -19965,7 +19868,6 @@ Real Simulation::calcMaxTimestep() {
   Real CFL = sim.CFL;
   sim.uMax_measured = findMaxU(sim);
   if (sim.uMax_measured > sim.uMax_allowed) {
-    serialize();
     if (sim.rank == 0) {
       std::cerr << "maxU = " << sim.uMax_measured
                 << " exceeded uMax_allowed = " << sim.uMax_allowed
@@ -20026,7 +19928,6 @@ bool Simulation::advance(const Real dt) {
       (sim.dumpTime > 0 && (sim.time + dt) > sim.nextSaveTime);
   if (bDumpTime)
     sim.nextSaveTime += sim.dumpTime;
-  sim.bDump = (bDumpFreq || bDumpTime);
   if (sim.step % 20 == 0 || sim.step < 10)
     adaptMesh();
   for (size_t c = 0; c < sim.pipeline.size(); c++) {
@@ -20036,8 +19937,6 @@ bool Simulation::advance(const Real dt) {
   }
   sim.step++;
   sim.time += dt;
-  if (sim.bDump)
-    serialize();
   if (sim.rank == 0 && sim.freqProfiler > 0 && sim.step % sim.freqProfiler == 0)
     sim.printResetProfiler();
   if ((sim.endTime > 0 && sim.time > sim.endTime) ||
@@ -20191,99 +20090,6 @@ void SimulationData::stopProfiler() const { profiler->pop_stop(); }
 void SimulationData::printResetProfiler() {
   profiler->printSummary();
   profiler->reset();
-}
-void SimulationData::writeRestartFiles() {
-  if (rank == 0) {
-    std::stringstream ssR;
-    ssR << path4serialization + "/field.restart";
-    FILE *fField = fopen(ssR.str().c_str(), "w");
-    if (fField == NULL) {
-      printf("Could not write %s. Aborting...\n", "field.restart");
-      fflush(0);
-      abort();
-    }
-    assert(fField != NULL);
-    fprintf(fField, "time: %20.20e\n", (double)time);
-    fprintf(fField, "stepid: %d\n", step);
-    fprintf(fField, "uinfx: %20.20e\n", (double)uinf[0]);
-    fprintf(fField, "uinfy: %20.20e\n", (double)uinf[1]);
-    fprintf(fField, "uinfz: %20.20e\n", (double)uinf[2]);
-    fprintf(fField, "dt: %20.20e\n", (double)dt);
-    fclose(fField);
-  }
-  int size;
-  MPI_Comm_size(comm, &size);
-  const size_t tasks = obstacle_vector->nObstacles();
-  size_t my_share = tasks / size;
-  if (tasks % size != 0 && rank == size - 1) {
-    my_share += tasks % size;
-  }
-  const size_t my_start = rank * (tasks / size);
-  const size_t my_end = my_start + my_share;
-#pragma omp parallel for schedule(static, 1)
-  for (size_t j = my_start; j < my_end; j++) {
-    auto &shape = obstacle_vector->getObstacleVector()[j];
-    std::stringstream ssR;
-    ssR << path4serialization + "/shape_" << shape->obstacleID << ".restart";
-    FILE *fShape = fopen(ssR.str().c_str(), "w");
-    if (fShape == NULL) {
-      printf("Could not write %s. Aborting...\n", ssR.str().c_str());
-      fflush(0);
-      abort();
-    }
-    shape->saveRestart(fShape);
-    fclose(fShape);
-  }
-}
-void SimulationData::readRestartFiles() {
-  FILE *fField = fopen("field.restart", "r");
-  if (fField == NULL) {
-    printf("Could not read %s. Aborting...\n", "field.restart");
-    fflush(0);
-    abort();
-  }
-  assert(fField != NULL);
-  if (rank == 0 && verbose)
-    printf("Reading %s...\n", "field.restart");
-  bool ret = true;
-  double in_time, in_uinfx, in_uinfy, in_uinfz, in_dt;
-  ret = ret && 1 == fscanf(fField, "time: %le\n", &in_time);
-  ret = ret && 1 == fscanf(fField, "stepid: %d\n", &step);
-  ret = ret && 1 == fscanf(fField, "uinfx: %le\n", &in_uinfx);
-  ret = ret && 1 == fscanf(fField, "uinfy: %le\n", &in_uinfy);
-  ret = ret && 1 == fscanf(fField, "uinfz: %le\n", &in_uinfz);
-  ret = ret && 1 == fscanf(fField, "dt: %le\n", &in_dt);
-  time = (Real)in_time;
-  uinf[0] = (Real)in_uinfx;
-  uinf[1] = (Real)in_uinfy;
-  uinf[2] = (Real)in_uinfz;
-  dt = (Real)in_dt;
-  fclose(fField);
-  if ((not ret) || step < 0 || time < 0) {
-    printf("Error reading restart file. Aborting...\n");
-    fflush(0);
-    abort();
-  }
-  if (rank == 0 && verbose)
-    printf("Restarting flow.. time: %le, stepid: %d, uinfx: %le, uinfy: %le, "
-           "uinfz: %le\n",
-           (double)time, step, (double)uinf[0], (double)uinf[1],
-           (double)uinf[2]);
-  nextSaveTime = time + dumpTime;
-  for (auto &shape : obstacle_vector->getObstacleVector()) {
-    std::stringstream ssR;
-    ssR << "shape_" << shape->obstacleID << ".restart";
-    FILE *fShape = fopen(ssR.str().c_str(), "r");
-    if (fShape == NULL) {
-      printf("Could not read %s. Aborting...\n", ssR.str().c_str());
-      fflush(0);
-      abort();
-    }
-    if (rank == 0 && verbose)
-      printf("Reading %s...\n", ssR.str().c_str());
-    shape->loadRestart(fShape);
-    fclose(fShape);
-  }
 }
 } // namespace cubismup3d
 using namespace cubism;
