@@ -947,7 +947,6 @@ public:
   virtual int get_world_size() const { return 1; }
   virtual void UpdateBoundary(bool clean = false) {}
 };
-namespace cubism {
 struct StencilInfo {
   int sx;
   int sy;
@@ -995,7 +994,6 @@ struct StencilInfo {
     return !(not0 || not1 || not2 || not3);
   }
 };
-} // namespace cubism
 namespace cubism {
 template <typename Real>
 inline void pack(const Real *const srcbase, Real *const dst,
@@ -8785,7 +8783,7 @@ public:
   KernelQcriterion(SimulationData &s) : sim(s){};
   const std::array<int, 3> stencil_start = {-1, -1, -1},
                            stencil_end = {2, 2, 2};
-  const cubism::StencilInfo stencil{-1, -1, -1, 2, 2, 2, false, {0, 1, 2}};
+  const StencilInfo stencil{-1, -1, -1, 2, 2, 2, false, {0, 1, 2}};
   const std::vector<BlockInfo> &vInfo = sim.presInfo();
   void operator()(VectorLab &lab, const BlockInfo &info) const {
     ScalarBlock &o = *(ScalarBlock *)vInfo[info.blockID].ptrBlock;
@@ -8829,7 +8827,7 @@ public:
   KernelDivergence(SimulationData &s) : sim(s) {}
   const std::array<int, 3> stencil_start = {-1, -1, -1},
                            stencil_end = {2, 2, 2};
-  const cubism::StencilInfo stencil{-1, -1, -1, 2, 2, 2, false, {0, 1, 2}};
+  const StencilInfo stencil{-1, -1, -1, 2, 2, 2, false, {0, 1, 2}};
   const std::vector<BlockInfo> &vInfo = sim.tmpVInfo();
   const std::vector<BlockInfo> &chiInfo = sim.chiInfo();
   void operator()(VectorLab &lab, const BlockInfo &info) const {
