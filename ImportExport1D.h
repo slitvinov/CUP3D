@@ -1,15 +1,5 @@
 #pragma once
 
-#include <math.h>
-#include <vector>
-#include <algorithm>
-#include <iomanip>
-#include <iostream>
-#include <list>
-#include <numeric>
-#include <random>
-#include <vector>
-
 #if DIMENSION == 3
 #include "SpaceFillingCurve.h"
 #else

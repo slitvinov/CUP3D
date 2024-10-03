@@ -10,10 +10,6 @@ using namespace cubism;
 #define CUP_BLOCK_SIZEY 8
 #define CUP_BLOCK_SIZEZ 8
 #endif
-#include <array>
-#include <cassert>
-#include <iosfwd>
-#include <string>
 
 CubismUP_3D_NAMESPACE_BEGIN
 

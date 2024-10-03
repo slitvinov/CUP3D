@@ -1,16 +1,5 @@
 #pragma once
 
-#include <assert.h>
-#undef min
-#undef max
-#include <vector>
-#undef min
-#undef max
-#include <map>
-#include <stack>
-#include <stdio.h>
-#include <string>
-#include <sys/time.h>
 
 namespace cubism {
 

@@ -3,10 +3,6 @@
 #include "BlockInfo.h"
 #include "Matrix3D.h"
 #include "StencilInfo.h"
-#include <cstring>
-#include <math.h>
-#include <string>
-#include <array>
 
 namespace cubism {
 #define memcpy2(a, b, c) memcpy((a), (b), (c))

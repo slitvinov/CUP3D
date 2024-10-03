@@ -1,10 +1,4 @@
 #pragma once
-
-#include <cassert>
-#include <iostream>
-#include <vector>
-#include <math.h>
-
 namespace cubism // AMR_CUBISM
 {
 

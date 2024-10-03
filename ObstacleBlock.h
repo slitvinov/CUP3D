@@ -6,9 +6,6 @@
 // to shift the surface where I compute gradchi for surface integrals
 // if set to value greater than 0, it shifts surface by that many mesh sizes
 #define SURFDH 1
-#include <vector>  //surface vector
-#include <cstring> //memset
-#include <cstdio>  //print
 
 CubismUP_3D_NAMESPACE_BEGIN
 

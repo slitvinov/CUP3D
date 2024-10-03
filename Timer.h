@@ -1,8 +1,5 @@
 #ifndef CubismUP_3D_Timer_h
 #define CubismUP_3D_Timer_h
-
-#include <chrono>
-
 CubismUP_3D_NAMESPACE_BEGIN
 
     class Timer {

@@ -1,6 +1,5 @@
 #pragma once
 
-#include <memory>
 #include "Operator.h"
 #include "PoissonSolverBase.h"
 #include "ObstacleVector.h"

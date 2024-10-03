@@ -1,8 +1,5 @@
 #pragma once
 
-#include <array>
-#include <cassert>
-
 #ifndef DIMENSION
 #define DIMENSION 3
 #endif

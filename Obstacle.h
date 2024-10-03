@@ -3,8 +3,6 @@
 #include "ObstacleBlock.h"
 #include "SimulationData.h"
 
-#include <array>
-
 namespace cubism {
 class ArgumentParser;
 }

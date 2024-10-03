@@ -1,5 +1,3 @@
-#include <vector>
-
 namespace cubism {
 
 /** Fully refine the AMR grid and store into the given contiguous matrix.

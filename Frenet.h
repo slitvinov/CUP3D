@@ -3,7 +3,6 @@
 
 #include "LDefinitions.h"
 
-#include <limits>
 
 CubismUP_3D_NAMESPACE_BEGIN
 

@@ -1,5 +1,4 @@
 #pragma once
-#include <cassert>
 
 #ifndef CUBISM_ALIGNMENT
 #define CUBISM_ALIGNMENT 32

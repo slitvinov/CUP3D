@@ -1,6 +1,3 @@
-#include <array>
-#include <limits>
-
 CubismUP_3D_NAMESPACE_BEGIN
 
     using SymM = std::array<Real, 6>;

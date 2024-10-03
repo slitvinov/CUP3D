@@ -1,10 +1,5 @@
 #pragma once
-
 #include "Obstacle.h"
-
-#include <memory>
-#include <utility>
-
 CubismUP_3D_NAMESPACE_BEGIN
 
     class ObstacleVector : public Obstacle {

@@ -1,12 +1,6 @@
 #ifndef CubismUP_3D_Schedulers_h
 #define CubismUP_3D_Schedulers_h
-
 #include "Interpolation1D.h"
-
-#include <cmath>
-#include <array>
-#include <iostream> // Schedulers.h not included from many files.
-#include <fstream>  // Schedulers.h not included from many files.
 
 CubismUP_3D_NAMESPACE_BEGIN
 

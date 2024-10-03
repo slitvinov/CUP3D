@@ -3,7 +3,6 @@
 
 #include "Base.h"
 
-#include <cstdio>
 
 CubismUP_3D_NAMESPACE_BEGIN
 

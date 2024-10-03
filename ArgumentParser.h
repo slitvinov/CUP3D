@@ -1,7 +1,4 @@
 #pragma once
-#include <iosfwd> // Forward declaration of <iostream>
-#include <map>
-#include <string>
 
 namespace cubism {
 
