@@ -19,7 +19,6 @@
 #include "Cylinder.h"
 #include "ObstacleLibrary.h"
 #include "CylinderNozzle.h"
-#include "ArgumentParser.h"
 #include "DiffusionSolverAMRKernels.h"
 #include <cassert>
 #include "Ellipsoid.h"
@@ -57,7 +56,6 @@
 #include "SimulationData.h"
 #include "PressureProjection.h"
 #include "Simulation.h"
-#include "HDF5Dumper.h"
 #include "Operator.h"
 #include "Profiler.h"
 
