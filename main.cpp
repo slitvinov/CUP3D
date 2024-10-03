@@ -5636,7 +5636,7 @@ static void compute(const Kernel &kernel, TGrid &grid, TGrid2 &grid2,
   if (applyFluxCorrection)
     corrected_grid->Corrector.FillBlockCases();
 }
-template <typename Real = double> struct ScalarElement {
+struct ScalarElement {
   using RealType = Real;
   Real s = 0;
   inline void clear() { s = 0; }
@@ -6515,7 +6515,7 @@ struct StreamerVectorZ {
 static constexpr int kBlockAlignment = 64;
 template <typename T>
 using aligned_block_allocator = aligned_allocator<T, kBlockAlignment>;
-using ScalarElement = cubism::ScalarElement<Real>;
+using ScalarElement = cubism::ScalarElement;
 using ScalarBlock = GridBlock<CUP_BLOCK_SIZEX, 3, ScalarElement>;
 using ScalarGrid = GridMPI<Grid<ScalarBlock, aligned_block_allocator>>;
 using ScalarLab =
