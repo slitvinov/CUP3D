@@ -3241,7 +3241,6 @@ public:
   MPI_Comm getWorldComm() const { return worldcomm; }
   virtual int get_world_size() const override { return world_size; }
 };
-namespace cubism {
 template <class DataType, template <typename T> class allocator>
 class Matrix3D {
 private:
@@ -3331,7 +3330,6 @@ public:
   inline unsigned int *getSize() const { return (unsigned int *)m_vSize; }
   inline unsigned int getSize(int dim) const { return m_vSize[dim]; }
 };
-} // namespace cubism
 namespace cubism {
 #define memcpy2(a, b, c) memcpy((a), (b), (c))
 constexpr int default_start[3] = {-1, -1, -1};
