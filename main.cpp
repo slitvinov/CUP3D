@@ -4716,8 +4716,7 @@ public:
         std::memcpy(a1, recv_blocks[r][i].data, sizeof(BlockType));
       }
   }
-  void Balance_Diffusion(const bool verbose,
-                         std::vector<long long> &block_distribution) {
+  void Balance_Diffusion(std::vector<long long> &block_distribution) {
     const int size = grid->get_world_size();
     const int rank = grid->rank();
     movedBlocks = false;
@@ -4729,9 +4728,6 @@ public:
         min_b = std::min(min_b, b);
       }
       const double ratio = static_cast<double>(max_b) / min_b;
-      if (rank == 0 && verbose) {
-        std::cout << "Load imbalance ratio = " << ratio << std::endl;
-      }
       if (ratio > 1.01 || min_b == 0) {
         Balance_Global(block_distribution);
         return;
@@ -5066,16 +5062,7 @@ public:
     }
     grid->dealloc_many(dealloc_IDs);
     MPI_Waitall(2, requests, MPI_STATUS_IGNORE);
-    if (verbosity) {
-      std::cout
-          << "==============================================================\n";
-      std::cout << " refined:" << result[0] << "   compressed:" << result[1]
-                << std::endl;
-      std::cout
-          << "=============================================================="
-          << std::endl;
-    }
-    Balancer->Balance_Diffusion(verbosity, block_distribution);
+    Balancer->Balance_Diffusion(block_distribution);
     if (result[0] > 0 || result[1] > 0 || Balancer->movedBlocks) {
       grid->UpdateFluxCorrection = true;
       grid->UpdateGroups = true;
@@ -6654,8 +6641,6 @@ struct SimulationData {
   int freqDiagnostics = 0;
   int freqProfiler = 0;
   int saveFreq = 0;
-  bool verbose = false;
-  bool muteAll = false;
   Real dumpTime = 0;
   Real nextSaveTime = 0;
   std::string path4serialization = "./";
@@ -7557,10 +7542,6 @@ public:
                       angVel_correction = {0, 0, 0};
 
 protected:
-  virtual void _writeComputedVelToFile();
-  virtual void _writeDiagForcesToFile();
-  virtual void _writeSurfForcesToFile();
-
 public:
   Obstacle(SimulationData &s, cubism::ArgumentParser &parser);
   Obstacle(SimulationData &s) : sim(s) {}
@@ -11167,24 +11148,6 @@ void ComputeDissipation::operator()(const Real dt) {
   size_t loc = sim.velInfo().size();
   size_t tot;
   MPI_Reduce(&loc, &tot, 1, MPI_LONG, MPI_SUM, 0, sim.comm);
-  if (sim.rank == 0 && sim.muteAll == false) {
-    std::ofstream outfile;
-    outfile.open("diagnostics.dat", std::ios_base::app);
-    if (sim.step == 0)
-      outfile << "step_id time circ_x circ_y circ_z linImp_x linImp_y linImp_z "
-                 "linMom_x linMom_y linMom_z angImp_x angImp_y angImp_z "
-                 "angMom_x angMom_y "
-                 "angMom_z presPow viscPow helicity kineticEn enstrophy blocks"
-              << std::endl;
-    outfile << sim.step << " " << sim.time << " " << RDX[0] << " " << RDX[1]
-            << " " << RDX[2] << " " << RDX[3] << " " << RDX[4] << " " << RDX[5]
-            << " " << RDX[6] << " " << RDX[7] << " " << RDX[8] << " " << RDX[9]
-            << " " << RDX[10] << " " << RDX[11] << " " << RDX[12] << " "
-            << RDX[13] << " " << RDX[14] << " " << RDX[15] << " " << RDX[16]
-            << " " << RDX[17] << " " << RDX[18] << " " << RDX[19] << " " << tot
-            << std::endl;
-    outfile.close();
-  }
 }
 } // namespace cubismup3d
 namespace cubismup3d {
@@ -11280,9 +11243,6 @@ Cylinder::Cylinder(SimulationData &s, ArgumentParser &p)
   _init();
 }
 void Cylinder::_init(void) {
-  if (sim.verbose)
-    printf("Created Cylinder with radius %f and halflength %f\n", radius,
-           halflength);
   bBlockRotation[0] = true;
   bBlockRotation[1] = true;
   bBlockRotation[2] = true;
@@ -14226,18 +14186,12 @@ static void initialPenalization(SimulationData &sim, const Real dt) {
 }
 void InitialConditions::operator()(const Real dt) {
   if (sim.initCond == "zero") {
-    if (sim.verbose)
-      printf("[CUP3D] - Zero-values initial conditions.\n");
     run(KernelIC(0));
   }
   if (sim.initCond == "taylorGreen") {
-    if (sim.verbose)
-      printf("[CUP3D] - Taylor Green vortex initial conditions.\n");
     run(KernelIC_taylorGreen(sim.extents, sim.uMax_forced));
   }
   if (sim.initCond == "channelRandom") {
-    if (sim.verbose)
-      printf("[CUP3D] - Channel flow random initial conditions.\n");
     if (sim.BCx_flag == wall) {
       printf("ERROR: channel flow must be periodic or dirichlet in x.\n");
       fflush(0);
@@ -14253,8 +14207,6 @@ void InitialConditions::operator()(const Real dt) {
     run(KernelIC_channelrandom(sim.extents, sim.uMax_forced, dir));
   }
   if (sim.initCond == "channel") {
-    if (sim.verbose)
-      printf("[CUP3D] - Channel flow initial conditions.\n");
     if (sim.BCx_flag == wall) {
       printf("ERROR: channel flow must be periodic or dirichlet in x.\n");
       fflush(0);
@@ -14270,8 +14222,6 @@ void InitialConditions::operator()(const Real dt) {
     run(KernelIC_channel(sim.extents, sim.uMax_forced, dir));
   }
   if (sim.initCond == "pipe") {
-    if (sim.verbose)
-      printf("[CUP3D] - Channel flow initial conditions.\n");
     if (sim.BCz_flag != periodic) {
       printf("ERROR: pipe flow must be periodic in z.\n");
       fflush(0);
@@ -14283,8 +14233,6 @@ void InitialConditions::operator()(const Real dt) {
                       pipe->position));
   }
   if (sim.initCond == "vorticity") {
-    if (sim.verbose)
-      printf("[CUP3D] - Vorticity initial conditions.\n");
     IC_vorticity ic_vorticity(sim);
     ic_vorticity.run();
   }
@@ -14381,13 +14329,6 @@ Naca::Naca(SimulationData &s, ArgumentParser &p) : Fish(s, p) {
   fixedCenterDist = p("-fixedCenterDist").asDouble(0);
   const Real thickness = p("-tRatio").asDouble(0.12);
   myFish = new NacaMidlineData(length, sim.hmin, sim.extents[2], thickness);
-  if (sim.rank == 0 && sim.verbose)
-    printf("[CUP3D] - NacaData Nm=%d L=%f t=%f A=%f w=%f xvel=%f yvel=%f "
-           "tAccel=%f fixedCenterDist=%f\n",
-           myFish->Nm, (double)length, (double)thickness, (double)Apitch,
-           (double)Fpitch, (double)transVel_imposed[0],
-           (double)transVel_imposed[1], (double)tAccel,
-           (double)fixedCenterDist);
   bBlockRotation[0] = true;
   bBlockRotation[1] = true;
   bForcedInSimFrame[2] = true;
@@ -14793,9 +14734,6 @@ void Obstacle::computeForces() {
   Pdrag = drag * vel_norm;
   EffPDef = Pthrust / (Pthrust - std::min(defPower, (Real)0) + EPS);
   EffPDefBnd = Pthrust / (Pthrust - defPowerBnd + EPS);
-  _writeSurfForcesToFile();
-  _writeDiagForcesToFile();
-  _writeComputedVelToFile();
 }
 void Obstacle::update() {
   const Real dqdt[4] = {
@@ -14879,13 +14817,6 @@ void Obstacle::update() {
   quaternion[1] *= invD;
   quaternion[2] *= invD;
   quaternion[3] *= invD;
-  if (sim.verbose && sim.time > 0) {
-    const Real rad2deg = 180. / M_PI;
-    std::array<Real, 3> ypr = getYawPitchRoll();
-    ypr[0] *= rad2deg;
-    ypr[1] *= rad2deg;
-    ypr[2] *= rad2deg;
-  }
 #ifndef NDEBUG
   const Real q_length =
       std::sqrt(quaternion[0] * quaternion[0] + quaternion[1] * quaternion[1] +
@@ -15012,102 +14943,6 @@ void Obstacle::loadRestart(FILE *f) {
     fflush(0);
     abort();
   }
-  if (sim.verbose == 0 && sim.rank == 0)
-    printf("Restarting Object.. x: %le, y: %le, z: %le, u_x: %le, u_y: %le, "
-           "u_z: %le\n",
-           (double)absPos[0], (double)absPos[1], (double)absPos[2], transVel[0],
-           (double)transVel[1], (double)transVel[2]);
-}
-void Obstacle::_writeComputedVelToFile() {
-  if (sim.rank != 0 || sim.muteAll)
-    return;
-  std::stringstream ssR;
-  ssR << "velocity_" << obstacleID << ".dat";
-  std::stringstream &savestream = logger.get_stream(ssR.str());
-  if (sim.step == 0 && not printedHeaderVels) {
-    printedHeaderVels = true;
-    savestream << "step time CMx CMy CMz quat_0 quat_1 quat_2 quat_3 vel_x "
-                  "vel_y vel_z angvel_x angvel_y angvel_z mass J0 J1 J2 J3 J4 "
-                  "J5 yaw pitch roll"
-               << std::endl;
-  }
-  const Real rad2deg = 180. / M_PI;
-  std::array<Real, 3> ypr = getYawPitchRoll();
-  ypr[0] *= rad2deg;
-  ypr[1] *= rad2deg;
-  ypr[2] *= rad2deg;
-  savestream << sim.step << " ";
-  savestream.setf(std::ios::scientific);
-  savestream.precision(std::numeric_limits<float>::digits10 + 1);
-  savestream << sim.time << " " << absPos[0] << " " << absPos[1] << " "
-             << absPos[2] << " " << quaternion[0] << " " << quaternion[1] << " "
-             << quaternion[2] << " " << quaternion[3] << " " << transVel[0]
-             << " " << transVel[1] << " " << transVel[2] << " " << angVel[0]
-             << " " << angVel[1] << " " << angVel[2] << " " << mass << " "
-             << J[0] << " " << J[1] << " " << J[2] << " " << J[3] << " " << J[4]
-             << " " << J[5] << " " << ypr[0] << " " << ypr[1] << " " << ypr[2]
-             << std::endl;
-}
-void Obstacle::_writeSurfForcesToFile() {
-  if (sim.rank != 0 || sim.muteAll)
-    return;
-  std::stringstream fnameF, fnameP;
-  fnameF << "forceValues_" << obstacleID << ".dat";
-  std::stringstream &ssF = logger.get_stream(fnameF.str());
-  if (sim.step == 0) {
-    ssF << "step time Fx Fy Fz torque_x torque_y torque_z FxPres FyPres FzPres "
-           "FxVisc FyVisc FzVisc drag thrust"
-        << std::endl;
-  }
-  ssF << sim.step << " ";
-  ssF.setf(std::ios::scientific);
-  ssF.precision(std::numeric_limits<float>::digits10 + 1);
-  ssF << sim.time << " " << surfForce[0] << " " << surfForce[1] << " "
-      << surfForce[2] << " " << surfTorque[0] << " " << surfTorque[1] << " "
-      << surfTorque[2] << " " << presForce[0] << " " << presForce[1] << " "
-      << presForce[2] << " " << viscForce[0] << " " << viscForce[1] << " "
-      << viscForce[2] << " " << drag << " " << thrust << std::endl;
-  fnameP << "powerValues_" << obstacleID << ".dat";
-  std::stringstream &ssP = logger.get_stream(fnameP.str());
-  if (sim.step == 0) {
-    ssP << "time Pthrust Pdrag PoutBnd Pout PoutNew defPowerBnd defPower "
-           "EffPDefBnd EffPDef"
-        << std::endl;
-  }
-  ssP.setf(std::ios::scientific);
-  ssP.precision(std::numeric_limits<float>::digits10 + 1);
-  ssP << sim.time << " " << Pthrust << " " << Pdrag << " " << PoutBnd << " "
-      << Pout << " " << pLocom << " " << defPowerBnd << " " << defPower << " "
-      << EffPDefBnd << " " << EffPDef << std::endl;
-}
-void Obstacle::_writeDiagForcesToFile() {
-  if (sim.rank != 0 || sim.muteAll)
-    return;
-  std::stringstream fnameF;
-  fnameF << "forceValues_penalization_" << obstacleID << ".dat";
-  std::stringstream &ssF = logger.get_stream(fnameF.str());
-  if (sim.step == 0) {
-    ssF << "step time mass force_x force_y force_z torque_x torque_y torque_z "
-           "penalLmom_x penalLmom_y penalLmom_z penalAmom_x penalAmom_y "
-           "penalAmom_z penalCM_x penalCM_y penalCM_z linVel_comp_x "
-           "linVel_comp_y linVel_comp_z angVel_comp_x angVel_comp_y "
-           "angVel_comp_z penalM penalJ0 penalJ1 penalJ2 penalJ3 penalJ4 "
-           "penalJ5"
-        << std::endl;
-  }
-  ssF << sim.step << " ";
-  ssF.setf(std::ios::scientific);
-  ssF.precision(std::numeric_limits<float>::digits10 + 1);
-  ssF << sim.time << " " << mass << " " << force[0] << " " << force[1] << " "
-      << force[2] << " " << torque[0] << " " << torque[1] << " " << torque[2]
-      << " " << penalLmom[0] << " " << penalLmom[1] << " " << penalLmom[2]
-      << " " << penalAmom[0] << " " << penalAmom[1] << " " << penalAmom[2]
-      << " " << penalCM[0] << " " << penalCM[1] << " " << penalCM[2] << " "
-      << transVel_computed[0] << " " << transVel_computed[1] << " "
-      << transVel_computed[2] << " " << angVel_computed[0] << " "
-      << angVel_computed[1] << " " << angVel_computed[2] << " " << penalM << " "
-      << penalJ[0] << " " << penalJ[1] << " " << penalJ[2] << " " << penalJ[3]
-      << " " << penalJ[4] << " " << penalJ[5] << std::endl;
 }
 } // namespace cubismup3d
 namespace cubismup3d {
@@ -16238,37 +16073,6 @@ void Penalization::preventCollidingObstacles() const {
       shapes[j]->oz_collision = ho2[2];
       shapes[i]->collision_counter = 0.01 * sim.dt;
       shapes[j]->collision_counter = 0.01 * sim.dt;
-      if (sim.verbose) {
-#pragma omp critical
-        {
-          std::cout << "Collision between objects " << i << " and " << j
-                    << std::endl;
-          std::cout << " iM   (0) = " << collisions[i].iM
-                    << " jM   (1) = " << collisions[j].jM << std::endl;
-          std::cout << " jM   (0) = " << collisions[i].jM
-                    << " jM   (1) = " << collisions[j].iM << std::endl;
-          std::cout << " Normal vector = (" << NX << "," << NY << "," << NZ
-                    << ")" << std::endl;
-          std::cout << " Location      = (" << CX << "," << CY << "," << CZ
-                    << ")" << std::endl;
-          std::cout << " Shape " << i << " before collision u    =(" << v1[0]
-                    << "," << v1[1] << "," << v1[2] << ")" << std::endl;
-          std::cout << " Shape " << i << " after  collision u    =(" << hv1[0]
-                    << "," << hv1[1] << "," << hv1[2] << ")" << std::endl;
-          std::cout << " Shape " << j << " before collision u    =(" << v2[0]
-                    << "," << v2[1] << "," << v2[2] << ")" << std::endl;
-          std::cout << " Shape " << j << " after  collision u    =(" << hv2[0]
-                    << "," << hv2[1] << "," << hv2[2] << ")" << std::endl;
-          std::cout << " Shape " << i << " before collision omega=(" << o1[0]
-                    << "," << o1[1] << "," << o1[2] << ")" << std::endl;
-          std::cout << " Shape " << i << " after  collision omega=(" << ho1[0]
-                    << "," << ho1[1] << "," << ho1[2] << ")" << std::endl;
-          std::cout << " Shape " << j << " before collision omega=(" << o2[0]
-                    << "," << o2[1] << "," << o2[2] << ")" << std::endl;
-          std::cout << " Shape " << j << " after  collision omega=(" << ho2[0]
-                    << "," << ho2[1] << "," << ho2[2] << ")" << std::endl;
-        }
-      }
     }
 }
 Penalization::Penalization(SimulationData &s) : Operator(s) {}
@@ -16344,9 +16148,6 @@ Pipe::Pipe(SimulationData &s, ArgumentParser &p)
   _init();
 }
 void Pipe::_init(void) {
-  if (sim.verbose)
-    printf("Created Pipe with radius %f and halflength %f\n", radius,
-           halflength);
   bBlockRotation[0] = true;
   bBlockRotation[1] = true;
   bBlockRotation[2] = true;
@@ -16763,15 +16564,8 @@ void PoissonSolverAMR::solve() {
         x_opt[i] = x[i];
     }
     if (norm < max_error || norm / (init_norm + eps) < max_rel_error) {
-      if (verbose)
-        std::cout << "  [Poisson solver]: Converged after " << k
-                  << " iterations.\n";
       break;
     }
-  }
-  if (verbose) {
-    std::cout << " Error norm (relative) = " << min_norm << "/" << max_error
-              << std::endl;
   }
   Real *solution = useXopt ? x_opt.data() : x.data();
 #pragma omp parallel for
@@ -17340,37 +17134,14 @@ namespace cubismup3d {
 using namespace cubism;
 Simulation::Simulation(int argc, char **argv, MPI_Comm comm)
     : parser(argc, argv), sim(comm, parser) {
-  if (sim.verbose) {
-#pragma omp parallel
-    {
-      int numThreads = omp_get_num_threads();
-      int size;
-      MPI_Comm_size(comm, &size);
-#pragma omp master
-      std::cout << "[CUP3D] Running with " << size << " rank(s) and "
-                << numThreads << " thread(s)." << std::endl;
-    }
-  }
 }
 void Simulation::init() {
-  if (sim.verbose)
-    std::cout << "[CUP3D] Parsing Arguments.. " << std::endl;
   sim._preprocessArguments();
-  if (sim.verbose)
-    std::cout << "[CUP3D] Allocating Grid.. " << std::endl;
   setupGrid();
-  if (sim.verbose)
-    std::cout << "[CUP3D] Creating Computational Pipeline.. " << std::endl;
   setupOperators();
-  if (sim.verbose)
-    std::cout << "[CUP3D] Initializing Obstacles.. " << std::endl;
   sim.obstacle_vector = new ObstacleVector(sim);
   ObstacleFactory(sim).addObstacles(parser);
-  if (sim.verbose)
-    std::cout << "[CUP3D] Creating Obstacles.. " << std::endl;
   (*sim.pipeline[0])(0);
-  if (sim.verbose)
-    std::cout << "[CUP3D] Initializing Flow Field.. " << std::endl;
   initialGridRefinement();
 }
 void Simulation::initialGridRefinement() {
@@ -17378,8 +17149,6 @@ void Simulation::initialGridRefinement() {
   _ic();
   const int lmax = sim.StaticObstacles ? sim.levelMax : 3 * sim.levelMax;
   for (int l = 0; l < lmax; l++) {
-    if (sim.verbose)
-      std::cout << "[CUP3D] - refinement " << l << "/" << lmax - 1 << std::endl;
     adaptMesh();
     (*sim.pipeline[0])(0);
     _ic();
@@ -17394,7 +17163,7 @@ void Simulation::adaptMesh() {
   sim.vel_amr->TagLike(sim.tmpVInfo());
   sim.chi_amr->TagLike(sim.tmpVInfo());
   sim.pres_amr->TagLike(sim.tmpVInfo());
-  sim.chi_amr->Adapt(sim.time, sim.verbose, true);
+  sim.chi_amr->Adapt(sim.time, false, true);
   sim.lhs_amr->Adapt(sim.time, false, true);
   sim.tmpV_amr->Adapt(sim.time, false, true);
   sim.pres_amr->Adapt(sim.time, false, false);
@@ -17539,11 +17308,6 @@ bool Simulation::advance(const Real dt) {
     sim.printResetProfiler();
   if ((sim.endTime > 0 && sim.time > sim.endTime) ||
       (sim.nsteps != 0 && sim.step >= sim.nsteps)) {
-    if (sim.verbose) {
-      sim.printResetProfiler();
-      std::cout << "Finished at time " << sim.time << " in " << sim.step
-                << " steps.\n";
-    }
     return true;
   }
   return false;
@@ -17613,8 +17377,6 @@ SimulationData::SimulationData(MPI_Comm mpicomm, ArgumentParser &parser)
   cubismBCX = BCx_flag;
   cubismBCY = BCy_flag;
   cubismBCZ = BCz_flag;
-  muteAll = parser("-muteAll").asInt(0);
-  verbose = muteAll ? false : parser("-verbose").asInt(1) && rank == 0;
   int dumpFreq = parser("-fdump").asDouble(0);
   dumpTime = parser("-tdump").asDouble(0.0);
   saveFreq = parser("-fsave").asInt(0);
