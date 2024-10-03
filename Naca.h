@@ -13,8 +13,7 @@
 
 CubismUP_3D_NAMESPACE_BEGIN
 
-class Naca: public Fish
-{
+    class Naca : public Fish {
   /*
    Hydrofoil motion is defined as:
 
@@ -34,19 +33,20 @@ class Naca: public Fish
       y(t) = Aheave*cos(2*pi*Fheave*t)
       v(t) = dy/dt = -2.0*pi*Fheave*Aheave*sin(2*pi*Fheave*t)
 
-      It is also possible to add a constant velocity (uforced,vforced) to the motion.
+      It is also possible to add a constant velocity (uforced,vforced) to the
+   motion.
   */
   Real Apitch, Fpitch, Mpitch, Fheave, Aheave;
-  Real tAccel; // time to accelerate to target velocity
+  Real tAccel;          // time to accelerate to target velocity
   Real fixedCenterDist; // distance s/L from CoM where hydrofoil is fixed
 
- public:
-  Naca(SimulationData&s, cubism::ArgumentParser&p);
+public:
+  Naca(SimulationData &s, cubism::ArgumentParser &p);
   void update() override;
   void computeVelocities() override;
-  using intersect_t = std::vector<std::vector<VolumeSegment_OBB*>>;
-  void writeSDFOnBlocks(std::vector<VolumeSegment_OBB> & vSegments) override;
-  void updateLabVelocity( int mSum[3], Real uSum[3] ) override;
+  using intersect_t = std::vector<std::vector<VolumeSegment_OBB *>>;
+  void writeSDFOnBlocks(std::vector<VolumeSegment_OBB> &vSegments) override;
+  void updateLabVelocity(int mSum[3], Real uSum[3]) override;
 };
 
 CubismUP_3D_NAMESPACE_END

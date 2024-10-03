@@ -13,10 +13,9 @@
 
 CubismUP_3D_NAMESPACE_BEGIN
 
-class ComputeDissipation : public Operator
-{
+    class ComputeDissipation : public Operator {
 public:
-  ComputeDissipation(SimulationData & s) : Operator(s) { }
+  ComputeDissipation(SimulationData &s) : Operator(s) {}
   void operator()(const Real dt);
   std::string getName() { return "Dissipation"; }
 };

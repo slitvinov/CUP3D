@@ -13,10 +13,9 @@
 
 CubismUP_3D_NAMESPACE_BEGIN
 
-class UpdateObstacles : public Operator
-{
- public:
-  UpdateObstacles(SimulationData & s) : Operator(s) {}
+    class UpdateObstacles : public Operator {
+public:
+  UpdateObstacles(SimulationData &s) : Operator(s) {}
 
   void operator()(const Real dt);
 

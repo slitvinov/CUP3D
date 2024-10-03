@@ -17,9 +17,7 @@ using Block = Real[NZ][NY][NX];
 static constexpr int xPad = 4;
 using PaddedBlock = Real[NZ + 2][NY + 2][NX + 2 * xPad];
 
-template <int N>
-static inline Real sum(const Real (&a)[N])
-{
+template <int N> static inline Real sum(const Real (&a)[N]) {
   Real s = 0;
   for (int ix = 0; ix < N; ++ix)
     s += a[ix];
@@ -27,26 +25,18 @@ static inline Real sum(const Real (&a)[N])
 }
 
 // Simple implementation of the kernel.
-Real kernelPoissonGetZInnerReference(
-    PaddedBlock & __restrict__ p_,
-    Block & __restrict__ Ax_,
-    Block & __restrict__ r_,
-    Block & __restrict__ block_,
-    const Real sqrNorm0,
-    const Real rr);
+Real kernelPoissonGetZInnerReference(PaddedBlock &__restrict__ p_,
+                                     Block &__restrict__ Ax_,
+                                     Block &__restrict__ r_,
+                                     Block &__restrict__ block_,
+                                     const Real sqrNorm0, const Real rr);
 
 // Optimized implementation. See the alignment requirements in the code!
-Real kernelPoissonGetZInner(
-    PaddedBlock &p,
-    const Real *pW,
-    const Real *pE,
-    Block & __restrict__ Ax,
-    Block & __restrict__ r,
-    Block & __restrict__ block,
-    Real sqrNorm0,
-    Real rr);
+Real kernelPoissonGetZInner(PaddedBlock &p, const Real *pW, const Real *pE,
+                            Block &__restrict__ Ax, Block &__restrict__ r,
+                            Block &__restrict__ block, Real sqrNorm0, Real rr);
 
-void getZImplParallel(const std::vector<cubism::BlockInfo>& vInfo);
+void getZImplParallel(const std::vector<cubism::BlockInfo> &vInfo);
 
-}  // namespace poisson_kernels
-}  // namespace cubismup3d
+} // namespace poisson_kernels
+} // namespace cubismup3d

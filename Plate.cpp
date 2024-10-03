@@ -11,15 +11,11 @@
 
 #include <ArgumentParser.h>
 
-CubismUP_3D_NAMESPACE_BEGIN
-using namespace cubism;
+CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
 
-//static constexpr Real EPSILON = std::numeric_limits<Real>::epsilon();
+// static constexpr Real EPSILON = std::numeric_limits<Real>::epsilon();
 
-static void _normalize(
-    Real * const x,
-    Real * const y,
-    Real * const z) {
+static void _normalize(Real *const x, Real *const y, Real *const z) {
   const Real norm = std::sqrt(*x * *x + *y * *y + *z * *z);
   assert(norm > 1e-9);
   const Real inv = 1.0 / norm;
@@ -28,16 +24,9 @@ static void _normalize(
   *z = inv * *z;
 }
 
-static void _normalized_cross(
-    const Real ax,
-    const Real ay,
-    const Real az,
-    const Real bx,
-    const Real by,
-    const Real bz,
-    Real * const cx,
-    Real * const cy,
-    Real * const cz) {
+static void _normalized_cross(const Real ax, const Real ay, const Real az,
+                              const Real bx, const Real by, const Real bz,
+                              Real *const cx, Real *const cy, Real *const cz) {
   const Real x = ay * bz - az * by;
   const Real y = az * bx - ax * bz;
   const Real z = ax * by - ay * bx;
@@ -49,56 +38,40 @@ static void _normalized_cross(
   *cz = inv * z;
 }
 
-
 ////////////////////////////////////////////////////////////
 // PLATE FILL BLOCKS
 ////////////////////////////////////////////////////////////
-namespace
-{
-  struct PlateFillBlocks : FillBlocksBase<PlateFillBlocks>
-  {
-    const Real cx, cy, cz;      // Center.
-    const Real nx, ny, nz;      // Normal. NORMALIZED.
-    const Real ax, ay, az;      // A-side vector. NORMALIZED.
-    const Real bx, by, bz;      // A-side vector. NORMALIZED.
-    const Real half_a;          // Half-size in A direction.
-    const Real half_b;          // Half-size in B direction.
-    const Real half_thickness;  // Half-thickess. Edges are rounded.
+namespace {
+struct PlateFillBlocks : FillBlocksBase<PlateFillBlocks> {
+  const Real cx, cy, cz;     // Center.
+  const Real nx, ny, nz;     // Normal. NORMALIZED.
+  const Real ax, ay, az;     // A-side vector. NORMALIZED.
+  const Real bx, by, bz;     // A-side vector. NORMALIZED.
+  const Real half_a;         // Half-size in A direction.
+  const Real half_b;         // Half-size in B direction.
+  const Real half_thickness; // Half-thickess. Edges are rounded.
 
-    Real aabb[3][2];            // Axis-aligned bounding box.
+  Real aabb[3][2]; // Axis-aligned bounding box.
 
-    PlateFillBlocks(
-        Real cx, Real cy, Real cz,
-        Real nx, Real ny, Real nz,
-        Real ax, Real ay, Real az,
-        Real bx, Real by, Real bz,
-        Real half_a,
-        Real half_b,
-        Real half_thickness, Real h);
+  PlateFillBlocks(Real cx, Real cy, Real cz, Real nx, Real ny, Real nz, Real ax,
+                  Real ay, Real az, Real bx, Real by, Real bz, Real half_a,
+                  Real half_b, Real half_thickness, Real h);
 
-    // Required by FillBlocksBase.
-    bool isTouching(const BlockInfo&, const ScalarBlock&b) const;
-    Real signedDistance(Real x, Real y, Real z) const;
-  };
-}  // Anonymous namespace.
+  // Required by FillBlocksBase.
+  bool isTouching(const BlockInfo &, const ScalarBlock &b) const;
+  Real signedDistance(Real x, Real y, Real z) const;
+};
+} // Anonymous namespace.
 
-
-PlateFillBlocks::PlateFillBlocks(
-    const Real _cx, const Real _cy, const Real _cz,
-    const Real _nx, const Real _ny, const Real _nz,
-    const Real _ax, const Real _ay, const Real _az,
-    const Real _bx, const Real _by, const Real _bz,
-    const Real _half_a,
-    const Real _half_b,
-    const Real _half_thickness, const Real h)
-  : cx(_cx), cy(_cy), cz(_cz),
-    nx(_nx), ny(_ny), nz(_nz),
-    ax(_ax), ay(_ay), az(_az),
-    bx(_bx), by(_by), bz(_bz),
-    half_a(_half_a),
-    half_b(_half_b),
-    half_thickness(_half_thickness)
-{
+PlateFillBlocks::PlateFillBlocks(const Real _cx, const Real _cy, const Real _cz,
+                                 const Real _nx, const Real _ny, const Real _nz,
+                                 const Real _ax, const Real _ay, const Real _az,
+                                 const Real _bx, const Real _by, const Real _bz,
+                                 const Real _half_a, const Real _half_b,
+                                 const Real _half_thickness, const Real h)
+    : cx(_cx), cy(_cy), cz(_cz), nx(_nx), ny(_ny), nz(_nz), ax(_ax), ay(_ay),
+      az(_az), bx(_bx), by(_by), bz(_bz), half_a(_half_a), half_b(_half_b),
+      half_thickness(_half_thickness) {
   using std::fabs;
 
   // Assert normalized.
@@ -111,10 +84,13 @@ PlateFillBlocks::PlateFillBlocks(
   assert(fabs(nx * bx + ny * by + nz * bz) < (Real)1e-9);
   assert(fabs(ax * bx + ay * by + az * bz) < (Real)1e-9);
 
-  const Real skin = (2 + SURFDH) * h; 
-  const Real tx = skin + fabs(ax * half_a) + fabs(bx * half_b) + fabs(nx * half_thickness);
-  const Real ty = skin + fabs(ay * half_a) + fabs(by * half_b) + fabs(ny * half_thickness);
-  const Real tz = skin + fabs(az * half_a) + fabs(bz * half_b) + fabs(nz * half_thickness);
+  const Real skin = (2 + SURFDH) * h;
+  const Real tx =
+      skin + fabs(ax * half_a) + fabs(bx * half_b) + fabs(nx * half_thickness);
+  const Real ty =
+      skin + fabs(ay * half_a) + fabs(by * half_b) + fabs(ny * half_thickness);
+  const Real tz =
+      skin + fabs(az * half_a) + fabs(bz * half_b) + fabs(nz * half_thickness);
 
   aabb[0][0] = cx - tx;
   aabb[0][1] = cx + tx;
@@ -124,21 +100,19 @@ PlateFillBlocks::PlateFillBlocks(
   aabb[2][1] = cz + tz;
 }
 
-bool PlateFillBlocks::isTouching(const BlockInfo & info, const ScalarBlock&b) const
-{
+bool PlateFillBlocks::isTouching(const BlockInfo &info,
+                                 const ScalarBlock &b) const {
   Real MINP[3], MAXP[3];
   info.pos(MINP, 0, 0, 0);
-  info.pos(MAXP, ScalarBlock::sizeX-1, ScalarBlock::sizeY-1, ScalarBlock::sizeZ-1);
-  return aabb[0][0] <= MAXP[0] && aabb[0][1] >= MINP[0]
-      && aabb[1][0] <= MAXP[1] && aabb[1][1] >= MINP[1]
-      && aabb[2][0] <= MAXP[2] && aabb[2][1] >= MINP[2];
+  info.pos(MAXP, ScalarBlock::sizeX - 1, ScalarBlock::sizeY - 1,
+           ScalarBlock::sizeZ - 1);
+  return aabb[0][0] <= MAXP[0] && aabb[0][1] >= MINP[0] &&
+         aabb[1][0] <= MAXP[1] && aabb[1][1] >= MINP[1] &&
+         aabb[2][0] <= MAXP[2] && aabb[2][1] >= MINP[2];
 }
 
-Real PlateFillBlocks::signedDistance(
-    const Real x,
-    const Real y,
-    const Real z) const
-{
+Real PlateFillBlocks::signedDistance(const Real x, const Real y,
+                                     const Real z) const {
   // Move plane to the center.
   const Real dx = x - cx;
   const Real dy = y - cy;
@@ -178,8 +152,7 @@ Real PlateFillBlocks::signedDistance(
 // PLATE OBSTACLE OPERATOR
 ////////////////////////////////////////////////////////////
 
-Plate::Plate(SimulationData & s, ArgumentParser &p) : Obstacle(s, p)
-{
+Plate::Plate(SimulationData &s, ArgumentParser &p) : Obstacle(s, p) {
   p.set_strict_mode();
   half_a = (Real)0.5 * p("-a").asDouble();
   half_b = (Real)0.5 * p("-b").asDouble();
@@ -203,8 +176,7 @@ Plate::Plate(SimulationData & s, ArgumentParser &p) : Obstacle(s, p)
   _init();
 }
 
-void Plate::_from_alpha(const Real alpha)
-{
+void Plate::_from_alpha(const Real alpha) {
   nx = std::cos(alpha);
   ny = std::sin(alpha);
   nz = 0;
@@ -213,8 +185,7 @@ void Plate::_from_alpha(const Real alpha)
   az = 0;
 }
 
-void Plate::_init(void)
-{
+void Plate::_init(void) {
   _normalize(&nx, &ny, &nz);
   _normalized_cross(nx, ny, nz, ax, ay, az, &bx, &by, &bz);
   _normalized_cross(bx, by, bz, nx, ny, nz, &ax, &ay, &az);
@@ -225,22 +196,16 @@ void Plate::_init(void)
   bBlockRotation[2] = true;
 }
 
-
-void Plate::create()
-{
+void Plate::create() {
   const Real h = sim.hmin;
-  const PlateFillBlocks K(
-      position[0], position[1], position[2],
-      nx, ny, nz,
-      ax, ay, az,
-      bx, by, bz,
-      half_a, half_b, half_thickness, h);
+  const PlateFillBlocks K(position[0], position[1], position[2], nx, ny, nz, ax,
+                          ay, az, bx, by, bz, half_a, half_b, half_thickness,
+                          h);
 
   create_base<PlateFillBlocks>(K);
 }
 
-void Plate::finalize()
-{
+void Plate::finalize() {
   // this method allows any computation that requires the char function
   // to be computed. E.g. compute the effective center of mass or removing
   // momenta from udef

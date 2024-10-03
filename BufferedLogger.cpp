@@ -23,8 +23,8 @@ struct BufferedLoggerImpl {
     // GN: otherwise icpc complains
     Stream() = default;
     Stream(Stream &&) = default;
-    Stream(const Stream& c) : requests_since_last_flush(c.requests_since_last_flush)
-    {
+    Stream(const Stream &c)
+        : requests_since_last_flush(c.requests_since_last_flush) {
       stream << c.stream.rdbuf();
     }
   };
@@ -42,10 +42,11 @@ struct BufferedLoggerImpl {
     p.second.requests_since_last_flush = 0;
   }
 
-  std::stringstream& get_stream(const std::string &filename) {
+  std::stringstream &get_stream(const std::string &filename) {
     auto it = files.find(filename);
     if (it != files.end()) {
-      if (++it->second.requests_since_last_flush == BufferedLogger::AUTO_FLUSH_COUNT)
+      if (++it->second.requests_since_last_flush ==
+          BufferedLogger::AUTO_FLUSH_COUNT)
         flush(*it);
       return it->second.stream;
     } else {
@@ -57,14 +58,14 @@ struct BufferedLoggerImpl {
   }
 };
 
-BufferedLogger::BufferedLogger() : impl(new BufferedLoggerImpl) { }
+BufferedLogger::BufferedLogger() : impl(new BufferedLoggerImpl) {}
 
 BufferedLogger::~BufferedLogger() {
   flush();
   delete impl;
 }
 
-std::stringstream& BufferedLogger::get_stream(const std::string &filename) {
+std::stringstream &BufferedLogger::get_stream(const std::string &filename) {
   return impl->get_stream(filename);
 }
 
@@ -73,4 +74,4 @@ void BufferedLogger::flush(void) {
     impl->flush(pair);
 }
 
-}  // namespace cubismup3d
+} // namespace cubismup3d

@@ -11,10 +11,10 @@
 
 CubismUP_3D_NAMESPACE_BEGIN
 
-class Simulation
-{
+    class Simulation {
 protected:
   cubism::ArgumentParser parser;
+
 public:
   SimulationData sim;
 
@@ -25,8 +25,8 @@ public:
   void setupGrid();
   void _ic();
 
-  //Simulation(MPI_Comm mpicomm, cubism::ArgumentParser &parser);
-  Simulation(int argc, char ** argv, MPI_Comm comm);
+  // Simulation(MPI_Comm mpicomm, cubism::ArgumentParser &parser);
+  Simulation(int argc, char **argv, MPI_Comm comm);
 
   void init();
 
@@ -60,8 +60,7 @@ public:
     The argv vector should NOT contain the argv[0] argument, it is filled with
     a dummy value instead.
 */
-std::shared_ptr<Simulation> createSimulation(
-    MPI_Comm comm,
-    const std::vector<std::string> &argv);
+std::shared_ptr<Simulation>
+createSimulation(MPI_Comm comm, const std::vector<std::string> &argv);
 
 CubismUP_3D_NAMESPACE_END

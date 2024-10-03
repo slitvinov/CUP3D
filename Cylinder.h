@@ -13,8 +13,7 @@
 
 CubismUP_3D_NAMESPACE_BEGIN
 
-class Cylinder : public Obstacle
-{
+    class Cylinder : public Obstacle {
 public:
   const Real radius;
   const Real halflength;
@@ -23,11 +22,11 @@ public:
   Real vmax = 0;
   Real wmax = 0;
   Real tmax = 1;
-  //special case: startup with unif accel to umax in tmax, and then decel to 0
+  // special case: startup with unif accel to umax in tmax, and then decel to 0
   bool accel = false;
 
 public:
-  Cylinder(SimulationData&s, cubism::ArgumentParser &p);
+  Cylinder(SimulationData &s, cubism::ArgumentParser &p);
   void _init(void);
   void create() override;
   void finalize() override;

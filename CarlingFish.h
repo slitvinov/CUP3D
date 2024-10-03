@@ -13,12 +13,11 @@
 
 CubismUP_3D_NAMESPACE_BEGIN
 
-class CarlingFishMidlineData;
+    class CarlingFishMidlineData;
 
-class CarlingFish: public Fish
-{
- public:
-  CarlingFish(SimulationData&s, cubism::ArgumentParser&p);
+class CarlingFish : public Fish {
+public:
+  CarlingFish(SimulationData &s, cubism::ArgumentParser &p);
 };
 
 CubismUP_3D_NAMESPACE_END

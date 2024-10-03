@@ -11,15 +11,17 @@
 
 #include "ObstacleVector.h"
 
-namespace cubism { class ArgumentParser; }
+namespace cubism {
+class ArgumentParser;
+}
 
 CubismUP_3D_NAMESPACE_BEGIN
 
-class ObstacleFactory
-{
-  SimulationData & sim;
+    class ObstacleFactory {
+  SimulationData &sim;
+
 public:
-  ObstacleFactory(SimulationData & s) : sim(s) { }
+  ObstacleFactory(SimulationData &s) : sim(s) {}
 
   /* Add obstacles defined with `-factory` and `-factory-content` arguments. */
   void addObstacles(cubism::ArgumentParser &parser);

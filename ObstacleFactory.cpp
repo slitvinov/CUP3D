@@ -25,18 +25,15 @@
 #include <iostream>
 #include <fstream>
 
-CubismUP_3D_NAMESPACE_BEGIN
-using namespace cubism;
+CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
 using VectorType = ObstacleVector::VectorType;
 
 /*
  * Create an obstacle instance given its name and arguments.
  */
 static std::shared_ptr<Obstacle>
-_createObstacle(SimulationData &sim,
-                const std::string &objectName,
-                FactoryFileLineParser &lineParser)
-{
+_createObstacle(SimulationData &sim, const std::string &objectName,
+                FactoryFileLineParser &lineParser) {
   if (objectName == "Sphere")
     return std::make_shared<Sphere>(sim, lineParser);
   if (objectName == "StefanFish" || objectName == "stefanfish")
@@ -61,7 +58,8 @@ _createObstacle(SimulationData &sim,
     return std::make_shared<ExternalObstacle>(sim, lineParser);
 
   if (sim.rank == 0) {
-    std::cout << "[CUP3D] Case " << objectName << " is not defined: aborting\n" << std::flush;
+    std::cout << "[CUP3D] Case " << objectName << " is not defined: aborting\n"
+              << std::flush;
     abort();
   }
 
@@ -71,8 +69,7 @@ _createObstacle(SimulationData &sim,
 /*
  * Add one obstacle per non-empty non-comment line of the given stream.
  */
-static void _addObstacles(SimulationData &sim, std::stringstream &stream)
-{
+static void _addObstacles(SimulationData &sim, std::stringstream &stream) {
   // if (sim.rank == 0)
   //   printf("[CUP3D] Factory content:\n%s\n\n", stream.str().c_str());
   // here we store the data per object
@@ -80,35 +77,39 @@ static void _addObstacles(SimulationData &sim, std::stringstream &stream)
   std::string line;
 
   while (std::getline(stream, line)) {
-      std::istringstream line_stream(line);
-      std::string ID;
-      line_stream >> ID;
-      if (ID.empty() || ID[0] == '#') continue;  // Comments and empty lines ignored.
-      factoryLines.emplace_back(ID, FactoryFileLineParser(line_stream));
+    std::istringstream line_stream(line);
+    std::string ID;
+    line_stream >> ID;
+    if (ID.empty() || ID[0] == '#')
+      continue; // Comments and empty lines ignored.
+    factoryLines.emplace_back(ID, FactoryFileLineParser(line_stream));
   }
   if (factoryLines.empty()) {
-    if (sim.rank == 0 )
+    if (sim.rank == 0)
       std::cout << "[CUP3D] OBSTACLE FACTORY did not create any obstacles.\n";
     return;
   }
-  if (sim.rank == 0 ) {
+  if (sim.rank == 0) {
     std::cout << "-------------   OBSTACLE FACTORY : START ("
               << factoryLines.size() << " objects)   ------------\n";
   }
 
-  for (auto & l : factoryLines) {
+  for (auto &l : factoryLines) {
     sim.obstacle_vector->addObstacle(_createObstacle(sim, l.first, l.second));
-    if( sim.rank == 0 ) std::cout << "--------------------------------------------------------------------" << std::endl;
+    if (sim.rank == 0)
+      std::cout << "-----------------------------------------------------------"
+                   "---------"
+                << std::endl;
   }
 }
 
-void ObstacleFactory::addObstacles(cubism::ArgumentParser &parser)
-{
+void ObstacleFactory::addObstacles(cubism::ArgumentParser &parser) {
   // Read parser information
   parser.unset_strict_mode();
   const std::string factory_filename = parser("-factory").asString("factory");
   std::string factory_content = parser("-factory-content").asString("");
-  if (factory_content.compare("") == 0) factory_content = parser("-shapes").asString("");
+  if (factory_content.compare("") == 0)
+    factory_content = parser("-shapes").asString("");
 
   std::stringstream stream(factory_content);
   if (!factory_filename.empty()) {
@@ -124,8 +125,7 @@ void ObstacleFactory::addObstacles(cubism::ArgumentParser &parser)
   _addObstacles(sim, stream);
 }
 
-void ObstacleFactory::addObstacles(const std::string &factoryContent)
-{
+void ObstacleFactory::addObstacles(const std::string &factoryContent) {
   std::stringstream stream(factoryContent);
   _addObstacles(sim, stream);
 }

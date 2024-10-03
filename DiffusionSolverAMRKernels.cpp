@@ -48,7 +48,8 @@ Compilation hints:
     iterations to change.
 
   - To show the assembly, use e.g.
-      objdump -dS -Mintel --no-show-raw-insn DiffusionSolverAMRKernels.cpp.o > DiffusionSolverAMRKErnels.cpp.lst
+      objdump -dS -Mintel --no-show-raw-insn DiffusionSolverAMRKernels.cpp.o >
+DiffusionSolverAMRKErnels.cpp.lst
 
   - With gcc 11, it might be necessary to use "-g -gdwarf-4" instead of "-g"
     for objdump to work. For more information look here:
@@ -76,8 +77,10 @@ namespace diffusion_kernels {
 static constexpr Real kDivEpsilon = 1e-55;
 static constexpr Real kNormRelCriterion = 1e-7;
 static constexpr Real kNormAbsCriterion = 1e-16;
-static constexpr Real kSqrNormRelCriterion = kNormRelCriterion * kNormRelCriterion;
-static constexpr Real kSqrNormAbsCriterion = kNormAbsCriterion * kNormAbsCriterion;
+static constexpr Real kSqrNormRelCriterion =
+    kNormRelCriterion * kNormRelCriterion;
+static constexpr Real kSqrNormAbsCriterion =
+    kNormAbsCriterion * kNormAbsCriterion;
 
 /*
 // Reference non-vectorized implementation of the kernel.
@@ -117,8 +120,8 @@ Real kernelDiffusionGetZInnerReference(
   const Real rrNew = sqrNorm;
   const Real norm = std::sqrt(sqrNorm) / N;
 
-  if (norm / std::sqrt(sqrNorm0) < kNormRelCriterion || norm < kNormAbsCriterion)
-    return 0;
+  if (norm / std::sqrt(sqrNorm0) < kNormRelCriterion || norm <
+kNormAbsCriterion) return 0;
 
   for (int iz = 0; iz < NZ; ++iz)
   for (int iy = 0; iy < NY; ++iy)
@@ -132,11 +135,8 @@ Real kernelDiffusionGetZInnerReference(
 */
 
 /// Update `r -= a * Ax` and return `sum(r^2)`.
-static inline Real subAndSumSqr(
-    Block & __restrict__ r_,
-    const Block & __restrict__ Ax_,
-    Real a)
-{
+static inline Real subAndSumSqr(Block &__restrict__ r_,
+                                const Block &__restrict__ Ax_, Real a) {
   // The block structure is not important here, we can treat it as a contiguous
   // array. However, we group into groups of length 16, to help with ILP and
   // vectorization.
@@ -144,8 +144,8 @@ static inline Real subAndSumSqr(
   constexpr int MY = NX * NY * NZ / MX;
   using SquashedBlock = Real[MY][MX];
   static_assert(NX * NY % MX == 0 && sizeof(Block) == sizeof(SquashedBlock));
-  SquashedBlock & __restrict__ r = (SquashedBlock &)r_;
-  SquashedBlock & __restrict__ Ax = (SquashedBlock &)Ax_;
+  SquashedBlock &__restrict__ r = (SquashedBlock &)r_;
+  SquashedBlock &__restrict__ Ax = (SquashedBlock &)Ax_;
 
   // This kernel reaches neither the compute nor the memory bound.
   // The problem could be high latency of FMA instructions.
@@ -160,8 +160,7 @@ static inline Real subAndSumSqr(
 }
 
 template <typename T>
-static inline T *assumeAligned(T *ptr, unsigned align, unsigned offset = 0)
-{
+static inline T *assumeAligned(T *ptr, unsigned align, unsigned offset = 0) {
   if (sizeof(Real) == 8 || sizeof(Real) == 4) {
     // if ((uintptr_t)ptr % align != offset)
     //   throw std::runtime_error("wrong alignment");
@@ -170,65 +169,61 @@ static inline T *assumeAligned(T *ptr, unsigned align, unsigned offset = 0)
     // Works with gcc, clang and icc.
     return (T *)__builtin_assume_aligned(ptr, align, offset);
   } else {
-    return ptr;  // No alignment assumptions for long double.
+    return ptr; // No alignment assumptions for long double.
   }
 }
 
-Real kernelDiffusionGetZInner(
-    PaddedBlock &p_,
-    const Real *pW_,
-    const Real *pE_,
-    Block & __restrict__ Ax_,
-    Block & __restrict__ r_,
-    Block & __restrict__ block_,
-    const Real sqrNorm0,
-    const Real rr, const Real coefficient)
-{
+Real kernelDiffusionGetZInner(PaddedBlock &p_, const Real *pW_, const Real *pE_,
+                              Block &__restrict__ Ax_, Block &__restrict__ r_,
+                              Block &__restrict__ block_, const Real sqrNorm0,
+                              const Real rr, const Real coefficient) {
   PaddedBlock &p = *assumeAligned(&p_, 64, 64 - xPad * sizeof(Real));
-  const PaddedBlock &pW = *(PaddedBlock *)pW_;  // Aligned to 64B + 24 (for doubles).
-  const PaddedBlock &pE = *(PaddedBlock *)pE_;  // Aligned to 64B + 40 (for doubles).
-  Block & __restrict__ Ax = *assumeAligned(&Ax_, 64);
-  Block & __restrict__ r = *assumeAligned(&r_, 64);
-  Block & __restrict__ block = *assumeAligned(&block_, kBlockAlignment);
+  const PaddedBlock &pW =
+      *(PaddedBlock *)pW_; // Aligned to 64B + 24 (for doubles).
+  const PaddedBlock &pE =
+      *(PaddedBlock *)pE_; // Aligned to 64B + 40 (for doubles).
+  Block &__restrict__ Ax = *assumeAligned(&Ax_, 64);
+  Block &__restrict__ r = *assumeAligned(&r_, 64);
+  Block &__restrict__ block = *assumeAligned(&block_, kBlockAlignment);
 
   // Broadwell: 6.0-6.6 FLOP/cycle, depending probably on array alignments.
   Real a2Partial[NX] = {};
   for (int iz = 0; iz < NZ; ++iz)
-  for (int iy = 0; iy < NY; ++iy) {
-    // On Broadwell and earlier it might be beneficial to turn some of these
-    // a+b additions into FMAs of form 1*a+b, because those CPUs can do 2
-    // FMAs/cycle and only 1 ADD/cycle. However, it wouldn't be simple to
-    // convience the compiler to do so, and it wouldn't matter from Skylake on.
-    // https://www.agner.org/optimize/blog/read.php?i=415
+    for (int iy = 0; iy < NY; ++iy) {
+      // On Broadwell and earlier it might be beneficial to turn some of these
+      // a+b additions into FMAs of form 1*a+b, because those CPUs can do 2
+      // FMAs/cycle and only 1 ADD/cycle. However, it wouldn't be simple to
+      // convience the compiler to do so, and it wouldn't matter from Skylake
+      // on. https://www.agner.org/optimize/blog/read.php?i=415
 
-    Real tmpAx[NX];
-    for (int ix = 0; ix < NX; ++ix) {
-      tmpAx[ix] = pW[iz + 1][iy + 1][ix + xPad]
-                + pE[iz + 1][iy + 1][ix + xPad]
-                + coefficient * p[iz + 1][iy + 1][ix + xPad];
+      Real tmpAx[NX];
+      for (int ix = 0; ix < NX; ++ix) {
+        tmpAx[ix] = pW[iz + 1][iy + 1][ix + xPad] +
+                    pE[iz + 1][iy + 1][ix + xPad] +
+                    coefficient * p[iz + 1][iy + 1][ix + xPad];
+      }
+
+      // This kernel is memory bound. The compiler should figure out that some
+      // loads can be reused between consecutive iy.
+
+      // Merging the following two loops (i.e. to ensure symmetry preservation
+      // when there is no -ffast-math) kills vectorization in gcc 11.
+      for (int ix = 0; ix < NX; ++ix)
+        tmpAx[ix] += p[iz + 1][iy][ix + xPad];
+      for (int ix = 0; ix < NX; ++ix)
+        tmpAx[ix] += p[iz + 1][iy + 2][ix + xPad];
+
+      for (int ix = 0; ix < NX; ++ix)
+        tmpAx[ix] += p[iz][iy + 1][ix + xPad];
+      for (int ix = 0; ix < NX; ++ix)
+        tmpAx[ix] += p[iz + 2][iy + 1][ix + xPad];
+
+      for (int ix = 0; ix < NX; ++ix)
+        Ax[iz][iy][ix] = tmpAx[ix];
+
+      for (int ix = 0; ix < NX; ++ix)
+        a2Partial[ix] += p[iz + 1][iy + 1][ix + xPad] * tmpAx[ix];
     }
-
-    // This kernel is memory bound. The compiler should figure out that some
-    // loads can be reused between consecutive iy.
-
-    // Merging the following two loops (i.e. to ensure symmetry preservation
-    // when there is no -ffast-math) kills vectorization in gcc 11.
-    for (int ix = 0; ix < NX; ++ix)
-      tmpAx[ix] += p[iz + 1][iy][ix + xPad];
-    for (int ix = 0; ix < NX; ++ix)
-      tmpAx[ix] += p[iz + 1][iy + 2][ix + xPad];
-
-    for (int ix = 0; ix < NX; ++ix)
-      tmpAx[ix] += p[iz][iy + 1][ix + xPad];
-    for (int ix = 0; ix < NX; ++ix)
-      tmpAx[ix] += p[iz + 2][iy + 1][ix + xPad];
-
-    for (int ix = 0; ix < NX; ++ix)
-      Ax[iz][iy][ix] = tmpAx[ix];
-
-    for (int ix = 0; ix < NX; ++ix)
-      a2Partial[ix] += p[iz + 1][iy + 1][ix + xPad] * tmpAx[ix];
-  }
   const Real a2 = sum(a2Partial);
   const Real a = rr / (a2 + kDivEpsilon);
 
@@ -237,9 +232,9 @@ Real kernelDiffusionGetZInner(
   // part), but it increases the variance a lot so it is not clear whether it
   // is faster on average. For now, keeping it separate.
   for (int iz = 0; iz < NZ; ++iz)
-  for (int iy = 0; iy < NY; ++iy)
-  for (int ix = 0; ix < NX; ++ix)
-    block[iz][iy][ix] += a * p[iz + 1][iy + 1][ix + xPad];
+    for (int iy = 0; iy < NY; ++iy)
+      for (int ix = 0; ix < NX; ++ix)
+        block[iz][iy][ix] += a * p[iz + 1][iy + 1][ix + xPad];
 
   // Kernel: 2 reads + 1 write + 4 FLOPs/cycle -> should be memory bound.
   // Broadwell: 9.2 FLOP/cycle, 37+18.5 B/cycle -> latency bound?
@@ -249,24 +244,25 @@ Real kernelDiffusionGetZInner(
   const Real beta = sqrSum / (rr + kDivEpsilon);
   const Real sqrNorm = (Real)1 / (N * N) * sqrSum;
 
-  if (sqrNorm < kSqrNormRelCriterion * sqrNorm0 || sqrNorm < kSqrNormAbsCriterion)
+  if (sqrNorm < kSqrNormRelCriterion * sqrNorm0 ||
+      sqrNorm < kSqrNormAbsCriterion)
     return -1.0;
 
   // Kernel: 2 reads + 1 write + 2 FLOPs per cell -> limit is L1 cache.
   // Broadwell: 6.5 FLOP/cycle, 52+26 B/cycle
   for (int iz = 0; iz < NZ; ++iz)
-  for (int iy = 0; iy < NY; ++iy)
-  for (int ix = 0; ix < NX; ++ix) {
-    p[iz + 1][iy + 1][ix + xPad] =
-        r[iz][iy][ix] + beta * p[iz + 1][iy + 1][ix + xPad];
-  }
+    for (int iy = 0; iy < NY; ++iy)
+      for (int ix = 0; ix < NX; ++ix) {
+        p[iz + 1][iy + 1][ix + xPad] =
+            r[iz][iy][ix] + beta * p[iz + 1][iy + 1][ix + xPad];
+      }
 
   const Real rrNew = sqrSum;
   return rrNew;
 }
 
-void getZImplParallel(const std::vector<cubism::BlockInfo>& vInfo, const Real nu, const Real dt)
-{
+void getZImplParallel(const std::vector<cubism::BlockInfo> &vInfo,
+                      const Real nu, const Real dt) {
   const size_t Nblocks = vInfo.size();
 
   // We could enable this, we don't really care about denormals.
@@ -290,28 +286,28 @@ void getZImplParallel(const std::vector<cubism::BlockInfo>& vInfo, const Real nu
     char padding2[xPad * sizeof(Real)];
     Block Ax;
   };
-  alignas(64) Tmp tmp{};  // See the kernels cpp file for required alignments.
+  alignas(64) Tmp tmp{}; // See the kernels cpp file for required alignments.
   Block &r = tmp.r;
   Block &Ax = tmp.Ax;
   PaddedBlock &p = tmp.p;
 
-  #pragma omp for
+#pragma omp for
   for (size_t i = 0; i < Nblocks; ++i) {
     static_assert(sizeof(ScalarBlock) == sizeof(Block));
     assert((uintptr_t)vInfo[i].ptrBlock % kBlockAlignment == 0);
-    Block &block = *(Block *)__builtin_assume_aligned(
-        vInfo[i].ptrBlock, kBlockAlignment);
+    Block &block =
+        *(Block *)__builtin_assume_aligned(vInfo[i].ptrBlock, kBlockAlignment);
 
     const Real invh = 1 / vInfo[i].h;
     Real rrPartial[NX] = {};
     for (int iz = 0; iz < NZ; ++iz)
-    for (int iy = 0; iy < NY; ++iy)
-    for (int ix = 0; ix < NX; ++ix) {
-      r[iz][iy][ix] = invh * block[iz][iy][ix];
-      rrPartial[ix] += r[iz][iy][ix] * r[iz][iy][ix];
-      p[iz + 1][iy + 1][ix + xPad] = r[iz][iy][ix];
-      block[iz][iy][ix] = 0;
-    }
+      for (int iy = 0; iy < NY; ++iy)
+        for (int ix = 0; ix < NX; ++ix) {
+          r[iz][iy][ix] = invh * block[iz][iy][ix];
+          rrPartial[ix] += r[iz][iy][ix] * r[iz][iy][ix];
+          p[iz + 1][iy + 1][ix + xPad] = r[iz][iy][ix];
+          block[iz][iy][ix] = 0;
+        }
     Real rr = sum(rrPartial);
 
     const Real sqrNorm0 = (Real)1 / (N * N) * rr;
@@ -322,15 +318,16 @@ void getZImplParallel(const std::vector<cubism::BlockInfo>& vInfo, const Real nu
     const Real *pW = &p[0][0][0] - 1;
     const Real *pE = &p[0][0][0] + 1;
 
-    const Real coefficient = -6.0 - vInfo[i].h*vInfo[i].h/nu/dt;
+    const Real coefficient = -6.0 - vInfo[i].h * vInfo[i].h / nu / dt;
     for (int k = 0; k < 100; ++k) {
       // rr = kernelDiffusionGetZInnerReference(p,Ax, r, block, sqrNorm0, rr);
-      rr = kernelDiffusionGetZInner(p, pW, pE, Ax, r, block, sqrNorm0, rr, coefficient);
+      rr = kernelDiffusionGetZInner(p, pW, pE, Ax, r, block, sqrNorm0, rr,
+                                    coefficient);
       if (rr <= 0)
         break;
     }
   }
 }
 
-}  // namespace diffusion_kernels
-}  // namespace cubismup3d
+} // namespace diffusion_kernels
+} // namespace cubismup3d

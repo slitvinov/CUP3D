@@ -13,10 +13,9 @@
 
 CubismUP_3D_NAMESPACE_BEGIN
 
-class Penalization : public Operator
-{
- public:
-  Penalization(SimulationData & s);
+    class Penalization : public Operator {
+public:
+  Penalization(SimulationData &s);
 
   void operator()(const Real dt);
 

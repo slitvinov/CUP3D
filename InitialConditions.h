@@ -13,17 +13,15 @@
 
 CubismUP_3D_NAMESPACE_BEGIN
 
-class InitialConditions : public Operator
-{
- public:
-  InitialConditions(SimulationData & s) : Operator(s) { }
+    class InitialConditions : public Operator {
+public:
+  InitialConditions(SimulationData &s) : Operator(s) {}
 
-  template<typename K>
-  inline void run(const K kernel) {
-    std::vector<cubism::BlockInfo>& vInfo = sim.velInfo();
-    #pragma omp parallel for schedule(static)
-    for (size_t i=0; i<vInfo.size(); i++)
-      kernel(vInfo[i], *(VectorBlock*)vInfo[i].ptrBlock);
+  template <typename K> inline void run(const K kernel) {
+    std::vector<cubism::BlockInfo> &vInfo = sim.velInfo();
+#pragma omp parallel for schedule(static)
+    for (size_t i = 0; i < vInfo.size(); i++)
+      kernel(vInfo[i], *(VectorBlock *)vInfo[i].ptrBlock);
   }
 
   void operator()(const Real dt);

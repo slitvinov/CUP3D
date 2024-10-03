@@ -23,7 +23,7 @@ struct BufferedLoggerImpl;
  * If killing intentionally simulation, don't forget to flush the logger!
  */
 class BufferedLogger {
-  BufferedLoggerImpl * const impl;
+  BufferedLoggerImpl *const impl;
 
 public:
   static constexpr int AUTO_FLUSH_COUNT = 100;
@@ -42,11 +42,11 @@ public:
    * The stream is automatically flushed if accessed
    * many times since last flush.
    */
-  std::stringstream& get_stream(const std::string &filename);
+  std::stringstream &get_stream(const std::string &filename);
 };
 
-extern BufferedLogger logger;  // Declared in BufferedLogger.cpp.
+extern BufferedLogger logger; // Declared in BufferedLogger.cpp.
 
-}  // namespace cubismup3d
+} // namespace cubismup3d
 
 #endif // CubismUP_3D_utils_BufferedLogger_h
