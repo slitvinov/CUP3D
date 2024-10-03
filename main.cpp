@@ -322,7 +322,7 @@ struct TreePosition {
   void setCheckCoarser() { position = -2; }
   void setCheckFiner() { position = -1; }
 };
-struct BlockInfo {
+struct Info {
   long long blockID;
   long long blockID_2;
   long long Z;
@@ -371,10 +371,10 @@ struct BlockInfo {
     pos(result.data(), ix, iy, iz);
     return result;
   }
-  bool operator<(const BlockInfo &other) const {
+  bool operator<(const Info &other) const {
     return (blockID_2 < other.blockID_2);
   }
-  BlockInfo(){};
+  Info(){};
   void setup(const int a_level, const double a_h, const double a_origin[3],
              const long long a_Z) {
     level = a_level;
@@ -465,7 +465,7 @@ protected:
   std::map<std::array<long long, 2>, Case *> MapOfCases;
   TGrid *grid;
   std::vector<Case> Cases;
-  void FillCase(BlockInfo &info, const int *const code) {
+  void FillCase(Info &info, const int *const code) {
     const int myFace = abs(code[0]) * std::max(0, code[0]) +
                        abs(code[1]) * (std::max(0, code[1]) + 2) +
                        abs(code[2]) * (std::max(0, code[2]) + 4);
@@ -535,13 +535,13 @@ public:
     Cases.clear();
     MapOfCases.clear();
     grid = &_grid;
-    std::vector<BlockInfo> &B = (*grid).getBlocksInfo();
+    std::vector<Info> &B = (*grid).getBlocksInfo();
     std::array<int, 3> blocksPerDim = (*grid).getMaxBlocks();
     std::array<int, 6> icode = {1 * 2 + 3 * 1 + 9 * 1, 1 * 0 + 3 * 1 + 9 * 1,
                                 1 * 1 + 3 * 2 + 9 * 1, 1 * 1 + 3 * 0 + 9 * 1,
                                 1 * 1 + 3 * 1 + 9 * 2, 1 * 1 + 3 * 1 + 9 * 0};
     for (auto &info : B) {
-      grid->getBlockInfoAll(info.level, info.Z).auxiliary = nullptr;
+      grid->getInfoAll(info.level, info.Z).auxiliary = nullptr;
       const int aux = 1 << info.level;
       const bool xskin =
           info.index[0] == 0 || info.index[0] == blocksPerDim[0] * aux - 1;
@@ -586,7 +586,7 @@ public:
           MapOfCases.insert(std::pair<std::array<long long, 2>, Case *>(
               {Cases[Cases_index].level, Cases[Cases_index].Z},
               &Cases[Cases_index]));
-          grid->getBlockInfoAll(Cases[Cases_index].level, Cases[Cases_index].Z)
+          grid->getInfoAll(Cases[Cases_index].level, Cases[Cases_index].Z)
               .auxiliary = &Cases[Cases_index];
           info.auxiliary = &Cases[Cases_index];
           Cases_index++;
@@ -594,14 +594,14 @@ public:
       }
   }
   virtual void FillBlockCases() {
-    std::vector<BlockInfo> &B = (*grid).getBlocksInfo();
+    std::vector<Info> &B = (*grid).getBlocksInfo();
     std::array<int, 3> blocksPerDim = (*grid).getMaxBlocks();
     std::array<int, 6> icode = {1 * 2 + 3 * 1 + 9 * 1, 1 * 0 + 3 * 1 + 9 * 1,
                                 1 * 1 + 3 * 2 + 9 * 1, 1 * 1 + 3 * 0 + 9 * 1,
                                 1 * 1 + 3 * 1 + 9 * 2, 1 * 1 + 3 * 1 + 9 * 0};
 #pragma omp parallel for
     for (size_t i = 0; i < B.size(); i++) {
-      BlockInfo &info = B[i];
+      Info &info = B[i];
       const int aux = 1 << info.level;
       const bool xskin =
           info.index[0] == 0 || info.index[0] == blocksPerDim[0] * aux - 1;
@@ -686,9 +686,9 @@ public:
   typedef Block BlockType;
   using ElementType = typename Block::ElementType;
   typedef typename Block::RealType Real;
-  std::unordered_map<long long, BlockInfo *> BlockInfoAll;
+  std::unordered_map<long long, Info *> InfoAll;
   std::unordered_map<long long, TreePosition> Octree;
-  std::vector<BlockInfo> m_vInfo;
+  std::vector<Info> m_vInfo;
   const int NX;
   const int NY;
   const int NZ;
@@ -720,8 +720,8 @@ public:
       return retval->second;
     }
   }
-  TreePosition &Tree(BlockInfo &info) { return Tree(info.level, info.Z); }
-  TreePosition &Tree(const BlockInfo &info) { return Tree(info.level, info.Z); }
+  TreePosition &Tree(Info &info) { return Tree(info.level, info.Z); }
+  TreePosition &Tree(const Info &info) { return Tree(info.level, info.Z); }
   void _alloc() {
     const int m = levelStart;
     const int TwoPower = 1 << m;
@@ -743,7 +743,7 @@ public:
   }
   void _alloc(const int m, const long long n) {
     allocator<Block> alloc;
-    BlockInfo &new_info = getBlockInfoAll(m, n);
+    Info &new_info = getInfoAll(m, n);
     new_info.ptrBlock = alloc.allocate(1);
 #pragma omp critical
     { m_vInfo.push_back(new_info); }
@@ -754,24 +754,24 @@ public:
     for (size_t i = 0; i < m_vInfo.size(); i++) {
       const int m = m_vInfo[i].level;
       const long long n = m_vInfo[i].Z;
-      alloc.deallocate((Block *)getBlockInfoAll(m, n).ptrBlock, 1);
+      alloc.deallocate((Block *)getInfoAll(m, n).ptrBlock, 1);
     }
     std::vector<long long> aux;
-    for (auto &m : BlockInfoAll)
+    for (auto &m : InfoAll)
       aux.push_back(m.first);
     for (size_t i = 0; i < aux.size(); i++) {
-      const auto retval = BlockInfoAll.find(aux[i]);
-      if (retval != BlockInfoAll.end()) {
+      const auto retval = InfoAll.find(aux[i]);
+      if (retval != InfoAll.end()) {
         delete retval->second;
       }
     }
     m_vInfo.clear();
-    BlockInfoAll.clear();
+    InfoAll.clear();
     Octree.clear();
   }
   void _dealloc(const int m, const long long n) {
     allocator<Block> alloc;
-    alloc.deallocate((Block *)getBlockInfoAll(m, n).ptrBlock, 1);
+    alloc.deallocate((Block *)getInfoAll(m, n).ptrBlock, 1);
     for (size_t j = 0; j < m_vInfo.size(); j++) {
       if (m_vInfo[j].level == m && m_vInfo[j].Z == n) {
         m_vInfo.erase(m_vInfo.begin() + j);
@@ -789,19 +789,19 @@ public:
           const int m = m_vInfo[j].level;
           const long long n = m_vInfo[j].Z;
           m_vInfo[j].changed2 = true;
-          alloc.deallocate((Block *)getBlockInfoAll(m, n).ptrBlock, 1);
+          alloc.deallocate((Block *)getInfoAll(m, n).ptrBlock, 1);
           break;
         }
       }
     m_vInfo.erase(std::remove_if(m_vInfo.begin(), m_vInfo.end(),
-                                 [](const BlockInfo &x) { return x.changed2; }),
+                                 [](const Info &x) { return x.changed2; }),
                   m_vInfo.end());
   }
-  void FindBlockInfo(const int m, const long long n, const int m_new,
+  void FindInfo(const int m, const long long n, const int m_new,
                      const long long n_new) {
     for (size_t j = 0; j < m_vInfo.size(); j++)
       if (m == m_vInfo[j].level && n == m_vInfo[j].Z) {
-        BlockInfo &correct_info = getBlockInfoAll(m_new, n_new);
+        Info &correct_info = getInfoAll(m_new, n_new);
         correct_info.state = Leave;
         m_vInfo[j] = correct_info;
         return;
@@ -813,7 +813,7 @@ public:
       for (size_t j = 0; j < m_vInfo.size(); j++) {
         const int m = m_vInfo[j].level;
         const long long n = m_vInfo[j].Z;
-        BlockInfo &correct_info = getBlockInfoAll(m, n);
+        Info &correct_info = getInfoAll(m, n);
         correct_info.blockID = j;
         m_vInfo[j] = correct_info;
         assert(Tree(m, n).Exists());
@@ -822,7 +822,7 @@ public:
       for (size_t j = 0; j < m_vInfo.size(); j++) {
         const int m = m_vInfo[j].level;
         const long long n = m_vInfo[j].Z;
-        BlockInfo &correct_info = getBlockInfoAll(m, n);
+        Info &correct_info = getInfoAll(m, n);
         correct_info.blockID = j;
         m_vInfo[j].blockID = j;
         m_vInfo[j].state = correct_info.state;
@@ -837,7 +837,7 @@ public:
       : NX(_NX), NY(_NY), NZ(_NZ), maxextent(_maxextent), levelMax(_levelMax),
         levelStart(_levelStart), xperiodic(a_xperiodic), yperiodic(a_yperiodic),
         zperiodic(a_zperiodic) {
-    BlockInfo dummy;
+    Info dummy;
     const int nx = dummy.blocks_per_dim(0, NX, NY, NZ);
     const int ny = dummy.blocks_per_dim(1, NX, NY, NZ);
     const int nz = dummy.blocks_per_dim(2, NX, NY, NZ);
@@ -855,7 +855,7 @@ public:
   }
   virtual ~Grid() { _deallocAll(); }
   virtual Block *avail(const int m, const long long n) {
-    return (Block *)getBlockInfoAll(m, n).ptrBlock;
+    return (Block *)getInfoAll(m, n).ptrBlock;
   }
   virtual int rank() const { return 0; }
   virtual void initialize_blocks(const std::vector<long long> &blocksZ,
@@ -867,7 +867,7 @@ public:
       _alloc(level, Z);
       Tree(level, Z).setrank(rank());
       int p[3];
-      BlockInfo::inverse(Z, level, p[0], p[1], p[2]);
+      Info::inverse(Z, level, p[0], p[1], p[2]);
       if (level < levelMax - 1)
         for (int k1 = 0; k1 < 2; k1++)
           for (int j1 = 0; j1 < 2; j1++)
@@ -892,7 +892,7 @@ public:
     const int ix = (i + TwoPower * NX) % (NX * TwoPower);
     const int iy = (j + TwoPower * NY) % (NY * TwoPower);
     const int iz = (k + TwoPower * NZ) % (NZ * TwoPower);
-    return BlockInfo::forward(level, ix, iy, iz);
+    return Info::forward(level, ix, iy, iz);
   }
   Block *avail1(const int ix, const int iy, const int iz, const int m) {
     const long long n = getZforward(m, ix, iy, iz);
@@ -914,16 +914,16 @@ public:
     return {b[0] * Block::sizeX, b[1] * Block::sizeY, b[2] * Block::sizeZ};
   }
   inline int getlevelMax() const { return levelMax; }
-  BlockInfo &getBlockInfoAll(const int m, const long long n) {
+  Info &getInfoAll(const int m, const long long n) {
     const long long aux = level_base[m] + n;
-    const auto retval = BlockInfoAll.find(aux);
-    if (retval != BlockInfoAll.end()) {
+    const auto retval = InfoAll.find(aux);
+    if (retval != InfoAll.end()) {
       return *retval->second;
     } else {
       {
-        const auto retval1 = BlockInfoAll.find(aux);
-        if (retval1 == BlockInfoAll.end()) {
-          BlockInfo *dumm = new BlockInfo();
+        const auto retval1 = InfoAll.find(aux);
+        if (retval1 == InfoAll.end()) {
+          Info *dumm = new Info();
           const int TwoPower = 1 << m;
           const double h0 = (maxextent / std::max(NX * Block::sizeX,
                                                   std::max(NY * Block::sizeY,
@@ -931,19 +931,19 @@ public:
           const double h = h0 / TwoPower;
           double origin[3];
           int i, j, k;
-          BlockInfo::inverse(n, m, i, j, k);
+          Info::inverse(n, m, i, j, k);
           origin[0] = i * Block::sizeX * h;
           origin[1] = j * Block::sizeY * h;
           origin[2] = k * Block::sizeZ * h;
           dumm->setup(m, h, origin, n);
-          BlockInfoAll[aux] = dumm;
+          InfoAll[aux] = dumm;
         }
       }
-      return getBlockInfoAll(m, n);
+      return getInfoAll(m, n);
     }
   }
-  std::vector<BlockInfo> &getBlocksInfo() { return m_vInfo; }
-  const std::vector<BlockInfo> &getBlocksInfo() const { return m_vInfo; }
+  std::vector<Info> &getBlocksInfo() { return m_vInfo; }
+  const std::vector<Info> &getBlocksInfo() const { return m_vInfo; }
   virtual int get_world_size() const { return 1; }
   virtual void UpdateBoundary(bool clean = false) {}
 };
@@ -1111,12 +1111,12 @@ public:
   ~GrowingVector() { v.clear(); }
 };
 struct Interface {
-  BlockInfo *infos[2];
+  Info *infos[2];
   int icode[2];
   bool CoarseStencil;
   bool ToBeKept;
   int dis;
-  Interface(BlockInfo &i0, BlockInfo &i1, const int a_icode0,
+  Interface(Info &i0, Info &i1, const int a_icode0,
             const int a_icode1) {
     infos[0] = &i0;
     infos[1] = &i1;
@@ -1351,8 +1351,8 @@ struct StencilManager {
   void __FixDuplicates(const Interface &f, const Interface &f_dup, int lx,
                        int ly, int lz, int lx_dup, int ly_dup, int lz_dup,
                        int &sx, int &sy, int &sz) {
-    const BlockInfo &receiver = *f.infos[1];
-    const BlockInfo &receiver_dup = *f_dup.infos[1];
+    const Info &receiver = *f.infos[1];
+    const Info &receiver_dup = *f_dup.infos[1];
     if (receiver.level >= receiver_dup.level) {
       int icode_dup = f_dup.icode[1];
       const int code_dup[3] = {icode_dup % 3 - 1, (icode_dup / 3) % 3 - 1,
@@ -1381,7 +1381,7 @@ struct StencilManager {
   }
 };
 struct HaloBlockGroup {
-  std::vector<BlockInfo *> myblocks;
+  std::vector<Info *> myblocks;
   std::set<int> myranks;
   bool ready = false;
 };
@@ -1396,8 +1396,8 @@ template <typename Real, typename TGrid> class SynchronizerMPI_AMR {
   int nY;
   int nZ;
   MPI_Datatype MPIREAL;
-  std::vector<BlockInfo *> inner_blocks;
-  std::vector<BlockInfo *> halo_blocks;
+  std::vector<Info *> inner_blocks;
+  std::vector<Info *> halo_blocks;
   std::vector<GrowingVector<Real>> send_buffer;
   std::vector<GrowingVector<Real>> recv_buffer;
   std::vector<MPI_Request> requests;
@@ -1664,8 +1664,8 @@ template <typename Real, typename TGrid> class SynchronizerMPI_AMR {
     }
   };
   bool UseCoarseStencil(const Interface &f) {
-    BlockInfo &a = *f.infos[0];
-    BlockInfo &b = *f.infos[1];
+    Info &a = *f.infos[0];
+    Info &b = *f.infos[1];
     if (a.level == 0 || (!use_averages))
       return false;
     int imin[3];
@@ -1702,7 +1702,7 @@ template <typename Real, typename TGrid> class SynchronizerMPI_AMR {
         }
     return retval;
   }
-  void AverageDownAndFill(Real *__restrict__ dst, const BlockInfo *const info,
+  void AverageDownAndFill(Real *__restrict__ dst, const Info *const info,
                           const int code[3]) {
     const int s[3] = {code[0] < 1 ? (code[0] < 0 ? stencil.sx : 0) : nX,
                       code[1] < 1 ? (code[1] < 0 ? stencil.sy : 0) : nY,
@@ -1784,7 +1784,7 @@ template <typename Real, typename TGrid> class SynchronizerMPI_AMR {
       }
     }
   }
-  void AverageDownAndFill2(Real *dst, const BlockInfo *const info,
+  void AverageDownAndFill2(Real *dst, const Info *const info,
                            const int code[3]) {
     const int eC[3] = {(stencil.ex) / 2 + Cstencil.ex,
                        (stencil.ey) / 2 + Cstencil.ey,
@@ -1862,7 +1862,7 @@ public:
       myunpacks[i].clear();
     myunpacks.clear();
     DuplicatesManager DM(*(this));
-    for (BlockInfo &info : grid->getBlocksInfo()) {
+    for (Info &info : grid->getBlocksInfo()) {
       info.halo_block_id = -1;
       const bool xskin =
           info.index[0] == 0 ||
@@ -1895,7 +1895,7 @@ public:
         if (infoNeiTree.Exists() && infoNeiTree.rank() != rank) {
           isInner = false;
           Neighbors.insert(infoNeiTree.rank());
-          BlockInfo &infoNei = grid->getBlockInfoAll(
+          Info &infoNei = grid->getInfoAll(
               info.level, info.Znei_(code[0], code[1], code[2]));
           const int icode2 =
               (-code[0] + 1) + (-code[1] + 1) * 3 + (-code[2] + 1) * 9;
@@ -1912,15 +1912,15 @@ public:
                  (int)send_interfaces[infoNeiTree.rank()].size() - 1);
         } else if (infoNeiTree.CheckCoarser()) {
           Coarsened = true;
-          BlockInfo &infoNei = grid->getBlockInfoAll(
+          Info &infoNei = grid->getInfoAll(
               info.level, info.Znei_(code[0], code[1], code[2]));
           const int infoNeiCoarserrank =
               grid->Tree(info.level - 1, infoNei.Zparent).rank();
           if (infoNeiCoarserrank != rank) {
             isInner = false;
             Neighbors.insert(infoNeiCoarserrank);
-            BlockInfo &infoNeiCoarser =
-                grid->getBlockInfoAll(infoNei.level - 1, infoNei.Zparent);
+            Info &infoNeiCoarser =
+                grid->getInfoAll(infoNei.level - 1, infoNei.Zparent);
             const int icode2 =
                 (-code[0] + 1) + (-code[1] + 1) * 3 + (-code[2] + 1) * 9;
             const int Bmax[3] = {grid->getMaxBlocks()[0] << (info.level - 1),
@@ -1983,7 +1983,7 @@ public:
             }
           }
         } else if (infoNeiTree.CheckFiner()) {
-          BlockInfo &infoNei = grid->getBlockInfoAll(
+          Info &infoNei = grid->getInfoAll(
               info.level, info.Znei_(code[0], code[1], code[2]));
           int Bstep = 1;
           if ((abs(code[0]) + abs(code[1]) + abs(code[2]) == 2))
@@ -2004,8 +2004,8 @@ public:
             if (infoNeiFinerrank != rank) {
               isInner = false;
               Neighbors.insert(infoNeiFinerrank);
-              BlockInfo &infoNeiFiner =
-                  grid->getBlockInfoAll(info.level + 1, nFine);
+              Info &infoNeiFiner =
+                  grid->getInfoAll(info.level + 1, nFine);
               const int icode2 =
                   (-code[0] + 1) + (-code[1] + 1) * 3 + (-code[2] + 1) * 9;
               send_interfaces[infoNeiFinerrank].push_back(
@@ -2089,7 +2089,7 @@ public:
             DM.sizes[r] = 0;
           }
       }
-      grid->getBlockInfoAll(info.level, info.Z).halo_block_id =
+      grid->getInfoAll(info.level, info.Z).halo_block_id =
           info.halo_block_id;
     }
     myunpacks.resize(halo_blocks.size());
@@ -2194,14 +2194,14 @@ public:
       assert(sizeof(Real) == sizeof(float));
     }
   }
-  std::vector<BlockInfo *> &avail_inner() { return inner_blocks; }
-  std::vector<BlockInfo *> &avail_halo() {
+  std::vector<Info *> &avail_inner() { return inner_blocks; }
+  std::vector<Info *> &avail_halo() {
     MPI_Waitall(requests.size(), requests.data(), MPI_STATUSES_IGNORE);
     return halo_blocks;
   }
-  std::vector<BlockInfo *> &avail_halo_nowait() { return halo_blocks; }
-  std::vector<BlockInfo *> dummy_vector;
-  std::vector<BlockInfo *> &avail_next() {
+  std::vector<Info *> &avail_halo_nowait() { return halo_blocks; }
+  std::vector<Info *> dummy_vector;
+  std::vector<Info *> &avail_next() {
     bool done = false;
     auto it = mapofHaloBlockGroups.begin();
     while (done == false) {
@@ -2279,7 +2279,7 @@ public:
       }
   }
   const StencilInfo &getstencil() const { return stencil; }
-  bool isready(const BlockInfo &info) {
+  bool isready(const Info &info) {
     const int id = info.halo_block_id;
     if (id < 0)
       return true;
@@ -2295,7 +2295,7 @@ public:
     }
     return true;
   }
-  void fetch(const BlockInfo &info, const unsigned int Length[3],
+  void fetch(const Info &info, const unsigned int Length[3],
              const unsigned int CLength[3], Real *cacheBlock,
              Real *coarseBlock) {
     const int id = info.halo_block_id;
@@ -2430,10 +2430,10 @@ public:
 
 protected:
   struct face {
-    BlockInfo *infos[2];
+    Info *infos[2];
     int icode[2];
     int offset;
-    face(BlockInfo &i0, BlockInfo &i1, int a_icode0, int a_icode1) {
+    face(Info &i0, Info &i1, int a_icode0, int a_icode1) {
       infos[0] = &i0;
       infos[1] = &i1;
       icode[0] = a_icode0;
@@ -2452,7 +2452,7 @@ protected:
   std::vector<std::vector<face>> send_faces;
   std::vector<std::vector<face>> recv_faces;
   void FillCase(face &F) {
-    BlockInfo &info = *F.infos[1];
+    Info &info = *F.infos[1];
     const int icode = F.icode[1];
     const int code[3] = {icode % 3 - 1, (icode / 3) % 3 - 1,
                          (icode / 9) % 3 - 1};
@@ -2503,7 +2503,7 @@ protected:
     }
   }
   void FillCase_2(face &F, int codex, int codey, int codez) {
-    BlockInfo &info = *F.infos[1];
+    Info &info = *F.infos[1];
     const int icode = F.icode[1];
     const int code[3] = {icode % 3 - 1, (icode / 3) % 3 - 1,
                          (icode / 9) % 3 - 1};
@@ -2578,13 +2578,13 @@ public:
     TFluxCorrection::Cases.clear();
     TFluxCorrection::MapOfCases.clear();
     TFluxCorrection::grid = &_grid;
-    std::vector<BlockInfo> &BB = (*TFluxCorrection::grid).getBlocksInfo();
+    std::vector<Info> &BB = (*TFluxCorrection::grid).getBlocksInfo();
     std::array<int, 3> blocksPerDim = _grid.getMaxBlocks();
     std::array<int, 6> icode = {1 * 2 + 3 * 1 + 9 * 1, 1 * 0 + 3 * 1 + 9 * 1,
                                 1 * 1 + 3 * 2 + 9 * 1, 1 * 1 + 3 * 0 + 9 * 1,
                                 1 * 1 + 3 * 1 + 9 * 2, 1 * 1 + 3 * 1 + 9 * 0};
     for (auto &info : BB) {
-      (*TFluxCorrection::grid).getBlockInfoAll(info.level, info.Z).auxiliary =
+      (*TFluxCorrection::grid).getInfoAll(info.level, info.Z).auxiliary =
           nullptr;
       info.auxiliary = nullptr;
       const int aux = 1 << info.level;
@@ -2624,13 +2624,13 @@ public:
         if ((*TFluxCorrection::grid)
                 .Tree(info.level, info.Znei_(code[0], code[1], code[2]))
                 .CheckCoarser()) {
-          BlockInfo &infoNei =
+          Info &infoNei =
               (*TFluxCorrection::grid)
-                  .getBlockInfoAll(info.level,
+                  .getInfoAll(info.level,
                                    info.Znei_(code[0], code[1], code[2]));
           const long long nCoarse = infoNei.Zparent;
-          BlockInfo &infoNeiCoarser =
-              (*TFluxCorrection::grid).getBlockInfoAll(info.level - 1, nCoarse);
+          Info &infoNeiCoarser =
+              (*TFluxCorrection::grid).getInfoAll(info.level - 1, nCoarse);
           const int infoNeiCoarserrank =
               (*TFluxCorrection::grid).Tree(info.level - 1, nCoarse).rank();
           {
@@ -2644,9 +2644,9 @@ public:
         } else if ((*TFluxCorrection::grid)
                        .Tree(info.level, info.Znei_(code[0], code[1], code[2]))
                        .CheckFiner()) {
-          BlockInfo &infoNei =
+          Info &infoNei =
               (*TFluxCorrection::grid)
-                  .getBlockInfoAll(info.level,
+                  .getInfoAll(info.level,
                                    info.Znei_(code[0], code[1], code[2]));
           int Bstep = 1;
           for (int B = 0; B <= 3; B += Bstep) {
@@ -2661,9 +2661,9 @@ public:
             const int infoNeiFinerrank =
                 (*TFluxCorrection::grid).Tree(infoNei.level + 1, nFine).rank();
             {
-              BlockInfo &infoNeiFiner =
+              Info &infoNeiFiner =
                   (*TFluxCorrection::grid)
-                      .getBlockInfoAll(infoNei.level + 1, nFine);
+                      .getInfoAll(infoNei.level + 1, nFine);
               int icode2 =
                   (-code[0] + 1) + (-code[1] + 1) * 3 + (-code[2] + 1) * 9;
               recv_faces[infoNeiFinerrank].push_back(
@@ -2692,7 +2692,7 @@ public:
                    TFluxCorrection::Cases[Cases_index].Z},
                   &TFluxCorrection::Cases[Cases_index]));
           TFluxCorrection::grid
-              ->getBlockInfoAll(TFluxCorrection::Cases[Cases_index].level,
+              ->getInfoAll(TFluxCorrection::Cases[Cases_index].level,
                                 TFluxCorrection::Cases[Cases_index].Z)
               .auxiliary = &TFluxCorrection::Cases[Cases_index];
           info.auxiliary = &TFluxCorrection::Cases[Cases_index];
@@ -2730,7 +2730,7 @@ public:
       int displacement = 0;
       for (int k = 0; k < (int)send_faces[r].size(); k++) {
         face &f = send_faces[r][k];
-        BlockInfo &info = *(f.infos[0]);
+        Info &info = *(f.infos[0]);
         auto search =
             TFluxCorrection::MapOfCases.find({(long long)info.level, info.Z});
         assert(search != TFluxCorrection::MapOfCases.end());
@@ -2832,7 +2832,7 @@ public:
   int world_size;
   std::map<StencilInfo, SynchronizerMPIType *> SynchronizerMPIs;
   FluxCorrectionMPI<FluxCorrection<GridMPI<TGrid>>> Corrector;
-  std::vector<BlockInfo *> boundary;
+  std::vector<Info *> boundary;
   GridMPI(const int nX, const int nY = 1, const int nZ = 1,
           const double a_maxextent = 1, const int a_levelStart = 0,
           const int a_levelMax = 1, const MPI_Comm comm = MPI_COMM_WORLD,
@@ -2870,7 +2870,7 @@ public:
   }
   virtual Block *avail(const int m, const long long n) override {
     return (TGrid::Tree(m, n).rank() == myrank)
-               ? (Block *)TGrid::getBlockInfoAll(m, n).ptrBlock
+               ? (Block *)TGrid::getInfoAll(m, n).ptrBlock
                : nullptr;
   }
   virtual void UpdateBoundary(bool clean = false) override {
@@ -2879,10 +2879,10 @@ public:
     MPI_Comm_rank(worldcomm, &rank);
     MPI_Comm_size(worldcomm, &size);
     std::vector<std::vector<long long>> send_buffer(size);
-    std::vector<BlockInfo *> &bbb = boundary;
+    std::vector<Info *> &bbb = boundary;
     std::set<int> Neighbors;
     for (size_t jjj = 0; jjj < bbb.size(); jjj++) {
-      BlockInfo &info = *bbb[jjj];
+      Info &info = *bbb[jjj];
       std::set<int> receivers;
       const int aux = 1 << info.level;
       const bool xskin =
@@ -2905,7 +2905,7 @@ public:
           continue;
         if (!TGrid::zperiodic && code[2] == zskip && zskin)
           continue;
-        BlockInfo &infoNei = TGrid::getBlockInfoAll(
+        Info &infoNei = TGrid::getInfoAll(
             info.level, info.Znei_(code[0], code[1], code[2]));
         const TreePosition &infoNeiTree = TGrid::Tree(infoNei.level, infoNei.Z);
         if (infoNeiTree.Exists() && infoNeiTree.rank() != rank) {
@@ -2915,8 +2915,8 @@ public:
           Neighbors.insert(infoNeiTree.rank());
         } else if (infoNeiTree.CheckCoarser()) {
           const long long nCoarse = infoNei.Zparent;
-          BlockInfo &infoNeiCoarser =
-              TGrid::getBlockInfoAll(infoNei.level - 1, nCoarse);
+          Info &infoNeiCoarser =
+              TGrid::getInfoAll(infoNei.level - 1, nCoarse);
           const int infoNeiCoarserrank =
               TGrid::Tree(infoNei.level - 1, nCoarse).rank();
           if (infoNeiCoarserrank != rank) {
@@ -2941,8 +2941,8 @@ public:
                                temp * std::max(0, 1 - abs(code[1]))]
                               [std::max(-code[2], 0) +
                                (B / 2) * std::max(0, 1 - abs(code[2]))];
-            BlockInfo &infoNeiFiner =
-                TGrid::getBlockInfoAll(infoNei.level + 1, nFine);
+            Info &infoNeiFiner =
+                TGrid::getInfoAll(infoNei.level + 1, nFine);
             const int infoNeiFinerrank =
                 TGrid::Tree(infoNei.level + 1, nFine).rank();
             if (infoNeiFinerrank != rank) {
@@ -3000,11 +3000,11 @@ public:
         for (int index = 0; index < (int)recv_buffer[r].size(); index += 3) {
           int level = recv_buffer[r][index];
           long long Z = recv_buffer[r][index + 1];
-          TGrid::getBlockInfoAll(level, Z).state =
+          TGrid::getInfoAll(level, Z).state =
               (recv_buffer[r][index + 2] == 1) ? Compress : Refine;
         }
   };
-  void UpdateBlockInfoAll_States(bool UpdateIDs = false) {
+  void UpdateInfoAll_States(bool UpdateIDs = false) {
     std::vector<int> myNeighbors = FindMyNeighbors();
     const auto blocksPerDim = TGrid::getMaxBlocks();
     std::vector<long long> myData;
@@ -3031,7 +3031,7 @@ public:
           continue;
         if (!TGrid::zperiodic && code[2] == zskip && zskin)
           continue;
-        BlockInfo &infoNei = TGrid::getBlockInfoAll(
+        Info &infoNei = TGrid::getInfoAll(
             info.level, info.Znei_(code[0], code[1], code[2]));
         const TreePosition &infoNeiTree = TGrid::Tree(infoNei.level, infoNei.Z);
         if (infoNeiTree.Exists() && infoNeiTree.rank() != myrank) {
@@ -3122,10 +3122,10 @@ public:
         const long long Z = recv_buffer[kk][index__ + 1];
         TGrid::Tree(level, Z).setrank(r);
         if (UpdateIDs)
-          TGrid::getBlockInfoAll(level, Z).blockID =
+          TGrid::getInfoAll(level, Z).blockID =
               recv_buffer[kk][index__ + 2];
         int p[3];
-        BlockInfo::inverse(Z, level, p[0], p[1], p[2]);
+        Info::inverse(Z, level, p[0], p[1], p[2]);
         if (level < TGrid::levelMax - 1)
           for (int k = 0; k < 2; k++)
             for (int j = 0; j < 2; j++)
@@ -3232,7 +3232,7 @@ public:
   initialize_blocks(const std::vector<long long> &blocksZ,
                     const std::vector<short int> &blockslevel) override {
     TGrid::initialize_blocks(blocksZ, blockslevel);
-    UpdateBlockInfoAll_States(false);
+    UpdateInfoAll_States(false);
     for (auto it = SynchronizerMPIs.begin(); it != SynchronizerMPIs.end(); ++it)
       (*it->second)._Setup();
   }
@@ -3499,7 +3499,7 @@ public:
                     m_stencilStart[2] < -2 || m_stencilEnd[0] > 3 ||
                     m_stencilEnd[1] > 3 || m_stencilEnd[2] > 3);
   }
-  virtual void load(const BlockInfo &info, const Real t = 0,
+  virtual void load(const Info &info, const Real t = 0,
                     const bool applybc = true) {
     const int nX = BlockType::sizeX;
     const int nY = BlockType::sizeY;
@@ -3622,7 +3622,7 @@ public:
   }
 
 protected:
-  void post_load(const BlockInfo &info, const Real t = 0, bool applybc = true) {
+  void post_load(const Info &info, const Real t = 0, bool applybc = true) {
     const int nX = BlockType::sizeX;
     const int nY = BlockType::sizeY;
     const int nZ = BlockType::sizeZ;
@@ -3664,7 +3664,7 @@ protected:
     if (applybc)
       _apply_bc(info, t);
   }
-  bool UseCoarseStencil(const BlockInfo &a, const int *b_index) {
+  bool UseCoarseStencil(const Info &a, const int *b_index) {
     if (a.level == 0 || (!use_averages))
       return false;
     std::array<int, 3> blocksPerDim = m_refGrid->getMaxBlocks();
@@ -3699,7 +3699,7 @@ protected:
           }
     return false;
   }
-  void SameLevelExchange(const BlockInfo &info, const int *const code,
+  void SameLevelExchange(const Info &info, const int *const code,
                          const int *const s, const int *const e) {
     const int bytes = (e[0] - s[0]) * sizeof(ElementType);
     if (!bytes)
@@ -3783,7 +3783,7 @@ protected:
     R[6] = lap - dudx + dudy + dudz - dudxdy - dudxdz + dudydz;
     R[7] = lap + dudx + dudy + dudz + dudxdy + dudxdz + dudydz;
   }
-  void FineToCoarseExchange(const BlockInfo &info, const int *const code,
+  void FineToCoarseExchange(const Info &info, const int *const code,
                             const int *const s, const int *const e) {
     const int bytes = (abs(code[0]) * (e[0] - s[0]) +
                        (1 - abs(code[0])) * ((e[0] - s[0]) / 2)) *
@@ -3942,7 +3942,7 @@ protected:
       }
     }
   }
-  void CoarseFineExchange(const BlockInfo &info, const int *const code) {
+  void CoarseFineExchange(const Info &info, const int *const code) {
     const int infoNei_index[3] = {(info.index[0] + code[0] + NX) % NX,
                                   (info.index[1] + code[1] + NY) % NY,
                                   (info.index[2] + code[2] + NZ) % NZ};
@@ -4050,7 +4050,7 @@ protected:
       }
     }
   }
-  void FillCoarseVersion(const BlockInfo &info, const int *const code) {
+  void FillCoarseVersion(const Info &info, const int *const code) {
     const int icode = (code[0] + 1) + 3 * (code[1] + 1) + 9 * (code[2] + 1);
     if (myblocks[icode] == nullptr)
       return;
@@ -4115,7 +4115,7 @@ protected:
       }
     }
   }
-  void CoarseFineInterpolation(const BlockInfo &info) {
+  void CoarseFineInterpolation(const Info &info) {
     const int nX = BlockType::sizeX;
     const int nY = BlockType::sizeY;
     const int nZ = BlockType::sizeZ;
@@ -4494,7 +4494,7 @@ protected:
       }
     }
   }
-  virtual void _apply_bc(const BlockInfo &info, const Real t = 0,
+  virtual void _apply_bc(const Info &info, const Real t = 0,
                          bool coarse = false) {}
   template <typename T> void _release(T *&t) {
     if (t != NULL) {
@@ -4527,7 +4527,7 @@ public:
     refSynchronizerMPI = itSynchronizerMPI->second;
     MyBlockLab::prepare(grid, stencil);
   }
-  virtual void load(const BlockInfo &info, const Real t = 0,
+  virtual void load(const Info &info, const Real t = 0,
                     const bool applybc = true) override {
     MyBlockLab::load(info, t, applybc);
     Real *dst = (Real *)&MyBlockLab ::m_cacheBlock->LinAccess(0);
@@ -4552,10 +4552,10 @@ protected:
   struct MPI_Block {
     long long mn[2];
     Real data[sizeof(BlockType) / sizeof(Real)];
-    MPI_Block(const BlockInfo &info, const bool Fillptr = true) {
+    MPI_Block(const Info &info, const bool Fillptr = true) {
       prepare(info, Fillptr);
     }
-    void prepare(const BlockInfo &info, const bool Fillptr = true) {
+    void prepare(const Info &info, const bool Fillptr = true) {
       mn[0] = info.level;
       mn[1] = info.Z;
       if (Fillptr) {
@@ -4567,13 +4567,13 @@ protected:
   };
   void AddBlock(const int level, const long long Z, Real *data) {
     grid->_alloc(level, Z);
-    BlockInfo &info = grid->getBlockInfoAll(level, Z);
+    Info &info = grid->getInfoAll(level, Z);
     BlockType *b1 = (BlockType *)info.ptrBlock;
     assert(b1 != NULL);
     Real *a1 = &b1->data[0][0][0].member(0);
     std::memcpy(a1, data, sizeof(BlockType));
     int p[3];
-    BlockInfo::inverse(Z, level, p[0], p[1], p[2]);
+    Info::inverse(Z, level, p[0], p[1], p[2]);
     if (level < grid->getlevelMax() - 1)
       for (int k1 = 0; k1 < 2; k1++)
         for (int j1 = 0; j1 < 2; j1++)
@@ -4611,17 +4611,17 @@ public:
   void PrepareCompression() {
     const int size = grid->get_world_size();
     const int rank = grid->rank();
-    std::vector<BlockInfo> &I = grid->getBlocksInfo();
+    std::vector<Info> &I = grid->getBlocksInfo();
     std::vector<std::vector<MPI_Block>> send_blocks(size);
     std::vector<std::vector<MPI_Block>> recv_blocks(size);
     for (auto &b : I) {
       const long long nBlock =
           grid->getZforward(b.level, 2 * (b.index[0] / 2), 2 * (b.index[1] / 2),
                             2 * (b.index[2] / 2));
-      const BlockInfo &base = grid->getBlockInfoAll(b.level, nBlock);
+      const Info &base = grid->getInfoAll(b.level, nBlock);
       if (!grid->Tree(base).Exists() || base.state != Compress)
         continue;
-      const BlockInfo &bCopy = grid->getBlockInfoAll(b.level, b.Z);
+      const Info &bCopy = grid->getInfoAll(b.level, b.Z);
       const int baserank = grid->Tree(b.level, nBlock).rank();
       const int brank = grid->Tree(b.level, b.Z).rank();
       if (b.Z != nBlock) {
@@ -4637,7 +4637,7 @@ public:
                   b.level, b.index[0] + i, b.index[1] + j, b.index[2] + k);
               if (n == nBlock)
                 continue;
-              BlockInfo &temp = grid->getBlockInfoAll(b.level, n);
+              Info &temp = grid->getInfoAll(b.level, n);
               const int temprank = grid->Tree(b.level, n).rank();
               if (temprank != rank) {
                 recv_blocks[temprank].push_back({temp, false});
@@ -4677,7 +4677,7 @@ public:
         const int level = (int)recv_blocks[r][i].mn[0];
         const long long Z = recv_blocks[r][i].mn[1];
         grid->_alloc(level, Z);
-        BlockInfo &info = grid->getBlockInfoAll(level, Z);
+        Info &info = grid->getInfoAll(level, Z);
         BlockType *b1 = (BlockType *)info.ptrBlock;
         assert(b1 != NULL);
         Real *a1 = &b1->data[0][0][0].member(0);
@@ -4719,7 +4719,7 @@ public:
     const int flux_left = (rank == 0) ? 0 : (my_blocks - left_blocks) / nu;
     const int flux_right =
         (rank == size - 1) ? 0 : (my_blocks - right_blocks) / nu;
-    std::vector<BlockInfo> SortedInfos = grid->getBlocksInfo();
+    std::vector<Info> SortedInfos = grid->getBlocksInfo();
     if (flux_right != 0 || flux_left != 0)
       std::sort(SortedInfos.begin(), SortedInfos.end());
     std::vector<MPI_Block> send_left;
@@ -4760,12 +4760,12 @@ public:
                 grid->getWorldComm(), &request.back());
     }
     for (int i = 0; i < flux_right; i++) {
-      BlockInfo &info = SortedInfos[my_blocks - i - 1];
+      Info &info = SortedInfos[my_blocks - i - 1];
       grid->_dealloc(info.level, info.Z);
       grid->Tree(info.level, info.Z).setrank(right);
     }
     for (int i = 0; i < flux_left; i++) {
-      BlockInfo &info = SortedInfos[i];
+      Info &info = SortedInfos[i];
       grid->_dealloc(info.level, info.Z);
       grid->Tree(info.level, info.Z).setrank(left);
     }
@@ -4788,7 +4788,7 @@ public:
   void Balance_Global(std::vector<long long> &all_b) {
     const int size = grid->get_world_size();
     const int rank = grid->rank();
-    std::vector<BlockInfo> SortedInfos = grid->getBlocksInfo();
+    std::vector<Info> SortedInfos = grid->getBlocksInfo();
     std::sort(SortedInfos.begin(), SortedInfos.end());
     long long total_load = 0;
     for (int r = 0; r < size; r++)
@@ -4873,14 +4873,14 @@ public:
       if (send_blocks[r].size() != 0) {
         if (r < rank) {
           for (size_t i = 0; i < send_blocks[r].size(); i++) {
-            BlockInfo &info = SortedInfos[counter_S + i];
+            Info &info = SortedInfos[counter_S + i];
             deallocIDs.push_back(info.blockID_2);
             grid->Tree(info.level, info.Z).setrank(r);
           }
           counter_S += send_blocks[r].size();
         } else {
           for (size_t i = 0; i < send_blocks[r].size(); i++) {
-            BlockInfo &info =
+            Info &info =
                 SortedInfos[SortedInfos.size() - 1 - (counter_E + i)];
             deallocIDs.push_back(info.blockID_2);
             grid->Tree(info.level, info.Z).setrank(r);
@@ -4950,9 +4950,9 @@ public:
     bool Reduction = false;
     MPI_Request Reduction_req;
     int tmp;
-    std::vector<BlockInfo *> &inner = Synch->avail_inner();
+    std::vector<Info *> &inner = Synch->avail_inner();
     TagBlocksVector(inner, Reduction, Reduction_req, tmp);
-    std::vector<BlockInfo *> &halo = Synch->avail_halo();
+    std::vector<Info *> &halo = Synch->avail_halo();
     TagBlocksVector(halo, Reduction, Reduction_req, tmp);
     if (!Reduction) {
       tmp = CallValidStates ? 1 : 0;
@@ -4981,7 +4981,7 @@ public:
     std::vector<int> m_ref;
     std::vector<long long> n_com;
     std::vector<long long> n_ref;
-    std::vector<BlockInfo> &I = grid->getBlocksInfo();
+    std::vector<Info> &I = grid->getBlocksInfo();
     long long blocks_after = I.size();
     for (auto &info : I) {
       if (info.state == Refine) {
@@ -5032,7 +5032,7 @@ public:
     if (result[0] > 0 || result[1] > 0 || Balancer->movedBlocks) {
       grid->UpdateFluxCorrection = true;
       grid->UpdateGroups = true;
-      grid->UpdateBlockInfoAll_States(false);
+      grid->UpdateInfoAll_States(false);
       auto it = grid->SynchronizerMPIs.begin();
       while (it != grid->SynchronizerMPIs.end()) {
         (*it->second)._Setup();
@@ -5040,11 +5040,11 @@ public:
       }
     }
   }
-  void TagLike(const std::vector<BlockInfo> &I1) {
-    std::vector<BlockInfo> &I2 = grid->getBlocksInfo();
+  void TagLike(const std::vector<Info> &I1) {
+    std::vector<Info> &I2 = grid->getBlocksInfo();
     for (size_t i1 = 0; i1 < I2.size(); i1++) {
-      BlockInfo &ary0 = I2[i1];
-      BlockInfo &info = grid->getBlockInfoAll(ary0.level, ary0.Z);
+      Info &ary0 = I2[i1];
+      Info &info = grid->getInfoAll(ary0.level, ary0.Z);
       for (int i = 2 * (info.index[0] / 2); i <= 2 * (info.index[0] / 2) + 1;
            i++)
         for (int j = 2 * (info.index[1] / 2); j <= 2 * (info.index[1] / 2) + 1;
@@ -5052,7 +5052,7 @@ public:
           for (int k = 2 * (info.index[2] / 2);
                k <= 2 * (info.index[2] / 2) + 1; k++) {
             const long long n = grid->getZforward(info.level, i, j, k);
-            BlockInfo &infoNei = grid->getBlockInfoAll(info.level, n);
+            Info &infoNei = grid->getInfoAll(info.level, n);
             infoNei.state = Leave;
           }
       info.state = Leave;
@@ -5060,9 +5060,9 @@ public:
     }
 #pragma omp parallel for
     for (size_t i = 0; i < I1.size(); i++) {
-      const BlockInfo &info1 = I1[i];
-      BlockInfo &info2 = I2[i];
-      BlockInfo &info3 = grid->getBlockInfoAll(info2.level, info2.Z);
+      const Info &info1 = I1[i];
+      Info &info2 = I2[i];
+      Info &info3 = grid->getInfoAll(info2.level, info2.Z);
       info2.state = info1.state;
       info3.state = info1.state;
       if (info2.state == Compress) {
@@ -5070,21 +5070,21 @@ public:
         const int j2 = 2 * (info2.index[1] / 2);
         const int k2 = 2 * (info2.index[2] / 2);
         const long long n = grid->getZforward(info2.level, i2, j2, k2);
-        BlockInfo &infoNei = grid->getBlockInfoAll(info2.level, n);
+        Info &infoNei = grid->getInfoAll(info2.level, n);
         infoNei.state = Compress;
       }
     }
   }
 
 protected:
-  void TagBlocksVector(std::vector<BlockInfo *> &I, bool &Reduction,
+  void TagBlocksVector(std::vector<Info *> &I, bool &Reduction,
                        MPI_Request &Reduction_req, int &tmp) {
     const int levelMax = grid->getlevelMax();
 #pragma omp parallel
     {
 #pragma omp for schedule(dynamic, 1)
       for (size_t i = 0; i < I.size(); i++) {
-        BlockInfo &info = grid->getBlockInfoAll(I[i]->level, I[i]->Z);
+        Info &info = grid->getInfoAll(I[i]->level, I[i]->Z);
         I[i]->state = TagLoadedBlock(info);
         const bool maxLevel =
             (I[i]->state == Refine) && (I[i]->level == levelMax - 1);
@@ -5108,7 +5108,7 @@ protected:
     }
   }
   void refine_1(const int level, const long long Z, TLab &lab) {
-    BlockInfo &parent = grid->getBlockInfoAll(level, Z);
+    Info &parent = grid->getInfoAll(level, Z);
     parent.state = Leave;
     if (basic_refinement == false)
       lab.load(parent, time, true);
@@ -5121,7 +5121,7 @@ protected:
         for (int i = 0; i < 2; i++) {
           const long long nc = grid->getZforward(level + 1, 2 * p[0] + i,
                                                  2 * p[1] + j, 2 * p[2] + k);
-          BlockInfo &Child = grid->getBlockInfoAll(level + 1, nc);
+          Info &Child = grid->getInfoAll(level + 1, nc);
           Child.state = Leave;
           grid->_alloc(level + 1, nc);
           grid->Tree(level + 1, nc).setCheckCoarser();
@@ -5132,8 +5132,8 @@ protected:
   }
   void refine_2(const int level, const long long Z) {
 #pragma omp critical
-    { dealloc_IDs.push_back(grid->getBlockInfoAll(level, Z).blockID_2); }
-    BlockInfo &parent = grid->getBlockInfoAll(level, Z);
+    { dealloc_IDs.push_back(grid->getInfoAll(level, Z).blockID_2); }
+    Info &parent = grid->getInfoAll(level, Z);
     grid->Tree(parent).setCheckFiner();
     parent.state = Leave;
     int p[3] = {parent.index[0], parent.index[1], parent.index[2]};
@@ -5142,7 +5142,7 @@ protected:
         for (int i = 0; i < 2; i++) {
           const long long nc = grid->getZforward(level + 1, 2 * p[0] + i,
                                                  2 * p[1] + j, 2 * p[2] + k);
-          BlockInfo &Child = grid->getBlockInfoAll(level + 1, nc);
+          Info &Child = grid->getInfoAll(level + 1, nc);
           grid->Tree(Child).setrank(grid->rank());
           if (level + 2 < grid->getlevelMax())
             for (int i0 = 0; i0 < 2; i0++)
@@ -5154,7 +5154,7 @@ protected:
   }
   void compress(const int level, const long long Z) {
     assert(level > 0);
-    BlockInfo &info = grid->getBlockInfoAll(level, Z);
+    Info &info = grid->getInfoAll(level, Z);
     assert(info.state == Compress);
     BlockType *Blocks[8];
     for (int K = 0; K < 2; K++)
@@ -5163,7 +5163,7 @@ protected:
           const int blk = K * 4 + J * 2 + I;
           const long long n = grid->getZforward(
               level, info.index[0] + I, info.index[1] + J, info.index[2] + K);
-          Blocks[blk] = (BlockType *)(grid->getBlockInfoAll(level, n)).ptrBlock;
+          Blocks[blk] = (BlockType *)(grid->getInfoAll(level, n)).ptrBlock;
         }
     const int nx = BlockType::sizeX;
     const int ny = BlockType::sizeY;
@@ -5189,7 +5189,7 @@ protected:
           }
     const long long np = grid->getZforward(
         level - 1, info.index[0] / 2, info.index[1] / 2, info.index[2] / 2);
-    BlockInfo &parent = grid->getBlockInfoAll(level - 1, np);
+    Info &parent = grid->getInfoAll(level - 1, np);
     grid->Tree(parent.level, parent.Z).setrank(grid->rank());
     parent.ptrBlock = info.ptrBlock;
     parent.state = Leave;
@@ -5201,15 +5201,15 @@ protected:
           const long long n = grid->getZforward(
               level, info.index[0] + I, info.index[1] + J, info.index[2] + K);
           if (I + J + K == 0) {
-            grid->FindBlockInfo(level, n, level - 1, np);
+            grid->FindInfo(level, n, level - 1, np);
           } else {
 #pragma omp critical
             {
-              dealloc_IDs.push_back(grid->getBlockInfoAll(level, n).blockID_2);
+              dealloc_IDs.push_back(grid->getInfoAll(level, n).blockID_2);
             }
           }
           grid->Tree(level, n).setCheckCoarser();
-          grid->getBlockInfoAll(level, n).state = Leave;
+          grid->getInfoAll(level, n).state = Leave;
         }
   }
   void ValidStates() {
@@ -5219,24 +5219,24 @@ protected:
     const bool xperiodic = grid->xperiodic;
     const bool yperiodic = grid->yperiodic;
     const bool zperiodic = grid->zperiodic;
-    std::vector<BlockInfo> &I = grid->getBlocksInfo();
+    std::vector<Info> &I = grid->getBlocksInfo();
 #pragma omp parallel for
     for (size_t j = 0; j < I.size(); j++) {
-      BlockInfo &info = I[j];
+      Info &info = I[j];
       if ((info.state == Refine && info.level == levelMax - 1) ||
           (info.state == Compress && info.level == levelMin)) {
         info.state = Leave;
-        (grid->getBlockInfoAll(info.level, info.Z)).state = Leave;
+        (grid->getInfoAll(info.level, info.Z)).state = Leave;
       }
       if (info.state != Leave) {
         info.changed2 = true;
-        (grid->getBlockInfoAll(info.level, info.Z)).changed2 = info.changed2;
+        (grid->getInfoAll(info.level, info.Z)).changed2 = info.changed2;
       }
     }
     bool clean_boundary = true;
     for (int m = levelMax - 1; m >= levelMin; m--) {
       for (size_t j = 0; j < I.size(); j++) {
-        BlockInfo &info = I[j];
+        Info &info = I[j];
         if (info.level == m && info.state != Refine &&
             info.level != levelMax - 1) {
           const int TwoPower = 1 << info.level;
@@ -5266,7 +5266,7 @@ protected:
                     .CheckFiner()) {
               if (info.state == Compress) {
                 info.state = Leave;
-                (grid->getBlockInfoAll(info.level, info.Z)).state = Leave;
+                (grid->getInfoAll(info.level, info.Z)).state = Leave;
               }
               const int tmp = abs(code[0]) + abs(code[1]) + abs(code[2]);
               int Bstep = 1;
@@ -5286,13 +5286,13 @@ protected:
                                  (B / 2) * std::max(0, 1 - abs(code[2]));
                 const long long zzz =
                     grid->getZforward(m + 1, iNei, jNei, kNei);
-                BlockInfo &FinerNei = grid->getBlockInfoAll(m + 1, zzz);
+                Info &FinerNei = grid->getInfoAll(m + 1, zzz);
                 State NeiState = FinerNei.state;
                 if (NeiState == Refine) {
                   info.state = Refine;
-                  (grid->getBlockInfoAll(info.level, info.Z)).state = Refine;
+                  (grid->getInfoAll(info.level, info.Z)).state = Refine;
                   info.changed2 = true;
-                  (grid->getBlockInfoAll(info.level, info.Z)).changed2 = true;
+                  (grid->getInfoAll(info.level, info.Z)).changed2 = true;
                   break;
                 }
               }
@@ -5305,7 +5305,7 @@ protected:
       if (m == levelMin)
         break;
       for (size_t j = 0; j < I.size(); j++) {
-        BlockInfo &info = I[j];
+        Info &info = I[j];
         if (info.level == m && info.state == Compress) {
           const int aux = 1 << info.level;
           const bool xskin =
@@ -5328,11 +5328,11 @@ protected:
               continue;
             if (!zperiodic && code[2] == zskip && zskin)
               continue;
-            BlockInfo &infoNei = grid->getBlockInfoAll(
+            Info &infoNei = grid->getInfoAll(
                 info.level, info.Znei_(code[0], code[1], code[2]));
             if (grid->Tree(infoNei).Exists() && infoNei.state == Refine) {
               info.state = Leave;
-              (grid->getBlockInfoAll(info.level, info.Z)).state = Leave;
+              (grid->getInfoAll(info.level, info.Z)).state = Leave;
               break;
             }
           }
@@ -5340,7 +5340,7 @@ protected:
       }
     }
     for (size_t jjj = 0; jjj < I.size(); jjj++) {
-      BlockInfo &info = I[jjj];
+      Info &info = I[jjj];
       const int m = info.level;
       bool found = false;
       for (int i = 2 * (info.index[0] / 2); i <= 2 * (info.index[0] / 2) + 1;
@@ -5350,13 +5350,13 @@ protected:
           for (int k = 2 * (info.index[2] / 2);
                k <= 2 * (info.index[2] / 2) + 1; k++) {
             const long long n = grid->getZforward(m, i, j, k);
-            BlockInfo &infoNei = grid->getBlockInfoAll(m, n);
+            Info &infoNei = grid->getInfoAll(m, n);
             if (grid->Tree(infoNei).Exists() == false ||
                 infoNei.state != Compress) {
               found = true;
               if (info.state == Compress) {
                 info.state = Leave;
-                (grid->getBlockInfoAll(info.level, info.Z)).state = Leave;
+                (grid->getInfoAll(info.level, info.Z)).state = Leave;
               }
               break;
             }
@@ -5369,7 +5369,7 @@ protected:
             for (int k = 2 * (info.index[2] / 2);
                  k <= 2 * (info.index[2] / 2) + 1; k++) {
               const long long n = grid->getZforward(m, i, j, k);
-              BlockInfo &infoNei = grid->getBlockInfoAll(m, n);
+              Info &infoNei = grid->getInfoAll(m, n);
               if (grid->Tree(infoNei).Exists() && infoNei.state == Compress)
                 infoNei.state = Leave;
             }
@@ -5448,7 +5448,7 @@ protected:
               }
         }
   }
-  virtual State TagLoadedBlock(BlockInfo &info) {
+  virtual State TagLoadedBlock(Info &info) {
     const int nx = BlockType::sizeX;
     const int ny = BlockType::sizeY;
     BlockType &b = *(BlockType *)info.ptrBlock;
@@ -5473,8 +5473,8 @@ void compute(Kernel &&kernel, TGrid *g, TGrid_corr *g_corr = nullptr) {
     g_corr->Corrector.prepare(*g_corr);
   SynchronizerMPI_AMR<typename TGrid::Real, TGrid> &Synch =
       *(g->sync(kernel.stencil));
-  std::vector<BlockInfo *> *inner = &Synch.avail_inner();
-  std::vector<BlockInfo *> *halo_next;
+  std::vector<Info *> *inner = &Synch.avail_inner();
+  std::vector<Info *> *halo_next;
   bool done = false;
 #pragma omp parallel
   {
@@ -5502,14 +5502,14 @@ void compute(Kernel &&kernel, TGrid *g, TGrid_corr *g_corr = nullptr) {
       }
     }
 #else
-    std::vector<BlockInfo> &blk = g->getBlocksInfo();
+    std::vector<Info> &blk = g->getBlocksInfo();
     std::vector<bool> ready(blk.size(), false);
-    std::vector<BlockInfo *> &avail1 = Synch.avail_halo_nowait();
+    std::vector<Info *> &avail1 = Synch.avail_halo_nowait();
     const int Nhalo = avail1.size();
     while (done == false) {
       done = true;
       for (int i = 0; i < Nhalo; i++) {
-        const BlockInfo &I = *avail1[i];
+        const Info &I = *avail1[i];
         if (ready[I.blockID] == false) {
           if (Synch.isready(I)) {
             ready[I.blockID] = true;
@@ -5550,13 +5550,13 @@ static void compute(const Kernel &kernel, TGrid &grid, TGrid2 &grid2,
       *grid2.sync(kernel2.stencil);
   const StencilInfo &stencil = Synch.getstencil();
   const StencilInfo &stencil2 = Synch2.getstencil();
-  std::vector<BlockInfo> &blk = grid.getBlocksInfo();
+  std::vector<Info> &blk = grid.getBlocksInfo();
   std::vector<bool> ready(blk.size(), false);
-  std::vector<BlockInfo *> &avail0 = Synch.avail_inner();
-  std::vector<BlockInfo *> &avail02 = Synch2.avail_inner();
+  std::vector<Info *> &avail0 = Synch.avail_inner();
+  std::vector<Info *> &avail02 = Synch2.avail_inner();
   const int Ninner = avail0.size();
-  std::vector<BlockInfo *> avail1;
-  std::vector<BlockInfo *> avail12;
+  std::vector<Info *> avail1;
+  std::vector<Info *> avail12;
 #pragma omp parallel
   {
     LabMPI lab;
@@ -5565,8 +5565,8 @@ static void compute(const Kernel &kernel, TGrid &grid, TGrid2 &grid2,
     lab2.prepare(grid2, stencil2);
 #pragma omp for
     for (int i = 0; i < Ninner; i++) {
-      const BlockInfo &I = *avail0[i];
-      const BlockInfo &I2 = *avail02[i];
+      const Info &I = *avail0[i];
+      const Info &I2 = *avail02[i];
       lab.load(I, 0);
       lab2.load(I2, 0);
       kernel(lab, lab2, I, I2);
@@ -5582,8 +5582,8 @@ static void compute(const Kernel &kernel, TGrid &grid, TGrid2 &grid2,
     const int Nhalo = avail1.size();
 #pragma omp for
     for (int i = 0; i < Nhalo; i++) {
-      const BlockInfo &I = *avail1[i];
-      const BlockInfo &I2 = *avail12[i];
+      const Info &I = *avail1[i];
+      const Info &I2 = *avail12[i];
       lab.load(I, 0);
       lab2.load(I2, 0);
       kernel(lab, lab2, I, I2);
@@ -5602,8 +5602,8 @@ static void compute(const Kernel &kernel, TGrid &grid, TGrid2 &grid2,
       done = true;
 #pragma omp for
       for (int i = 0; i < Nhalo; i++) {
-        const BlockInfo &I = *avail1[i];
-        const BlockInfo &I2 = *avail12[i];
+        const Info &I = *avail1[i];
+        const Info &I2 = *avail12[i];
         if (ready[I.blockID] == false) {
           bool blockready;
 #pragma omp critical
@@ -5936,7 +5936,7 @@ public:
   BlockLabNeumann() = default;
   BlockLabNeumann(const BlockLabNeumann &) = delete;
   BlockLabNeumann &operator=(const BlockLabNeumann &) = delete;
-  void _apply_bc(const BlockInfo &info, const Real t = 0,
+  void _apply_bc(const Info &info, const Real t = 0,
                  const bool coarse = false) override {
     if (DIM == 2) {
       if (info.index[0] == 0)
@@ -6400,7 +6400,7 @@ public:
   BlockLabBC() = default;
   BlockLabBC(const BlockLabBC &) = delete;
   BlockLabBC &operator=(const BlockLabBC &) = delete;
-  void _apply_bc(const BlockInfo &info, const Real t = 0,
+  void _apply_bc(const Info &info, const Real t = 0,
                  const bool coarse = false) {
     const BCflag BCX = cubismBCX;
     const BCflag BCY = cubismBCY;
@@ -6448,7 +6448,7 @@ public:
   virtual bool is_xperiodic() override { return cubismBCX == periodic; }
   virtual bool is_yperiodic() override { return cubismBCY == periodic; }
   virtual bool is_zperiodic() override { return cubismBCZ == periodic; }
-  void _apply_bc(const BlockInfo &info, const Real t = 0,
+  void _apply_bc(const Info &info, const Real t = 0,
                  const bool coarse = false) override {
     if (is_xperiodic() == false) {
       if (info.index[0] == 0)
@@ -6500,19 +6500,19 @@ struct SimulationData {
   VectorAMR *vel_amr;
   VectorAMR *tmpV_amr;
   ScalarAMR *lhs_amr;
-  inline std::vector<BlockInfo> &chiInfo() const {
+  inline std::vector<Info> &chiInfo() const {
     return chi->getBlocksInfo();
   }
-  inline std::vector<BlockInfo> &presInfo() const {
+  inline std::vector<Info> &presInfo() const {
     return pres->getBlocksInfo();
   }
-  inline std::vector<BlockInfo> &velInfo() const {
+  inline std::vector<Info> &velInfo() const {
     return vel->getBlocksInfo();
   }
-  inline std::vector<BlockInfo> &tmpVInfo() const {
+  inline std::vector<Info> &tmpVInfo() const {
     return tmpV->getBlocksInfo();
   }
-  inline std::vector<BlockInfo> &lhsInfo() const {
+  inline std::vector<Info> &lhsInfo() const {
     return lhs->getBlocksInfo();
   }
   ObstacleVector *obstacle_vector = nullptr;
@@ -6617,7 +6617,7 @@ Real kernelDiffusionGetZInner(PaddedBlock &p, const Real *pW, const Real *pE,
                               Block &__restrict__ Ax, Block &__restrict__ r,
                               Block &__restrict__ block, Real sqrNorm0, Real rr,
                               const Real coefficient);
-void getZImplParallel(const std::vector<BlockInfo> &vInfo, const Real nu,
+void getZImplParallel(const std::vector<Info> &vInfo, const Real nu,
                       const Real dt);
 } // namespace diffusion_kernels
 class DiffusionSolver {
@@ -6631,13 +6631,13 @@ protected:
     const SimulationData &sim;
     KernelLHSDiffusion(const SimulationData &s, const Real _dt)
         : sim(s), dt(_dt) {}
-    const std::vector<BlockInfo> &lhsInfo = sim.lhsInfo();
+    const std::vector<Info> &lhsInfo = sim.lhsInfo();
     const Real dt;
     const int Nx = ScalarBlock::sizeX;
     const int Ny = ScalarBlock::sizeY;
     const int Nz = ScalarBlock::sizeZ;
     const StencilInfo stencil{-1, -1, -1, 2, 2, 2, false, {0}};
-    void operator()(const Lab &lab, const BlockInfo &info) const {
+    void operator()(const Lab &lab, const Info &info) const {
       ScalarBlock &__restrict__ o = (*sim.lhs)(info.blockID);
       const Real h = info.h;
       const Real coef = -1.0 / (dt * sim.nu) * h * h * h;
@@ -7473,11 +7473,11 @@ public:
       delete entry;
       entry = nullptr;
     }
-    std::vector<BlockInfo> &chiInfo = sim.chiInfo();
+    std::vector<Info> &chiInfo = sim.chiInfo();
     obstacleBlocks.resize(chiInfo.size(), nullptr);
 #pragma omp parallel for schedule(dynamic, 1)
     for (size_t i = 0; i < chiInfo.size(); i++) {
-      const BlockInfo &info = chiInfo[i];
+      const Info &info = chiInfo[i];
       const ScalarBlock &b = *(ScalarBlock *)info.ptrBlock;
       if (kernel.isTouching(info, b)) {
         assert(obstacleBlocks[info.blockID] == nullptr);
@@ -8220,7 +8220,7 @@ public:
 template <typename Derived> struct FillBlocksBase {
   using CHIMAT =
       Real[ScalarBlock::sizeZ][ScalarBlock::sizeY][ScalarBlock::sizeX];
-  void operator()(const BlockInfo &info, ObstacleBlock *const o) const {
+  void operator()(const Info &info, ObstacleBlock *const o) const {
     ScalarBlock &b = *(ScalarBlock *)info.ptrBlock;
     if (!derived()->isTouching(info, b))
       return;
@@ -8437,7 +8437,7 @@ class InitialConditions : public Operator {
 public:
   InitialConditions(SimulationData &s) : Operator(s) {}
   template <typename K> inline void run(const K kernel) {
-    std::vector<BlockInfo> &vInfo = sim.velInfo();
+    std::vector<Info> &vInfo = sim.velInfo();
 #pragma omp parallel for schedule(static)
     for (size_t i = 0; i < vInfo.size(); i++)
       kernel(vInfo[i], *(VectorBlock *)vInfo[i].ptrBlock);
@@ -8448,7 +8448,7 @@ struct GradChiOnTmp {
   GradChiOnTmp(const SimulationData &s) : sim(s) {}
   const SimulationData &sim;
   const StencilInfo stencil{-2, -2, -2, 3, 3, 3, true, {0}};
-  void operator()(ScalarLab &lab, const BlockInfo &info) const {
+  void operator()(ScalarLab &lab, const Info &info) const {
     auto &__restrict__ TMP = (*sim.tmpV)(info.blockID);
     if (info.level == sim.levelMaxVorticity - 1 &&
         sim.levelMaxVorticity < sim.levelMax)
@@ -8508,7 +8508,7 @@ struct GradChiOnTmp {
   }
 };
 inline Real findMaxU(SimulationData &sim) {
-  const std::vector<BlockInfo> &myInfo = sim.velInfo();
+  const std::vector<Info> &myInfo = sim.velInfo();
   const Real uinf[3] = {sim.uinf[0], sim.uinf[1], sim.uinf[2]};
   Real maxU = 0;
 #pragma omp parallel for schedule(static) reduction(max : maxU)
@@ -8532,12 +8532,12 @@ struct KernelVorticity {
   SimulationData &sim;
   KernelVorticity(SimulationData &s) : sim(s){};
   const StencilInfo stencil{-1, -1, -1, 2, 2, 2, false, {0, 1, 2}};
-  const std::vector<BlockInfo> &vInfo = sim.tmpVInfo();
+  const std::vector<Info> &vInfo = sim.tmpVInfo();
   const int Nx = VectorBlock::sizeX;
   const int Ny = VectorBlock::sizeY;
   const int Nz = VectorBlock::sizeZ;
-  void operator()(const VectorLab &lab, const BlockInfo &info) const {
-    const BlockInfo &info2 = vInfo[info.blockID];
+  void operator()(const VectorLab &lab, const Info &info) const {
+    const Info &info2 = vInfo[info.blockID];
     VectorBlock &o = *(VectorBlock *)info2.ptrBlock;
     const Real inv2h = .5 * info.h * info.h;
     for (int z = 0; z < Nz; ++z)
@@ -8634,10 +8634,10 @@ public:
   void operator()(const Real dt) {
     const KernelVorticity K(sim);
     compute<VectorLab>(K, sim.vel, sim.tmpV);
-    const std::vector<BlockInfo> &myInfo = sim.tmpVInfo();
+    const std::vector<Info> &myInfo = sim.tmpVInfo();
 #pragma omp parallel for
     for (size_t i = 0; i < myInfo.size(); i++) {
-      const BlockInfo &info = myInfo[i];
+      const Info &info = myInfo[i];
       VectorBlock &b = *(VectorBlock *)info.ptrBlock;
       const Real fac = 1.0 / (info.h * info.h * info.h);
       for (int z = 0; z < VectorBlock::sizeZ; ++z)
@@ -8657,8 +8657,8 @@ public:
   const std::array<int, 3> stencil_start = {-1, -1, -1},
                            stencil_end = {2, 2, 2};
   const StencilInfo stencil{-1, -1, -1, 2, 2, 2, false, {0, 1, 2}};
-  const std::vector<BlockInfo> &vInfo = sim.presInfo();
-  void operator()(VectorLab &lab, const BlockInfo &info) const {
+  const std::vector<Info> &vInfo = sim.presInfo();
+  void operator()(VectorLab &lab, const Info &info) const {
     ScalarBlock &o = *(ScalarBlock *)vInfo[info.blockID].ptrBlock;
     const Real inv2h = .5 / info.h;
     for (int iz = 0; iz < ScalarBlock::sizeZ; ++iz)
@@ -8700,9 +8700,9 @@ public:
   const std::array<int, 3> stencil_start = {-1, -1, -1},
                            stencil_end = {2, 2, 2};
   const StencilInfo stencil{-1, -1, -1, 2, 2, 2, false, {0, 1, 2}};
-  const std::vector<BlockInfo> &vInfo = sim.tmpVInfo();
-  const std::vector<BlockInfo> &chiInfo = sim.chiInfo();
-  void operator()(VectorLab &lab, const BlockInfo &info) const {
+  const std::vector<Info> &vInfo = sim.tmpVInfo();
+  const std::vector<Info> &chiInfo = sim.chiInfo();
+  void operator()(VectorLab &lab, const Info &info) const {
     VectorBlock &o = *(VectorBlock *)vInfo[info.blockID].ptrBlock;
     ScalarBlock &c = *(ScalarBlock *)chiInfo[info.blockID].ptrBlock;
     const Real fac = 0.5 * info.h * info.h;
@@ -8800,10 +8800,10 @@ public:
     const KernelDivergence K(sim);
     compute<VectorLab>(K, sim.vel, sim.chi);
     Real div_loc = 0.0;
-    const std::vector<BlockInfo> &myInfo = sim.tmpVInfo();
+    const std::vector<Info> &myInfo = sim.tmpVInfo();
 #pragma omp parallel for schedule(static) reduction(+ : div_loc)
     for (size_t i = 0; i < myInfo.size(); i++) {
-      const BlockInfo &info = myInfo[i];
+      const Info &info = myInfo[i];
       const VectorBlock &b = *(const VectorBlock *)info.ptrBlock;
       for (int iz = 0; iz < VectorBlock::sizeZ; ++iz)
         for (int iy = 0; iy < VectorBlock::sizeY; ++iy)
@@ -9098,18 +9098,18 @@ Real kernelPoissonGetZInnerReference(PaddedBlock &__restrict__ p_,
 Real kernelPoissonGetZInner(PaddedBlock &p, const Real *pW, const Real *pE,
                             Block &__restrict__ Ax, Block &__restrict__ r,
                             Block &__restrict__ block, Real sqrNorm0, Real rr);
-void getZImplParallel(const std::vector<BlockInfo> &vInfo);
+void getZImplParallel(const std::vector<Info> &vInfo);
 } // namespace poisson_kernels
 class ComputeLHS : public Operator {
   struct KernelLHSPoisson {
     const SimulationData &sim;
     KernelLHSPoisson(const SimulationData &s) : sim(s) {}
-    const std::vector<BlockInfo> &lhsInfo = sim.lhsInfo();
+    const std::vector<Info> &lhsInfo = sim.lhsInfo();
     const int Nx = ScalarBlock::sizeX;
     const int Ny = ScalarBlock::sizeY;
     const int Nz = ScalarBlock::sizeZ;
     const StencilInfo stencil{-1, -1, -1, 2, 2, 2, false, {0}};
-    void operator()(const ScalarLab &lab, const BlockInfo &info) const {
+    void operator()(const ScalarLab &lab, const Info &info) const {
       ScalarBlock &__restrict__ o = (*sim.lhs)(info.blockID);
       const Real h = info.h;
       for (int z = 0; z < Nz; ++z)
@@ -9181,8 +9181,8 @@ public:
     Real avgP = 0;
     int index = -1;
     MPI_Request request;
-    const std::vector<BlockInfo> &vInfo_lhs = sim.lhsInfo();
-    const std::vector<BlockInfo> &vInfo_z = sim.presInfo();
+    const std::vector<Info> &vInfo_lhs = sim.lhsInfo();
+    const std::vector<Info> &vInfo_z = sim.presInfo();
     const int Nx = ScalarBlock::sizeX;
     const int Ny = ScalarBlock::sizeY;
     const int Nz = ScalarBlock::sizeZ;
@@ -9327,7 +9327,7 @@ protected:
   std::vector<Real> v;
   std::vector<Real> s;
   std::vector<Real> rhat;
-  size_t _dest(const BlockInfo &info, const int iz, const int iy,
+  size_t _dest(const Info &info, const int iz, const int iy,
                const int ix) const {
     return BlockType::sizeX *
                (BlockType::sizeY * (info.blockID * BlockType::sizeZ + iz) +
@@ -9376,7 +9376,7 @@ struct KernelAdvectDiffuse {
   const Real mu = sim.nu;
   const Real coef;
   const std::array<Real, 3> &uInf = sim.uinf;
-  const std::vector<BlockInfo> &tmpVInfo = sim.tmpVInfo();
+  const std::vector<Info> &tmpVInfo = sim.tmpVInfo();
   const StencilInfo stencil{-3, -3, -3, 4, 4, 4, false, {0, 1, 2}};
   const int Nx = VectorBlock::sizeX;
   const int Ny = VectorBlock::sizeY;
@@ -9391,7 +9391,7 @@ struct KernelAdvectDiffuse {
       return (2 * up3 - 15 * up2 + 60 * up1 - 20 * u - 30 * um1 + 3 * um2) /
              60.;
   }
-  void operator()(const VectorLab &lab, const BlockInfo &info) const {
+  void operator()(const VectorLab &lab, const Info &info) const {
     VectorBlock &o = (*sim.tmpV)(info.blockID);
     const Real h3 = info.h * info.h * info.h;
     const Real facA = -dt / info.h * h3 * coef;
@@ -9548,7 +9548,7 @@ struct KernelAdvectDiffuse {
   }
 };
 void AdvectionDiffusion::operator()(const Real dt) {
-  const std::vector<BlockInfo> &velInfo = sim.velInfo();
+  const std::vector<Info> &velInfo = sim.velInfo();
   const int Nx = VectorBlock::sizeX;
   const int Ny = VectorBlock::sizeY;
   const int Nz = VectorBlock::sizeZ;
@@ -9642,9 +9642,9 @@ struct KernelDiffusionRHS {
   const int Nx = VectorBlock::sizeX;
   const int Ny = VectorBlock::sizeY;
   const int Nz = VectorBlock::sizeZ;
-  const std::vector<BlockInfo> &tmpVInfo = sim.tmpVInfo();
+  const std::vector<Info> &tmpVInfo = sim.tmpVInfo();
   KernelDiffusionRHS(SimulationData &s) : sim(s) {}
-  void operator()(const VectorLab &lab, const BlockInfo &info) const {
+  void operator()(const VectorLab &lab, const Info &info) const {
     VectorBlock &__restrict__ TMPV = (*sim.tmpV)(info.blockID);
     const Real facD = info.h;
     for (int z = 0; z < Nz; ++z)
@@ -9762,7 +9762,7 @@ struct KernelAdvect {
   const Real dt;
   const Real mu = sim.nu;
   const std::array<Real, 3> &uInf = sim.uinf;
-  const std::vector<BlockInfo> &tmpVInfo = sim.tmpVInfo();
+  const std::vector<Info> &tmpVInfo = sim.tmpVInfo();
   const StencilInfo stencil{-3, -3, -3, 4, 4, 4, false, {0, 1, 2}};
   const int Nx = VectorBlock::sizeX;
   const int Ny = VectorBlock::sizeY;
@@ -9777,7 +9777,7 @@ struct KernelAdvect {
       return (2 * up3 - 15 * up2 + 60 * up1 - 20 * u - 30 * um1 + 3 * um2) /
              60.;
   }
-  void operator()(const VectorLab &lab, const BlockInfo &info) const {
+  void operator()(const VectorLab &lab, const Info &info) const {
     VectorBlock &o = (*sim.tmpV)(info.blockID);
     VectorBlock &v = (*sim.vel)(info.blockID);
     const Real h3 = info.h * info.h * info.h;
@@ -9938,7 +9938,7 @@ struct KernelAdvect {
   }
 };
 void AdvectionDiffusionImplicit::euler(const Real dt) {
-  const std::vector<BlockInfo> &velInfo = sim.velInfo();
+  const std::vector<Info> &velInfo = sim.velInfo();
   const int Nx = VectorBlock::sizeX;
   const int Ny = VectorBlock::sizeY;
   const int Nz = VectorBlock::sizeZ;
@@ -10261,13 +10261,13 @@ public:
   StencilInfo stencil{-1, -1, -1, 2, 2, 2, false, {0, 1, 2}};
   StencilInfo stencil2{-1, -1, -1, 2, 2, 2, false, {0}};
   SimulationData &sim;
-  const std::vector<BlockInfo> &chiInfo = sim.chiInfo();
+  const std::vector<Info> &chiInfo = sim.chiInfo();
   KernelDissipation(Real _dt, const Real ext[3], Real _nu, Real *RDX,
                     SimulationData &s)
       : dt(_dt), nu(_nu), center{ext[0] / 2, ext[1] / 2, ext[2] / 2}, QOI(RDX),
         sim(s) {}
-  void operator()(VectorLab &lab, ScalarLab &pLab, const BlockInfo &info,
-                  const BlockInfo &info2) const {
+  void operator()(VectorLab &lab, ScalarLab &pLab, const Info &info,
+                  const Info &info2) const {
     const Real h = info.h;
     const Real hCube = std::pow(h, 3), inv2h = .5 / h, invHh = 1 / (h * h);
     const ScalarBlock &chiBlock =
@@ -10443,7 +10443,7 @@ Real kernelDiffusionGetZInner(PaddedBlock &p_, const Real *pW_, const Real *pE_,
   const Real rrNew = sqrSum;
   return rrNew;
 }
-void getZImplParallel(const std::vector<BlockInfo> &vInfo, const Real nu,
+void getZImplParallel(const std::vector<Info> &vInfo, const Real nu,
                       const Real dt) {
   const size_t Nblocks = vInfo.size();
   struct Tmp {
@@ -10494,7 +10494,7 @@ void ExternalForcing::operator()(const double dt) {
   const Real H = sim.extents[dir];
   const Real gradPdt = 8 * sim.uMax_forced * sim.nu / H / H * dt;
   const int DIRECTION = 0;
-  const std::vector<BlockInfo> &velInfo = sim.velInfo();
+  const std::vector<Info> &velInfo = sim.velInfo();
 #pragma omp parallel for
   for (size_t i = 0; i < velInfo.size(); i++) {
     VectorBlock &v = *(VectorBlock *)velInfo[i].ptrBlock;
@@ -10585,7 +10585,7 @@ intersect_t Fish::prepare_segPerBlock(vecsegm_t &vSegments) {
   for (size_t j = 0; j < MySegments.size(); j++)
     MySegments[j].clear();
   MySegments.clear();
-  const std::vector<BlockInfo> &chiInfo = sim.chiInfo();
+  const std::vector<Info> &chiInfo = sim.chiInfo();
   std::vector<std::vector<VolumeSegment_OBB *>> ret(chiInfo.size());
   for (auto &entry : obstacleBlocks) {
     if (entry == nullptr)
@@ -10595,7 +10595,7 @@ intersect_t Fish::prepare_segPerBlock(vecsegm_t &vSegments) {
   }
   obstacleBlocks.resize(chiInfo.size(), nullptr);
   for (size_t i = 0; i < chiInfo.size(); ++i) {
-    const BlockInfo &info = chiInfo[i];
+    const Info &info = chiInfo[i];
     Real MINP[3], MAXP[3];
     info.pos(MINP, 0, 0, 0);
     info.pos(MAXP, ScalarBlock::sizeX - 1, ScalarBlock::sizeY - 1,
@@ -12107,13 +12107,13 @@ void MidlineShapes::computeWidthsHeights(const std::string &heightName,
     }
   }
 }
-static Real avgUx_nonUniform(const std::vector<BlockInfo> &myInfo,
+static Real avgUx_nonUniform(const std::vector<Info> &myInfo,
                              const Real *const uInf, const Real volume) {
   Real avgUx = 0.;
   const int nBlocks = myInfo.size();
 #pragma omp parallel for reduction(+ : avgUx)
   for (int i = 0; i < nBlocks; i++) {
-    const BlockInfo &info = myInfo[i];
+    const Info &info = myInfo[i];
     const VectorBlock &b = *(const VectorBlock *)info.ptrBlock;
     const Real h3 = info.h * info.h * info.h;
     for (int z = 0; z < VectorBlock::sizeZ; ++z)
@@ -12127,7 +12127,7 @@ static Real avgUx_nonUniform(const std::vector<BlockInfo> &myInfo,
 }
 FixMassFlux::FixMassFlux(SimulationData &s) : Operator(s) {}
 void FixMassFlux::operator()(const double dt) {
-  const std::vector<BlockInfo> &velInfo = sim.velInfo();
+  const std::vector<Info> &velInfo = sim.velInfo();
   const Real volume = sim.extents[0] * sim.extents[1] * sim.extents[2];
   const Real y_max = sim.extents[1];
   const Real u_avg = 2.0 / 3.0 * sim.uMax_forced;
@@ -12174,15 +12174,15 @@ struct KernelComputeForces {
   StencilInfo stencil{small, small, small, big, big, big, true, {0, 1, 2}};
   StencilInfo stencil2{small, small, small, big, big, big, true, {0}};
   SimulationData &sim;
-  const std::vector<BlockInfo> &presInfo = sim.presInfo();
+  const std::vector<Info> &presInfo = sim.presInfo();
   KernelComputeForces(SimulationData &s) : sim(s) {}
-  void operator()(VectorLab &lab, ScalarLab &chiLab, const BlockInfo &info,
-                  const BlockInfo &info2) const {
+  void operator()(VectorLab &lab, ScalarLab &chiLab, const Info &info,
+                  const Info &info2) const {
     for (const auto &obstacle : sim.obstacle_vector->getObstacleVector())
       visit(lab, chiLab, info, info2, obstacle.get());
   }
-  void visit(VectorLab &l, ScalarLab &chiLab, const BlockInfo &info,
-             const BlockInfo &info2, Obstacle *const op) const {
+  void visit(VectorLab &l, ScalarLab &chiLab, const Info &info,
+             const Info &info2, Obstacle *const op) const {
     const ScalarBlock &presBlock =
         *(ScalarBlock *)presInfo[info.blockID].ptrBlock;
     const std::vector<ObstacleBlock *> &obstblocks = op->getObstacleBlocks();
@@ -12418,7 +12418,7 @@ namespace {
 class KernelIC {
 public:
   KernelIC(const Real u) {}
-  void operator()(const BlockInfo &info, VectorBlock &block) const {
+  void operator()(const Info &info, VectorBlock &block) const {
     for (int iz = 0; iz < VectorBlock::sizeZ; ++iz)
       for (int iy = 0; iy < VectorBlock::sizeY; ++iy)
         for (int ix = 0; ix < VectorBlock::sizeX; ++ix)
@@ -12435,7 +12435,7 @@ class KernelIC_taylorGreen {
 public:
   KernelIC_taylorGreen(const std::array<Real, 3> &extents, const Real U)
       : ext{extents}, uMax(U) {}
-  void operator()(const BlockInfo &info, VectorBlock &block) const {
+  void operator()(const Info &info, VectorBlock &block) const {
     for (int iz = 0; iz < VectorBlock::sizeZ; ++iz)
       for (int iy = 0; iy < VectorBlock::sizeY; ++iy)
         for (int ix = 0; ix < VectorBlock::sizeX; ++ix) {
@@ -12527,7 +12527,7 @@ public:
     const int nz = VectorBlock::sizeZ;
     const int ny = VectorBlock::sizeY;
     const int nx = VectorBlock::sizeX;
-    std::vector<BlockInfo> &velInfo = sim.velInfo();
+    std::vector<Info> &velInfo = sim.velInfo();
 #pragma omp parallel for
     for (size_t i = 0; i < velInfo.size(); i++) {
       Real p[3];
@@ -12581,7 +12581,7 @@ public:
 };
 } // namespace
 static void initialPenalization(SimulationData &sim, const Real dt) {
-  const std::vector<BlockInfo> &velInfo = sim.velInfo();
+  const std::vector<Info> &velInfo = sim.velInfo();
   for (const auto &obstacle : sim.obstacle_vector->getObstacleVector()) {
     using CHI_MAT = Real[CUP_BLOCK_SIZEZ][CUP_BLOCK_SIZEY][CUP_BLOCK_SIZEX];
     using UDEFMAT = Real[CUP_BLOCK_SIZEZ][CUP_BLOCK_SIZEY][CUP_BLOCK_SIZEX][3];
@@ -12593,7 +12593,7 @@ static void initialPenalization(SimulationData &sim, const Real dt) {
       const std::array<Real, 3> omegaBody = obstacle->getAngularVelocity();
 #pragma omp for schedule(dynamic)
       for (size_t i = 0; i < velInfo.size(); ++i) {
-        const BlockInfo &info = velInfo[i];
+        const Info &info = velInfo[i];
         const auto pos = obstblocks[info.blockID];
         if (pos == nullptr)
           continue;
@@ -12639,7 +12639,7 @@ void InitialConditions::operator()(const Real dt) {
     ic_vorticity.run();
   }
   {
-    std::vector<BlockInfo> &chiInfo = sim.chiInfo();
+    std::vector<Info> &chiInfo = sim.chiInfo();
 #pragma omp parallel for schedule(static)
     for (unsigned i = 0; i < chiInfo.size(); i++) {
       ScalarBlock &PRES = (*sim.pres)(i);
@@ -13207,7 +13207,7 @@ struct KernelCharacteristicFunction {
   const int Ny = VectorBlock::sizeY;
   const int Nz = VectorBlock::sizeZ;
   KernelCharacteristicFunction(const v_v_ob &v) : vec_obstacleBlocks(v) {}
-  void operate(const BlockInfo &info, ScalarBlock &b) const {
+  void operate(const Info &info, ScalarBlock &b) const {
     const Real h = info.h, inv2h = .5 / h, fac1 = .5 * h * h, vol = h * h * h;
     const int gp = 1;
     for (size_t obst_id = 0; obst_id < vec_obstacleBlocks.size(); obst_id++) {
@@ -13336,7 +13336,7 @@ static void kernelComputeGridCoM(SimulationData &sim) {
   }
 }
 static void _kernelIntegrateUdefMomenta(SimulationData &sim,
-                                        const BlockInfo &info) {
+                                        const Info &info) {
   const int Nx = VectorBlock::sizeX;
   const int Ny = VectorBlock::sizeY;
   const int Nz = VectorBlock::sizeZ;
@@ -13400,7 +13400,7 @@ static void _kernelIntegrateUdefMomenta(SimulationData &sim,
   }
 }
 static void kernelIntegrateUdefMomenta(SimulationData &sim) {
-  const std::vector<BlockInfo> &chiInfo = sim.chiInfo();
+  const std::vector<Info> &chiInfo = sim.chiInfo();
 #pragma omp parallel for schedule(dynamic, 1)
   for (size_t i = 0; i < chiInfo.size(); ++i)
     _kernelIntegrateUdefMomenta(sim, chiInfo[i]);
@@ -13466,7 +13466,7 @@ static void kernelRemoveUdefMomenta(SimulationData &sim,
   const int Nx = VectorBlock::sizeX;
   const int Ny = VectorBlock::sizeY;
   const int Nz = VectorBlock::sizeZ;
-  const std::vector<BlockInfo> &chiInfo = sim.chiInfo();
+  const std::vector<Info> &chiInfo = sim.chiInfo();
   for (const auto &obstacle : sim.obstacle_vector->getObstacleVector()) {
     const std::array<Real, 3> angVel_correction = obstacle->angVel_correction;
     const std::array<Real, 3> transVel_correction =
@@ -13475,7 +13475,7 @@ static void kernelRemoveUdefMomenta(SimulationData &sim,
     const auto &obstacleBlocks = obstacle->getObstacleBlocks();
 #pragma omp parallel for schedule(dynamic, 1)
     for (size_t i = 0; i < chiInfo.size(); i++) {
-      const BlockInfo &info = chiInfo[i];
+      const Info &info = chiInfo[i];
       const auto pos = obstacleBlocks[info.blockID];
       if (pos == nullptr)
         continue;
@@ -13505,7 +13505,7 @@ void CreateObstacles::operator()(const Real dt) {
   if (sim.MeshChanged == false && sim.StaticObstacles)
     return;
   sim.MeshChanged = false;
-  std::vector<BlockInfo> &chiInfo = sim.chiInfo();
+  std::vector<Info> &chiInfo = sim.chiInfo();
 #pragma omp parallel for schedule(static)
   for (size_t i = 0; i < chiInfo.size(); ++i) {
     ScalarBlock &CHI = *(ScalarBlock *)chiInfo[i].ptrBlock;
@@ -13538,16 +13538,16 @@ using UDEFMAT = Real[CUP_BLOCK_SIZEZ][CUP_BLOCK_SIZEY][CUP_BLOCK_SIZEX][3];
 template <bool implicitPenalization> struct KernelIntegrateFluidMomenta {
   const Real lambda, dt;
   ObstacleVector *const obstacle_vector;
-  Real dvol(const BlockInfo &I, const int x, const int y, const int z) const {
+  Real dvol(const Info &I, const int x, const int y, const int z) const {
     return I.h * I.h * I.h;
   }
   KernelIntegrateFluidMomenta(Real _dt, Real _lambda, ObstacleVector *ov)
       : lambda(_lambda), dt(_dt), obstacle_vector(ov) {}
-  void operator()(const BlockInfo &info) const {
+  void operator()(const Info &info) const {
     for (const auto &obstacle : obstacle_vector->getObstacleVector())
       visit(info, obstacle.get());
   }
-  void visit(const BlockInfo &info, Obstacle *const op) const {
+  void visit(const Info &info, Obstacle *const op) const {
     const std::vector<ObstacleBlock *> &obstblocks = op->getObstacleBlocks();
     ObstacleBlock *const o = obstblocks[info.blockID];
     if (o == nullptr)
@@ -13726,7 +13726,7 @@ void UpdateObstacles::operator()(const Real dt) {
   if (sim.obstacle_vector->nObstacles() == 0)
     return;
   {
-    std::vector<BlockInfo> &velInfo = sim.velInfo();
+    std::vector<Info> &velInfo = sim.velInfo();
 #pragma omp parallel
     {
       if (sim.bImplicitPenalization) {
@@ -13759,11 +13759,11 @@ struct KernelPenalization {
                      const bool _implicitPenalization, ObstacleVector *ov)
       : dt(_dt), lambda(_lambda), implicitPenalization(_implicitPenalization),
         obstacle_vector(ov) {}
-  void operator()(const BlockInfo &info, const BlockInfo &ChiInfo) const {
+  void operator()(const Info &info, const Info &ChiInfo) const {
     for (const auto &obstacle : obstacle_vector->getObstacleVector())
       visit(info, ChiInfo, obstacle.get());
   }
-  void visit(const BlockInfo &info, const BlockInfo &ChiInfo,
+  void visit(const Info &info, const Info &ChiInfo,
              Obstacle *const obstacle) const {
     const auto &obstblocks = obstacle->getObstacleBlocks();
     ObstacleBlock *const o = obstblocks[info.blockID];
@@ -14240,8 +14240,8 @@ void Penalization::operator()(const Real dt) {
   if (sim.obstacle_vector->nObstacles() == 0)
     return;
   preventCollidingObstacles();
-  std::vector<BlockInfo> &chiInfo = sim.chiInfo();
-  std::vector<BlockInfo> &velInfo = sim.velInfo();
+  std::vector<Info> &chiInfo = sim.chiInfo();
+  std::vector<Info> &velInfo = sim.velInfo();
 #pragma omp parallel
   {
     KernelPenalization K(dt, sim.lambda, sim.bImplicitPenalization,
@@ -14614,7 +14614,7 @@ Real kernelPoissonGetZInner(PaddedBlock &p_, const Real *pW_, const Real *pE_,
   const Real rrNew = sqrSum;
   return rrNew;
 }
-void getZImplParallel(const std::vector<BlockInfo> &vInfo) {
+void getZImplParallel(const std::vector<Info> &vInfo) {
   const size_t Nblocks = vInfo.size();
   struct Tmp {
     Block r;
@@ -14674,12 +14674,12 @@ using UDEFMAT = Real[CUP_BLOCK_SIZEZ][CUP_BLOCK_SIZEY][CUP_BLOCK_SIZEX][3];
 struct KernelDivPressure {
   const SimulationData &sim;
   const StencilInfo stencil = StencilInfo(-1, -1, -1, 2, 2, 2, false, {0});
-  const std::vector<BlockInfo> &tmpVInfo = sim.tmpVInfo();
+  const std::vector<Info> &tmpVInfo = sim.tmpVInfo();
   const int Nx = VectorBlock::sizeX;
   const int Ny = VectorBlock::sizeY;
   const int Nz = VectorBlock::sizeZ;
   KernelDivPressure(const SimulationData &s) : sim(s) {}
-  void operator()(const ScalarLab &lab, const BlockInfo &info) const {
+  void operator()(const ScalarLab &lab, const Info &info) const {
     VectorBlock &__restrict__ b = (*sim.tmpV)(info.blockID);
     const Real fac = info.h;
     for (int z = 0; z < Nz; ++z)
@@ -14753,14 +14753,14 @@ struct KernelPressureRHS {
   const int nShapes = obstacle_vector->nObstacles();
   StencilInfo stencil = StencilInfo(-1, -1, -1, 2, 2, 2, false, {0, 1, 2});
   StencilInfo stencil2 = StencilInfo(-1, -1, -1, 2, 2, 2, false, {0, 1, 2});
-  const std::vector<BlockInfo> &lhsInfo = sim.lhsInfo();
-  const std::vector<BlockInfo> &chiInfo = sim.chiInfo();
+  const std::vector<Info> &lhsInfo = sim.lhsInfo();
+  const std::vector<Info> &chiInfo = sim.chiInfo();
   const int Nx = VectorBlock::sizeX;
   const int Ny = VectorBlock::sizeY;
   const int Nz = VectorBlock::sizeZ;
   KernelPressureRHS(SimulationData &s, const Real a_dt) : sim(s), dt(a_dt) {}
   void operator()(const VectorLab &lab, const VectorLab &uDefLab,
-                  const BlockInfo &info, const BlockInfo &info2) const {
+                  const Info &info, const Info &info2) const {
     const Real h = info.h, fac = 0.5 * h * h / dt;
     const ScalarBlock &__restrict__ c = (*sim.chi)(info2.blockID);
     ScalarBlock &__restrict__ p = (*sim.lhs)(info2.blockID);
@@ -14862,14 +14862,14 @@ static void kernelUpdateTmpV(SimulationData &sim) {
   const int Nx = VectorBlock::sizeX;
   const int Ny = VectorBlock::sizeY;
   const int Nz = VectorBlock::sizeZ;
-  const std::vector<BlockInfo> &chiInfo = sim.chiInfo();
+  const std::vector<Info> &chiInfo = sim.chiInfo();
 #pragma omp parallel
   {
     for (const auto &obstacle : sim.obstacle_vector->getObstacleVector()) {
       const auto &obstblocks = obstacle->getObstacleBlocks();
 #pragma omp for schedule(dynamic, 1)
       for (size_t i = 0; i < chiInfo.size(); ++i) {
-        const BlockInfo &info = chiInfo[i];
+        const Info &info = chiInfo[i];
         const auto pos = obstblocks[info.blockID];
         if (pos == nullptr)
           continue;
@@ -14893,14 +14893,14 @@ static void kernelUpdateTmpV(SimulationData &sim) {
 struct KernelGradP {
   const StencilInfo stencil{-1, -1, -1, 2, 2, 2, false, {0}};
   SimulationData &sim;
-  const std::vector<BlockInfo> &tmpVInfo = sim.tmpVInfo();
+  const std::vector<Info> &tmpVInfo = sim.tmpVInfo();
   const Real dt;
   const int Nx = VectorBlock::sizeX;
   const int Ny = VectorBlock::sizeY;
   const int Nz = VectorBlock::sizeZ;
   KernelGradP(SimulationData &s, const Real a_dt) : sim(s), dt(a_dt) {}
   ~KernelGradP() {}
-  void operator()(const ScalarLab &lab, const BlockInfo &info) const {
+  void operator()(const ScalarLab &lab, const Info &info) const {
     VectorBlock &o = (*sim.tmpV)(info.blockID);
     const Real fac = -0.5 * dt * info.h * info.h;
     for (int z = 0; z < Nz; ++z)
@@ -14975,7 +14975,7 @@ void PressureProjection::operator()(const Real dt) {
   const int Nx = VectorBlock::sizeX;
   const int Ny = VectorBlock::sizeY;
   const int Nz = VectorBlock::sizeZ;
-  const std::vector<BlockInfo> &presInfo = sim.presInfo();
+  const std::vector<Info> &presInfo = sim.presInfo();
   pOld.resize(Nx * Ny * Nz * presInfo.size());
   {
 #pragma omp parallel for schedule(static)
@@ -15045,7 +15045,7 @@ void PressureProjection::operator()(const Real dt) {
         for (int ix = 0; ix < Nx; ix++)
           P(ix, iy, iz).s -= avg;
   }
-  const std::vector<BlockInfo> &velInfo = sim.velInfo();
+  const std::vector<Info> &velInfo = sim.velInfo();
   if (sim.step > sim.step_2nd_start) {
 #pragma omp parallel for
     for (size_t i = 0; i < velInfo.size(); i++) {
@@ -15860,7 +15860,7 @@ std::vector<Real> StefanFish::state() const {
   return S;
 }
 ssize_t StefanFish::holdingBlockID(const std::array<Real, 3> pos) const {
-  const std::vector<BlockInfo> &velInfo = sim.velInfo();
+  const std::vector<Info> &velInfo = sim.velInfo();
   for (size_t i = 0; i < velInfo.size(); ++i) {
     std::array<Real, 3> MIN = velInfo[i].pos<Real>(0, 0, 0);
     std::array<Real, 3> MAX = velInfo[i].pos<Real>(
@@ -15880,7 +15880,7 @@ ssize_t StefanFish::holdingBlockID(const std::array<Real, 3> pos) const {
 };
 std::array<Real, 3>
 StefanFish::getShear(const std::array<Real, 3> pSurf) const {
-  const std::vector<BlockInfo> &velInfo = sim.velInfo();
+  const std::vector<Info> &velInfo = sim.velInfo();
   Real myF[3] = {0, 0, 0};
   ssize_t blockIdSurf = holdingBlockID(pSurf);
   if (blockIdSurf >= 0) {
