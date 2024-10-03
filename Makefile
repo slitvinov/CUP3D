@@ -6,11 +6,9 @@
 MPICXX = mpicxx
 GSL_CFLAGS != pkg-config --cflags gsl
 GSL_LDFLAGS != pkg-config --libs gsl
-CUBISMFLAGS = \
+FLAGS = \
 -DCUBISM_ALIGNMENT=64 \
--DCUP_BLOCK_SIZEX=8 \
--DCUP_BLOCK_SIZEY=8 \
--DCUP_BLOCK_SIZEZ=8 \
+-D_BS_=8 \
 -DDIMENSION=3 \
 -DNDEBUG \
 -O3 \
@@ -20,6 +18,6 @@ S = main.o
 main: $(S:.cpp=.o)
 	$(MPICXX) -o main $(S:.cpp=.o) $(GSL_LDFLAGS) $(LDFLAGS) -fopenmp
 .cpp.o:
-	$(MPICXX) -o $@ -c $< $(CUBISMFLAGS) $(CXXFLAGS) $(GSL_CFLAGS)
+	$(MPICXX) -o $@ -c $< $(FLAGS) $(CXXFLAGS) $(GSL_CFLAGS)
 clean:
 	-rm main $(S:.cpp=.o)

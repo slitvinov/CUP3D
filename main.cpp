@@ -5963,11 +5963,6 @@ public:
     }
   }
 };
-#ifndef CUP_BLOCK_SIZEX
-#define CUP_BLOCK_SIZEX 8
-#define CUP_BLOCK_SIZEY 8
-#define CUP_BLOCK_SIZEZ 8
-#endif
 enum BCflag { freespace, periodic, wall };
 inline BCflag string2BCflag(const std::string &strFlag) {
   if (strFlag == "periodic")
@@ -6473,11 +6468,11 @@ public:
 static constexpr int kBlockAlignment = 64;
 template <typename T>
 using aligned_block_allocator = aligned_allocator<T, kBlockAlignment>;
-using ScalarBlock = GridBlock<CUP_BLOCK_SIZEX, 3, ScalarElement>;
+using ScalarBlock = GridBlock<_BS_, 3, ScalarElement>;
 using ScalarGrid = GridMPI<Grid<ScalarBlock, aligned_block_allocator>>;
 using ScalarLab =
     BlockLabMPI<BlockLabNeumann3D<ScalarGrid, aligned_block_allocator>>;
-using VectorBlock = GridBlock<CUP_BLOCK_SIZEX, 3, VectorElement>;
+using VectorBlock = GridBlock<_BS_, 3, VectorElement>;
 using VectorGrid = GridMPI<Grid<VectorBlock, aligned_block_allocator>>;
 using VectorLab = BlockLabMPI<BlockLabBC<VectorGrid, aligned_block_allocator>>;
 using ScalarAMR = MeshAdaptation<ScalarLab>;
@@ -10867,8 +10862,8 @@ void Fish::create() {
   const intersect_t segmPerBlock = prepare_segPerBlock(vSegments);
   writeSDFOnBlocks(vSegments);
 }
-using UDEFMAT = Real[CUP_BLOCK_SIZEZ][CUP_BLOCK_SIZEY][CUP_BLOCK_SIZEX][3];
-using CHIMAT = Real[CUP_BLOCK_SIZEZ][CUP_BLOCK_SIZEY][CUP_BLOCK_SIZEX];
+using UDEFMAT = Real[_BS_][_BS_][_BS_][3];
+using CHIMAT = Real[_BS_][_BS_][_BS_];
 void FishMidlineData::integrateLinearMomentum() {
   Real V = 0, cmx = 0, cmy = 0, cmz = 0, lmx = 0, lmy = 0, lmz = 0;
 #pragma omp parallel for schedule(static) reduction(+:V,cmx,cmy,cmz,lmx,lmy,lmz)
@@ -12583,8 +12578,8 @@ public:
 static void initialPenalization(SimulationData &sim, const Real dt) {
   const std::vector<Info> &velInfo = sim.velInfo();
   for (const auto &obstacle : sim.obstacle_vector->getObstacleVector()) {
-    using CHI_MAT = Real[CUP_BLOCK_SIZEZ][CUP_BLOCK_SIZEY][CUP_BLOCK_SIZEX];
-    using UDEFMAT = Real[CUP_BLOCK_SIZEZ][CUP_BLOCK_SIZEY][CUP_BLOCK_SIZEX][3];
+    using CHI_MAT = Real[_BS_][_BS_][_BS_];
+    using UDEFMAT = Real[_BS_][_BS_][_BS_][3];
 #pragma omp parallel
     {
       const auto &obstblocks = obstacle->getObstacleBlocks();
@@ -12718,8 +12713,8 @@ public:
 #endif
   }
 };
-using UDEFMAT = Real[CUP_BLOCK_SIZEZ][CUP_BLOCK_SIZEY][CUP_BLOCK_SIZEX][3];
-using CHIMAT = Real[CUP_BLOCK_SIZEZ][CUP_BLOCK_SIZEY][CUP_BLOCK_SIZEX];
+using UDEFMAT = Real[_BS_][_BS_][_BS_][3];
+using CHIMAT = Real[_BS_][_BS_][_BS_];
 static constexpr Real EPS = std::numeric_limits<Real>::epsilon();
 Obstacle::Obstacle(SimulationData &s, ArgumentParser &parser) : sim(s) {
   length = parser("-L").asDouble();
@@ -13197,8 +13192,8 @@ void ObstacleFactory::addObstacles(const std::string &factoryContent) {
   _addObstacles(sim, stream);
 }
 namespace {
-using CHIMAT = Real[CUP_BLOCK_SIZEZ][CUP_BLOCK_SIZEY][CUP_BLOCK_SIZEX];
-using UDEFMAT = Real[CUP_BLOCK_SIZEZ][CUP_BLOCK_SIZEY][CUP_BLOCK_SIZEX][3];
+using CHIMAT = Real[_BS_][_BS_][_BS_];
+using UDEFMAT = Real[_BS_][_BS_][_BS_][3];
 static constexpr Real EPS = std::numeric_limits<Real>::epsilon();
 struct KernelCharacteristicFunction {
   using v_v_ob = std::vector<std::vector<ObstacleBlock *> *>;
@@ -13533,8 +13528,8 @@ void CreateObstacles::operator()(const Real dt) {
   sim.obstacle_vector->finalize();
 }
 namespace {
-using CHIMAT = Real[CUP_BLOCK_SIZEZ][CUP_BLOCK_SIZEY][CUP_BLOCK_SIZEX];
-using UDEFMAT = Real[CUP_BLOCK_SIZEZ][CUP_BLOCK_SIZEY][CUP_BLOCK_SIZEX][3];
+using CHIMAT = Real[_BS_][_BS_][_BS_];
+using UDEFMAT = Real[_BS_][_BS_][_BS_][3];
 template <bool implicitPenalization> struct KernelIntegrateFluidMomenta {
   const Real lambda, dt;
   ObstacleVector *const obstacle_vector;
@@ -13749,8 +13744,8 @@ void UpdateObstacles::operator()(const Real dt) {
   }
 }
 namespace {
-using CHIMAT = Real[CUP_BLOCK_SIZEZ][CUP_BLOCK_SIZEY][CUP_BLOCK_SIZEX];
-using UDEFMAT = Real[CUP_BLOCK_SIZEZ][CUP_BLOCK_SIZEY][CUP_BLOCK_SIZEX][3];
+using CHIMAT = Real[_BS_][_BS_][_BS_];
+using UDEFMAT = Real[_BS_][_BS_][_BS_][3];
 struct KernelPenalization {
   const Real dt, invdt = 1.0 / dt, lambda;
   const bool implicitPenalization;
@@ -14669,8 +14664,8 @@ std::shared_ptr<PoissonSolverBase> makePoissonSolver(SimulationData &s) {
                                 "\" unrecognized!");
   }
 }
-using CHIMAT = Real[CUP_BLOCK_SIZEZ][CUP_BLOCK_SIZEY][CUP_BLOCK_SIZEX];
-using UDEFMAT = Real[CUP_BLOCK_SIZEZ][CUP_BLOCK_SIZEY][CUP_BLOCK_SIZEX][3];
+using CHIMAT = Real[_BS_][_BS_][_BS_];
+using UDEFMAT = Real[_BS_][_BS_][_BS_][3];
 struct KernelDivPressure {
   const SimulationData &sim;
   const StencilInfo stencil = StencilInfo(-1, -1, -1, 2, 2, 2, false, {0});
