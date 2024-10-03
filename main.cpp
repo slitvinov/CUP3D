@@ -6640,10 +6640,6 @@ struct SimulationData {
   Real dumpTime = 0;
   Real nextDumpTime = 0;
   std::string path4serialization = "./";
-  bool dumpP;
-  bool dumpChi;
-  bool dumpOmega, dumpOmegaX, dumpOmegaY, dumpOmegaZ;
-  bool dumpVelocity, dumpVelocityX, dumpVelocityY, dumpVelocityZ;
   bool implicitDiffusion;
   Real DiffusionErrorTol;
   Real DiffusionErrorTolRel;
@@ -15377,16 +15373,6 @@ SimulationData::SimulationData(MPI_Comm mpicomm, ArgumentParser &parser)
   if (saveFreq <= 0 && dumpFreq > 0)
     saveFreq = dumpFreq;
   path4serialization = parser("-serialization").asString("./");
-  dumpChi = parser("-dumpChi").asBool(true);
-  dumpOmega = parser("-dumpOmega").asBool(true);
-  dumpP = parser("-dumpP").asBool(false);
-  dumpOmegaX = parser("-dumpOmegaX").asBool(false);
-  dumpOmegaY = parser("-dumpOmegaY").asBool(false);
-  dumpOmegaZ = parser("-dumpOmegaZ").asBool(false);
-  dumpVelocity = parser("-dumpVelocity").asBool(false);
-  dumpVelocityX = parser("-dumpVelocityX").asBool(false);
-  dumpVelocityY = parser("-dumpVelocityY").asBool(false);
-  dumpVelocityZ = parser("-dumpVelocityZ").asBool(false);
 }
 void SimulationData::_preprocessArguments() {
   if (bpdx < 1 || bpdy < 1 || bpdz < 1) {
