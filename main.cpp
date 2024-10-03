@@ -71,7 +71,7 @@ public:
     std::allocator<T> a;
     return a.max_size();
   }
-  template <typename C, class... Args> void construct(C *c, Args &&... args) {
+  template <typename C, class... Args> void construct(C *c, Args &&...args) {
     new ((void *)c) C(std::forward<Args>(args)...);
   }
   template <typename C> void destroy(C *c) { c->~C(); }
@@ -798,7 +798,7 @@ public:
                   m_vInfo.end());
   }
   void FindInfo(const int m, const long long n, const int m_new,
-                     const long long n_new) {
+                const long long n_new) {
     for (size_t j = 0; j < m_vInfo.size(); j++)
       if (m == m_vInfo[j].level && n == m_vInfo[j].Z) {
         Info &correct_info = getInfoAll(m_new, n_new);
@@ -1116,8 +1116,7 @@ struct Interface {
   bool CoarseStencil;
   bool ToBeKept;
   int dis;
-  Interface(Info &i0, Info &i1, const int a_icode0,
-            const int a_icode1) {
+  Interface(Info &i0, Info &i1, const int a_icode0, const int a_icode1) {
     infos[0] = &i0;
     infos[1] = &i1;
     icode[0] = a_icode0;
@@ -1302,30 +1301,27 @@ struct StencilManager {
         for (int d = 0; d < 3; d++)
           Cindex_true[d] = f.infos[1]->index[d] + code[d];
         int CoarseEdge[3];
-        CoarseEdge[0] = (code[0] == 0)
-                            ? 0
-                            : (((f.infos[1]->index[0] % 2 == 0) &&
-                                (Cindex_true[0] > f.infos[1]->index[0])) ||
-                               ((f.infos[1]->index[0] % 2 == 1) &&
-                                (Cindex_true[0] < f.infos[1]->index[0])))
-                                  ? 1
-                                  : 0;
-        CoarseEdge[1] = (code[1] == 0)
-                            ? 0
-                            : (((f.infos[1]->index[1] % 2 == 0) &&
-                                (Cindex_true[1] > f.infos[1]->index[1])) ||
-                               ((f.infos[1]->index[1] % 2 == 1) &&
-                                (Cindex_true[1] < f.infos[1]->index[1])))
-                                  ? 1
-                                  : 0;
-        CoarseEdge[2] = (code[2] == 0)
-                            ? 0
-                            : (((f.infos[1]->index[2] % 2 == 0) &&
-                                (Cindex_true[2] > f.infos[1]->index[2])) ||
-                               ((f.infos[1]->index[2] % 2 == 1) &&
-                                (Cindex_true[2] < f.infos[1]->index[2])))
-                                  ? 1
-                                  : 0;
+        CoarseEdge[0] = (code[0] == 0) ? 0
+                        : (((f.infos[1]->index[0] % 2 == 0) &&
+                            (Cindex_true[0] > f.infos[1]->index[0])) ||
+                           ((f.infos[1]->index[0] % 2 == 1) &&
+                            (Cindex_true[0] < f.infos[1]->index[0])))
+                            ? 1
+                            : 0;
+        CoarseEdge[1] = (code[1] == 0) ? 0
+                        : (((f.infos[1]->index[1] % 2 == 0) &&
+                            (Cindex_true[1] > f.infos[1]->index[1])) ||
+                           ((f.infos[1]->index[1] % 2 == 1) &&
+                            (Cindex_true[1] < f.infos[1]->index[1])))
+                            ? 1
+                            : 0;
+        CoarseEdge[2] = (code[2] == 0) ? 0
+                        : (((f.infos[1]->index[2] % 2 == 0) &&
+                            (Cindex_true[2] > f.infos[1]->index[2])) ||
+                           ((f.infos[1]->index[2] % 2 == 1) &&
+                            (Cindex_true[2] < f.infos[1]->index[2])))
+                            ? 1
+                            : 0;
         Coarse_Range.sx = s[0] + std::max(code[0], 0) * nX / 2 +
                           (1 - abs(code[0])) * base[0] * nX / 2 - code[0] * nX +
                           CoarseEdge[0] * code[0] * nX / 2;
@@ -2004,8 +2000,7 @@ public:
             if (infoNeiFinerrank != rank) {
               isInner = false;
               Neighbors.insert(infoNeiFinerrank);
-              Info &infoNeiFiner =
-                  grid->getInfoAll(info.level + 1, nFine);
+              Info &infoNeiFiner = grid->getInfoAll(info.level + 1, nFine);
               const int icode2 =
                   (-code[0] + 1) + (-code[1] + 1) * 3 + (-code[2] + 1) * 9;
               send_interfaces[infoNeiFinerrank].push_back(
@@ -2089,8 +2084,7 @@ public:
             DM.sizes[r] = 0;
           }
       }
-      grid->getInfoAll(info.level, info.Z).halo_block_id =
-          info.halo_block_id;
+      grid->getInfoAll(info.level, info.Z).halo_block_id = info.halo_block_id;
     }
     myunpacks.resize(halo_blocks.size());
     for (int r = 0; r < size; r++) {
@@ -2627,7 +2621,7 @@ public:
           Info &infoNei =
               (*TFluxCorrection::grid)
                   .getInfoAll(info.level,
-                                   info.Znei_(code[0], code[1], code[2]));
+                              info.Znei_(code[0], code[1], code[2]));
           const long long nCoarse = infoNei.Zparent;
           Info &infoNeiCoarser =
               (*TFluxCorrection::grid).getInfoAll(info.level - 1, nCoarse);
@@ -2647,7 +2641,7 @@ public:
           Info &infoNei =
               (*TFluxCorrection::grid)
                   .getInfoAll(info.level,
-                                   info.Znei_(code[0], code[1], code[2]));
+                              info.Znei_(code[0], code[1], code[2]));
           int Bstep = 1;
           for (int B = 0; B <= 3; B += Bstep) {
             const int temp = (abs(code[0]) == 1) ? (B % 2) : (B / 2);
@@ -2662,8 +2656,7 @@ public:
                 (*TFluxCorrection::grid).Tree(infoNei.level + 1, nFine).rank();
             {
               Info &infoNeiFiner =
-                  (*TFluxCorrection::grid)
-                      .getInfoAll(infoNei.level + 1, nFine);
+                  (*TFluxCorrection::grid).getInfoAll(infoNei.level + 1, nFine);
               int icode2 =
                   (-code[0] + 1) + (-code[1] + 1) * 3 + (-code[2] + 1) * 9;
               recv_faces[infoNeiFinerrank].push_back(
@@ -2693,7 +2686,7 @@ public:
                   &TFluxCorrection::Cases[Cases_index]));
           TFluxCorrection::grid
               ->getInfoAll(TFluxCorrection::Cases[Cases_index].level,
-                                TFluxCorrection::Cases[Cases_index].Z)
+                           TFluxCorrection::Cases[Cases_index].Z)
               .auxiliary = &TFluxCorrection::Cases[Cases_index];
           info.auxiliary = &TFluxCorrection::Cases[Cases_index];
           Cases_index++;
@@ -2915,8 +2908,7 @@ public:
           Neighbors.insert(infoNeiTree.rank());
         } else if (infoNeiTree.CheckCoarser()) {
           const long long nCoarse = infoNei.Zparent;
-          Info &infoNeiCoarser =
-              TGrid::getInfoAll(infoNei.level - 1, nCoarse);
+          Info &infoNeiCoarser = TGrid::getInfoAll(infoNei.level - 1, nCoarse);
           const int infoNeiCoarserrank =
               TGrid::Tree(infoNei.level - 1, nCoarse).rank();
           if (infoNeiCoarserrank != rank) {
@@ -2941,8 +2933,7 @@ public:
                                temp * std::max(0, 1 - abs(code[1]))]
                               [std::max(-code[2], 0) +
                                (B / 2) * std::max(0, 1 - abs(code[2]))];
-            Info &infoNeiFiner =
-                TGrid::getInfoAll(infoNei.level + 1, nFine);
+            Info &infoNeiFiner = TGrid::getInfoAll(infoNei.level + 1, nFine);
             const int infoNeiFinerrank =
                 TGrid::Tree(infoNei.level + 1, nFine).rank();
             if (infoNeiFinerrank != rank) {
@@ -3122,8 +3113,7 @@ public:
         const long long Z = recv_buffer[kk][index__ + 1];
         TGrid::Tree(level, Z).setrank(r);
         if (UpdateIDs)
-          TGrid::getInfoAll(level, Z).blockID =
-              recv_buffer[kk][index__ + 2];
+          TGrid::getInfoAll(level, Z).blockID = recv_buffer[kk][index__ + 2];
         int p[3];
         Info::inverse(Z, level, p[0], p[1], p[2]);
         if (level < TGrid::levelMax - 1)
@@ -3978,30 +3968,27 @@ protected:
                          (info.index[1] + code[1]) % 2,
                          (info.index[2] + code[2]) % 2};
     int CoarseEdge[3];
-    CoarseEdge[0] = (code[0] == 0)
-                        ? 0
-                        : (((info.index[0] % 2 == 0) &&
-                            (infoNei_index_true[0] > info.index[0])) ||
-                           ((info.index[0] % 2 == 1) &&
-                            (infoNei_index_true[0] < info.index[0])))
-                              ? 1
-                              : 0;
-    CoarseEdge[1] = (code[1] == 0)
-                        ? 0
-                        : (((info.index[1] % 2 == 0) &&
-                            (infoNei_index_true[1] > info.index[1])) ||
-                           ((info.index[1] % 2 == 1) &&
-                            (infoNei_index_true[1] < info.index[1])))
-                              ? 1
-                              : 0;
-    CoarseEdge[2] = (code[2] == 0)
-                        ? 0
-                        : (((info.index[2] % 2 == 0) &&
-                            (infoNei_index_true[2] > info.index[2])) ||
-                           ((info.index[2] % 2 == 1) &&
-                            (infoNei_index_true[2] < info.index[2])))
-                              ? 1
-                              : 0;
+    CoarseEdge[0] = (code[0] == 0) ? 0
+                    : (((info.index[0] % 2 == 0) &&
+                        (infoNei_index_true[0] > info.index[0])) ||
+                       ((info.index[0] % 2 == 1) &&
+                        (infoNei_index_true[0] < info.index[0])))
+                        ? 1
+                        : 0;
+    CoarseEdge[1] = (code[1] == 0) ? 0
+                    : (((info.index[1] % 2 == 0) &&
+                        (infoNei_index_true[1] > info.index[1])) ||
+                       ((info.index[1] % 2 == 1) &&
+                        (infoNei_index_true[1] < info.index[1])))
+                        ? 1
+                        : 0;
+    CoarseEdge[2] = (code[2] == 0) ? 0
+                    : (((info.index[2] % 2 == 0) &&
+                        (infoNei_index_true[2] > info.index[2])) ||
+                       ((info.index[2] % 2 == 1) &&
+                        (infoNei_index_true[2] < info.index[2])))
+                        ? 1
+                        : 0;
     const int start[3] = {
         std::max(code[0], 0) * nX / 2 + (1 - abs(code[0])) * base[0] * nX / 2 -
             code[0] * nX + CoarseEdge[0] * code[0] * nX / 2,
@@ -4880,8 +4867,7 @@ public:
           counter_S += send_blocks[r].size();
         } else {
           for (size_t i = 0; i < send_blocks[r].size(); i++) {
-            Info &info =
-                SortedInfos[SortedInfos.size() - 1 - (counter_E + i)];
+            Info &info = SortedInfos[SortedInfos.size() - 1 - (counter_E + i)];
             deallocIDs.push_back(info.blockID_2);
             grid->Tree(info.level, info.Z).setrank(r);
           }
@@ -5204,9 +5190,7 @@ protected:
             grid->FindInfo(level, n, level - 1, np);
           } else {
 #pragma omp critical
-            {
-              dealloc_IDs.push_back(grid->getInfoAll(level, n).blockID_2);
-            }
+            { dealloc_IDs.push_back(grid->getInfoAll(level, n).blockID_2); }
           }
           grid->Tree(level, n).setCheckCoarser();
           grid->getInfoAll(level, n).state = Leave;
@@ -6495,21 +6479,11 @@ struct SimulationData {
   VectorAMR *vel_amr;
   VectorAMR *tmpV_amr;
   ScalarAMR *lhs_amr;
-  inline std::vector<Info> &chiInfo() const {
-    return chi->getBlocksInfo();
-  }
-  inline std::vector<Info> &presInfo() const {
-    return pres->getBlocksInfo();
-  }
-  inline std::vector<Info> &velInfo() const {
-    return vel->getBlocksInfo();
-  }
-  inline std::vector<Info> &tmpVInfo() const {
-    return tmpV->getBlocksInfo();
-  }
-  inline std::vector<Info> &lhsInfo() const {
-    return lhs->getBlocksInfo();
-  }
+  inline std::vector<Info> &chiInfo() const { return chi->getBlocksInfo(); }
+  inline std::vector<Info> &presInfo() const { return pres->getBlocksInfo(); }
+  inline std::vector<Info> &velInfo() const { return vel->getBlocksInfo(); }
+  inline std::vector<Info> &tmpVInfo() const { return tmpV->getBlocksInfo(); }
+  inline std::vector<Info> &lhsInfo() const { return lhs->getBlocksInfo(); }
   ObstacleVector *obstacle_vector = nullptr;
   std::vector<std::shared_ptr<Operator>> pipeline;
   std::shared_ptr<PoissonSolverBase> pressureSolver;
@@ -6717,10 +6691,7 @@ protected:
           }
     }
 #pragma omp parallel
-    {
-      diffusion_kernels::getZImplParallel(sim.presInfo(), sim.nu,
-                                                      dt);
-    }
+    { diffusion_kernels::getZImplParallel(sim.presInfo(), sim.nu, dt); }
 #pragma omp parallel for
     for (size_t i = 0; i < Nblocks; i++) {
       const ScalarBlock &__restrict__ bb = (*sim.pres)(i);
@@ -13330,8 +13301,7 @@ static void kernelComputeGridCoM(SimulationData &sim) {
     obstacle->centerOfMass[2] = com[3] / com[0];
   }
 }
-static void _kernelIntegrateUdefMomenta(SimulationData &sim,
-                                        const Info &info) {
+static void _kernelIntegrateUdefMomenta(SimulationData &sim, const Info &info) {
   const int Nx = VectorBlock::sizeX;
   const int Ny = VectorBlock::sizeY;
   const int Nz = VectorBlock::sizeZ;
@@ -15909,8 +15879,7 @@ int main(int argc, char **argv) {
   MPI_Init_thread(&argc, &argv, SECURITY, &provided);
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
   MPI_Barrier(MPI_COMM_WORLD);
-  Simulation *sim =
-      new Simulation(argc, argv, MPI_COMM_WORLD);
+  Simulation *sim = new Simulation(argc, argv, MPI_COMM_WORLD);
   sim->init();
   sim->simulate();
   delete sim;
