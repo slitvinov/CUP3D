@@ -9381,10 +9381,6 @@ public:
   ~PressureProjection() = default;
   void operator()(Real dt) override;
 };
-static struct {
-  SimulationData *sim;
-  ArgumentParser *parser;
-} sim0;
 struct Simulation {
   SimulationData sim;
   ArgumentParser parser;
