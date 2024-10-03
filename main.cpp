@@ -8884,23 +8884,15 @@ public:
   void addObstacles(ArgumentParser &parser);
   void addObstacles(const std::string &factoryContent);
 };
+static std::string trim(std::string str) {
+  size_t i = 0, j = str.length();
+  while (i < j && isspace(str[i]))
+    i++;
+  while (j > i && isspace(str[j - 1]))
+    j--;
+  return str.substr(i, j - i);
+}
 class FactoryFileLineParser : public ArgumentParser {
-protected:
-  inline std::string &ltrim(std::string &s) {
-    s.erase(s.begin(),
-            std::find_if(s.begin(), s.end(),
-                         std::not1(std::ptr_fun<int, int>(std::isspace))));
-    return s;
-  }
-  inline std::string &rtrim(std::string &s) {
-    s.erase(std::find_if(s.rbegin(), s.rend(),
-                         std::not1(std::ptr_fun<int, int>(std::isspace)))
-                .base(),
-            s.end());
-    return s;
-  }
-  inline std::string &trim(std::string &s) { return ltrim(rtrim(s)); }
-
 public:
   FactoryFileLineParser(std::istringstream &is_line)
       : ArgumentParser(0, NULL, '#') {
