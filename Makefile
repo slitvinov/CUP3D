@@ -7,14 +7,12 @@ MPICXX = h5c++.mpich
 GSL_CFLAGS != pkg-config --cflags gsl
 GSL_LDFLAGS != pkg-config --libs gsl
 CUBISMFLAGS = \
--DCUP_ALIGNMENT=64 \
+-DCUBISM_ALIGNMENT=64 \
 -DCUP_BLOCK_SIZEX=8 \
 -DCUP_BLOCK_SIZEY=8 \
 -DCUP_BLOCK_SIZEZ=8 \
 -DDIMENSION=3 \
--D_DOUBLE_PRECISION_ \
 -DNDEBUG \
--I. \
 -O3 \
 -std=c++17 \
 

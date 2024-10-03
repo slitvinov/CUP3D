@@ -42,26 +42,8 @@
 #include <utility>
 #include <vector>
 
-#ifndef CUP_ALIGNMENT
-#define CUP_ALIGNMENT 64
-#endif
-#define CUBISM_ALIGNMENT CUP_ALIGNMENT
-
-#ifdef _FLOAT_PRECISION_
-using Real = float;
-#define MPI_Real MPI_FLOAT
-#endif
-#ifdef _DOUBLE_PRECISION_
 using Real = double;
 #define MPI_Real MPI_DOUBLE
-#endif
-#ifdef _LONG_DOUBLE_PRECISION_
-using Real = long double;
-#define MPI_Real MPI_LONG_DOUBLE
-#endif
-#ifndef CubismUP_3D_aligned_allocator_h
-#define CubismUP_3D_aligned_allocator_h
-
 namespace cubismup3d {
 
 template <typename T, int kAlignment> class aligned_allocator {
@@ -122,7 +104,6 @@ public:
 };
 
 } // namespace cubismup3d
-#endif // CubismUP_3D_aligned_allocator_h
 
 namespace cubism {
 
@@ -5019,10 +5000,6 @@ public:
 };
 
 } // namespace cubism
-
-#ifndef CUBISM_ALIGNMENT
-#define CUBISM_ALIGNMENT 32
-#endif
 
 namespace cubism {
 
@@ -12789,16 +12766,7 @@ IN THE SOFTWARE.
 
 // General namespace wrapping all Happly things.
 namespace happly {
-
-#ifdef _FLOAT_PRECISION_
-using Real = float;
-#endif
-#ifdef _DOUBLE_PRECISION_
 using Real = double;
-#endif
-#ifdef _LONG_DOUBLE_PRECISION_
-using Real = long double;
-#endif
 
 // Enum specifying binary or ASCII filetypes. Binary can be little-endian
 // (default) or big endian.
