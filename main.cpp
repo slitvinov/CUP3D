@@ -1,10 +1,3 @@
-//
-//  Cubism3D
-//  Copyright (c) 2021 CSE-Lab, ETH Zurich, Switzerland.
-//
-//  Created by Michalis Chatzimanolakis (michaich@ethz.ch).
-//
-
 #include "AdvectionDiffusion.h"
 
 CubismUP_3D_NAMESPACE_BEGIN
@@ -375,13 +368,6 @@ void AdvectionDiffusion::operator()(const Real dt) {
 }
 
 CubismUP_3D_NAMESPACE_END
-//
-//  Cubism3D
-//  Copyright (c) 2021 CSE-Lab, ETH Zurich, Switzerland.
-//
-//  Created by Michalis Chatzimanolakis (michaich@ethz.ch).
-//
-
 #include "AdvectionDiffusionImplicit.h"
 
 CubismUP_3D_NAMESPACE_BEGIN
@@ -1286,14 +1272,6 @@ void ArgumentParser::print_args() {
 }
 
 } // namespace cubism
-//
-//  Cubism3D
-//  Copyright (c) 2018 CSE-Lab, ETH Zurich, Switzerland.
-//  Distributed under the terms of the MIT license.
-//
-//  Created by Ivica Kicic (kicici@ethz.ch) in May 2018.
-//
-
 #include "BufferedLogger.h"
 
 #include <fstream>
@@ -1363,14 +1341,6 @@ void BufferedLogger::flush(void) {
 }
 
 } // namespace cubismup3d
-//
-//  Cubism3D
-//  Copyright (c) 2018 CSE-Lab, ETH Zurich, Switzerland.
-//  Distributed under the terms of the MIT license.
-//
-//  Created by Guido Novati (novatig@ethz.ch).
-//
-
 #include "CarlingFish.h"
 #include "FishLibrary.h"
 #include "FishShapes.h"
@@ -1529,14 +1499,6 @@ CarlingFish::CarlingFish(SimulationData &s, ArgumentParser &p) : Fish(s, p) {
 }
 
 CubismUP_3D_NAMESPACE_END
-//
-//  Cubism3D
-//  Copyright (c) 2018 CSE-Lab, ETH Zurich, Switzerland.
-//  Distributed under the terms of the MIT license.
-//
-//  Created by Sid Verma in May 2018.
-//
-
 #include "ComputeDissipation.h"
 #include "BufferedLogger.h"
 
@@ -1698,14 +1660,6 @@ void ComputeDissipation::operator()(const Real dt) {
 }
 
 CubismUP_3D_NAMESPACE_END
-//
-//  Cubism3D
-//  Copyright (c) 2018 CSE-Lab, ETH Zurich, Switzerland.
-//  Distributed under the terms of the MIT license.
-//
-//  Created by Guido Novati (novatig@ethz.ch).
-//
-
 #include "Cylinder.h"
 #include "ObstacleLibrary.h"
 #include "ArgumentParser.h"
@@ -1858,12 +1812,6 @@ void Cylinder::finalize() {
 }
 
 CubismUP_3D_NAMESPACE_END
-//
-//  Cubism3D
-//  Copyright (c) 2023 CSE-Lab, ETH Zurich, Switzerland.
-//  Distributed under the terms of the MIT license.
-//
-
 #include "CylinderNozzle.h"
 #include "ObstacleLibrary.h"
 
@@ -2395,14 +2343,6 @@ void getZImplParallel(const std::vector<cubism::BlockInfo> &vInfo,
 
 } // namespace diffusion_kernels
 } // namespace cubismup3d
-//
-//  Cubism3D
-//  Copyright (c) 2018 CSE-Lab, ETH Zurich, Switzerland.
-//  Distributed under the terms of the MIT license.
-//
-//  Created by Guido Novati (novatig@ethz.ch).
-//
-
 #include "Ellipsoid.h"
 #include "ObstacleLibrary.h"
 
@@ -2773,12 +2713,6 @@ void Ellipsoid::computeVelocities() {
 }
 
 CubismUP_3D_NAMESPACE_END
-//
-//  Cubism3D
-//  Copyright (c) 2023 CSE-Lab, ETH Zurich, Switzerland.
-//  Distributed under the terms of the MIT license.
-//
-
 #include "ExternalForcing.h"
 
 CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
@@ -2804,11 +2738,6 @@ void ExternalForcing::operator()(const double dt) {
 }
 
 CubismUP_3D_NAMESPACE_END
-//
-//  Cubism3D
-//  Copyright (c) 2021 CSE-Lab, ETH Zurich, Switzerland.
-//  Distributed under the terms of the MIT license.
-//
 #include "ExternalObstacle.h"
 #include "ObstacleLibrary.h"
 #pragma GCC diagnostic push
@@ -3316,12 +3245,6 @@ void ExternalObstacle::create() {
 }
 
 CubismUP_3D_NAMESPACE_END
-//
-//  Cubism3D
-//  Copyright (c) 2022 CSE-Lab, ETH Zurich, Switzerland.
-//  Distributed under the terms of the MIT license.
-//
-
 #include "Fish.h"
 #include "FishLibrary.h"
 
@@ -3835,14 +3758,6 @@ void Fish::loadRestart(FILE *f) {
 }
 
 CubismUP_3D_NAMESPACE_END
-//
-//  Cubism3D
-//  Copyright (c) 2018 CSE-Lab, ETH Zurich, Switzerland.
-//  Distributed under the terms of the MIT license.
-//
-//  Created by Guido Novati (novatig@ethz.ch) and Wim van Rees.
-//
-
 #include "FishLibrary.h"
 
 CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
@@ -5072,14 +4987,6 @@ void PutNacaOnBlocks::constructInternl(
 }
 
 CubismUP_3D_NAMESPACE_END
-//
-//  Cubism3D
-//  Copyright (c) 2018 CSE-Lab, ETH Zurich, Switzerland.
-//  Distributed under the terms of the MIT license.
-//
-//  Created by Guido Novati (novatig@ethz.ch) and Wim van Rees.
-//
-
 #include "FishShapes.h"
 
 #include <gsl/gsl_bspline.h>
@@ -5452,12 +5359,6 @@ void MidlineShapes::computeWidthsHeights(const std::string &heightName,
 }
 
 CubismUP_3D_NAMESPACE_END
-//
-//  Cubism3D
-//  Copyright (c) 2023 CSE-Lab, ETH Zurich, Switzerland.
-//  Distributed under the terms of the MIT license.
-//
-
 #include "FixMassFlux.h"
 
 CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
@@ -5533,12 +5434,6 @@ void FixMassFlux::operator()(const double dt) {
 }
 
 CubismUP_3D_NAMESPACE_END
-//
-//  Cubism3D
-//  Copyright (c) 2018 CSE-Lab, ETH Zurich, Switzerland.
-//  Distributed under the terms of the MIT license.
-//
-
 #include "FluidSolidForces.h"
 
 CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
@@ -5850,14 +5745,6 @@ void ComputeForces::operator()(const Real dt) {
 }
 
 CubismUP_3D_NAMESPACE_END
-//
-//  Cubism3D
-//  Copyright (c) 2018 CSE-Lab, ETH Zurich, Switzerland.
-//  Distributed under the terms of the MIT license.
-//
-//  Created by Guido Novati (novatig@ethz.ch).
-//
-
 #include "InitialConditions.h"
 #include "ProcessHelpers.h"
 #include "ObstacleVector.h"
@@ -6306,14 +6193,6 @@ void InitialConditions::operator()(const Real dt) {
 }
 
 CubismUP_3D_NAMESPACE_END
-//
-//  Cubism3D
-//  Copyright (c) 2018 CSE-Lab, ETH Zurich, Switzerland.
-//  Distributed under the terms of the MIT license.
-//
-//  Created by Guido Novati (novatig@ethz.ch).
-//
-
 #include "Naca.h"
 
 #include <cmath>
@@ -6515,14 +6394,6 @@ void Naca::update() {
 }
 
 CubismUP_3D_NAMESPACE_END
-//
-//  Cubism3D
-//  Copyright (c) 2018 CSE-Lab, ETH Zurich, Switzerland.
-//  Distributed under the terms of the MIT license.
-//
-//  Created by Guido Novati (novatig@ethz.ch).
-//
-
 #include "Obstacle.h"
 #include "BufferedLogger.h"
 
@@ -7257,14 +7128,6 @@ void Obstacle::_writeDiagForcesToFile() {
 }
 
 CubismUP_3D_NAMESPACE_END
-//
-//  Cubism3D
-//  Copyright (c) 2018 CSE-Lab, ETH Zurich, Switzerland.
-//  Distributed under the terms of the MIT license.
-//
-//  Created by Guido Novati (novatig@ethz.ch) and Wim van Rees.
-//
-
 #include "ObstacleFactory.h"
 #include "ObstacleVector.h"
 #include "FactoryFileLineParser.h"
@@ -7390,12 +7253,6 @@ void ObstacleFactory::addObstacles(const std::string &factoryContent) {
 }
 
 CubismUP_3D_NAMESPACE_END
-//
-//  Cubism3D
-//  Copyright (c) 2018 CSE-Lab, ETH Zurich, Switzerland.
-//  Distributed under the terms of the MIT license.
-//
-
 #include "ObstaclesCreate.h"
 
 CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
@@ -7791,14 +7648,6 @@ void CreateObstacles::operator()(const Real dt) {
 }
 
 CubismUP_3D_NAMESPACE_END
-//
-//  Cubism3D
-//  Copyright (c) 2018 CSE-Lab, ETH Zurich, Switzerland.
-//  Distributed under the terms of the MIT license.
-//
-//  Created by Guido Novati (novatig@ethz.ch).
-//
-
 #include "ObstaclesUpdate.h"
 #include "ObstacleVector.h"
 
@@ -8048,12 +7897,6 @@ void UpdateObstacles::operator()(const Real dt) {
 }
 
 CubismUP_3D_NAMESPACE_END
-//
-//  Cubism3D
-//  Copyright (c) 2018 CSE-Lab, ETH Zurich, Switzerland.
-//  Distributed under the terms of the MIT license.
-//
-
 #include "Penalization.h"
 #include "ObstacleVector.h"
 
@@ -8662,12 +8505,6 @@ void Penalization::operator()(const Real dt) {
 }
 
 CubismUP_3D_NAMESPACE_END
-//
-//  Cubism3D
-//  Copyright (c) 2018 CSE-Lab, ETH Zurich, Switzerland.
-//  Distributed under the terms of the MIT license.
-//
-
 #include "Pipe.h"
 #include "ObstacleLibrary.h"
 
@@ -8770,14 +8607,6 @@ void Pipe::finalize() {
 }
 
 CubismUP_3D_NAMESPACE_END
-//
-//  Cubism3D
-//  Copyright (c) 2018 CSE-Lab, ETH Zurich, Switzerland.
-//  Distributed under the terms of the MIT license.
-//
-//  Written by Ivica Kicic (kicici@ethz.ch).
-//
-
 #include "Plate.h"
 #include "ObstacleLibrary.h"
 
@@ -10188,12 +10017,6 @@ void PressureProjection::operator()(const Real dt) {
 }
 
 CubismUP_3D_NAMESPACE_END
-//
-//  Cubism3D
-//  Copyright (c) 2018 CSE-Lab, ETH Zurich, Switzerland.
-//  Distributed under the terms of the MIT license.
-//
-
 #include "Simulation.h"
 
 #include "InitialConditions.h"
@@ -11307,14 +11130,6 @@ std::vector<Real> SmartNaca::state(const int agentID) {
 }
 
 CubismUP_3D_NAMESPACE_END
-//
-//  Cubism3D
-//  Copyright (c) 2018 CSE-Lab, ETH Zurich, Switzerland.
-//  Distributed under the terms of the MIT license.
-//
-//  Created by Guido Novati (novatig@ethz.ch).
-//
-
 #include "Sphere.h"
 #include "ObstacleLibrary.h"
 #include "ArgumentParser.h"
@@ -11438,12 +11253,6 @@ void Sphere::computeVelocities() {
 }
 
 CubismUP_3D_NAMESPACE_END
-//
-//  Cubism3D
-//  Copyright (c) 2022 CSE-Lab, ETH Zurich, Switzerland.
-//  Distributed under the terms of the MIT license.
-//
-
 #include "StefanFish.h"
 
 CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
@@ -12337,12 +12146,6 @@ StefanFish::getShear(const std::array<Real, 3> pSurf) const {
 };
 
 CubismUP_3D_NAMESPACE_END
-//
-//  Cubism3D
-//  Copyright (c) 2018 CSE-Lab, ETH Zurich, Switzerland.
-//  Distributed under the terms of the MIT license.
-//
-
 #include "Simulation.h"
 #include <iostream>
 int main(int argc, char **argv) {
