@@ -9405,6 +9405,10 @@ public:
   void operator()(Real dt) override;
   std::string getName() { return "PressureProjection"; }
 };
+static struct {
+  SimulationData *sim;
+  ArgumentParser *parser;
+} sim0;
 struct Simulation {
   SimulationData sim;
   ArgumentParser parser;
