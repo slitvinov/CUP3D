@@ -1,11 +1,3 @@
-//
-//  Cubism3D
-//  Copyright (c) 2018 CSE-Lab, ETH Zurich, Switzerland.
-//  Distributed under the terms of the MIT license.
-//
-//  Created by Sid Verma in May 2018.
-//
-
 #ifndef CubismUP_3D_ComputeDissipation_h
 #define CubismUP_3D_ComputeDissipation_h
 

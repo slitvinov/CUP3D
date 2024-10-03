@@ -1,9 +1,3 @@
-//
-//  Cubism3D
-//  Copyright (c) 2021 CSE-Lab, ETH Zurich, Switzerland.
-//  Distributed under the terms of the MIT license.
-//
-
 #ifndef CubismUP_3D_ExternalObstacle_h
 #define CubismUP_3D_ExternalObstacle_h
 

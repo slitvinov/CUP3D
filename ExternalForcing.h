@@ -1,9 +1,3 @@
-//
-//  Cubism3D
-//  Copyright (c) 2023 CSE-Lab, ETH Zurich, Switzerland.
-//  Distributed under the terms of the MIT license.
-//
-
 #pragma once
 
 #include "SimulationData.h"

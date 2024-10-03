@@ -1,11 +1,3 @@
-//
-//  Cubism3D
-//  Copyright (c) 2019 CSE-Lab, ETH Zurich, Switzerland.
-//  Distributed under the terms of the MIT license.
-//
-//  Created by Ivica Kicic (kicici@ethz.ch).
-//
-
 #pragma once
 
 /*

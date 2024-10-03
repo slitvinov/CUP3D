@@ -1,11 +1,3 @@
-//
-//  Cubism3D
-//  Copyright (c) 2018 CSE-Lab, ETH Zurich, Switzerland.
-//  Distributed under the terms of the MIT license.
-//
-//  Created by Wim van Rees on 04/10/14.
-//
-
 #ifndef CubismUP_3D_FactoryFileLineParser_h
 #define CubismUP_3D_FactoryFileLineParser_h
 #include "ArgumentParser.h"
