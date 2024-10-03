@@ -5678,7 +5678,7 @@ struct ScalarElement {
   Real &member(int i) { return s; }
   static constexpr int DIM = 1;
 };
-template <int dim, typename Real = double> struct VectorElement {
+template <int dim> struct VectorElement {
   using RealType = Real;
   static constexpr int DIM = dim;
   Real u[DIM];
@@ -6520,7 +6520,7 @@ using ScalarBlock = GridBlock<CUP_BLOCK_SIZEX, 3, ScalarElement>;
 using ScalarGrid = GridMPI<Grid<ScalarBlock, aligned_block_allocator>>;
 using ScalarLab =
     cubism::BlockLabMPI<BlockLabNeumann3D<ScalarGrid, aligned_block_allocator>>;
-using VectorElement = cubism::VectorElement<3, Real>;
+using VectorElement = cubism::VectorElement<3>;
 using VectorBlock = GridBlock<CUP_BLOCK_SIZEX, 3, VectorElement>;
 using VectorGrid = GridMPI<Grid<VectorBlock, aligned_block_allocator>>;
 using VectorLab =
