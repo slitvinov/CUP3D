@@ -19,44 +19,7 @@ CUBISMFLAGS = \
 -O3 \
 -std=c++17 \
 
-S = \
-AdvectionDiffusion.cpp \
-AdvectionDiffusionImplicit.cpp \
-ArgumentParser.cpp \
-BufferedLogger.cpp \
-CarlingFish.cpp \
-ComputeDissipation.cpp \
-Cylinder.cpp \
-CylinderNozzle.cpp \
-DiffusionSolverAMRKernels.cpp \
-Ellipsoid.cpp \
-ExternalForcing.cpp \
-ExternalObstacle.cpp \
-Fish.cpp \
-FishLibrary.cpp \
-FishShapes.cpp \
-FixMassFlux.cpp \
-FluidSolidForces.cpp \
-InitialConditions.cpp \
-main.cpp \
-Naca.cpp \
-Obstacle.cpp \
-ObstacleFactory.cpp \
-ObstaclesCreate.cpp \
-ObstaclesUpdate.cpp \
-Penalization.cpp \
-Pipe.cpp \
-Plate.cpp \
-PoissonSolverAMR.cpp \
-PoissonSolverAMRKernels.cpp \
-PoissonSolverBase.cpp \
-PressureProjection.cpp \
-Simulation.cpp \
-SimulationData.cpp \
-SmartNaca.cpp \
-Sphere.cpp \
-StefanFish.cpp \
-
+S = main.o
 main: $(S:.cpp=.o)
 	$(MPICXX) -o main $(S:.cpp=.o) $(GSL_LDFLAGS) $(LDFLAGS) -fopenmp
 .cpp.o:
