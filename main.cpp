@@ -7571,7 +7571,6 @@ public:
   };
   std::vector<BlockID> MyBlockIDs;
   std::vector<std::vector<int>> MySegments;
-#if 1
   struct MPI_Obstacle {
     Real d[ScalarBlock::sizeZ * ScalarBlock::sizeY * ScalarBlock::sizeX * 3 +
            (ScalarBlock::sizeZ + 2) * (ScalarBlock::sizeY + 2) *
@@ -7580,7 +7579,6 @@ public:
   };
   MPI_Datatype MPI_BLOCKID;
   MPI_Datatype MPI_OBSTACLE;
-#endif
 };
 } // namespace cubismup3d
 struct Frenet3D {
@@ -7694,15 +7692,6 @@ struct Frenet3D {
         binY[i] *= normfac;
         binZ[i] *= normfac;
       }
-#if 0
-            std::cout << "Frenet3D: "<< i
-            << " rX:" << rX[i] << " rY:" << rY[i] << " rZ:" << rZ[i]
-            << " ksiX:" << ksiX << " ksiY:" << ksiY << " ksiZ:" << ksiZ
-            << " norX:" << norX[i] << " norY:" << norY[i] << " norZ:" << norZ[i]
-            << " binX:" << binX[i] << " binY:" << binY[i] << " binZ:" << binZ[i]
-            << " curv:" << curv[i] << " tors:" << tors[i]
-            << " curv_dt:" << curv_dt[i] << " tors_dt:" << tors_dt[i] << std::endl;
-#endif
     }
   }
 };
@@ -10671,7 +10660,6 @@ namespace cubismup3d {
 using namespace cubism;
 Fish::Fish(SimulationData &s, ArgumentParser &p) : Obstacle(s, p) {
   p.unset_strict_mode();
-#if 1
   int array_of_blocklengths[2] = {4, 1};
   MPI_Aint array_of_displacements[2] = {0, 4 * sizeof(Real)};
   MPI_Datatype array_of_types[2] = {MPI_Real, MPI_LONG};
@@ -10689,15 +10677,12 @@ Fish::Fish(SimulationData &s, ArgumentParser &p) : Obstacle(s, p) {
   MPI_Type_create_struct(2, array_of_blocklengths1, array_of_displacements1,
                          array_of_types1, &MPI_OBSTACLE);
   MPI_Type_commit(&MPI_OBSTACLE);
-#endif
 }
 Fish::~Fish() {
   if (myFish not_eq nullptr)
     delete myFish;
-#if 1
   MPI_Type_free(&MPI_BLOCKID);
   MPI_Type_free(&MPI_OBSTACLE);
-#endif
 }
 void Fish::integrateMidline() {
   myFish->integrateLinearMomentum();
