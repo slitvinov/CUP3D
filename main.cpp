@@ -427,7 +427,7 @@ struct Info {
 };
 
 static void dump(Real time, long nblock, Info *infos, char *path) {
-  long i, j, k, l, x, y, ncell, ncell_total, offset;
+  long i, j, k, l, x, y, z, ncell, ncell_total, offset;
   char xyz_path[FILENAME_MAX], attr_path[FILENAME_MAX], xdmf_path[FILENAME_MAX],
       *xyz_base, *attr_base;
   MPI_File mpi_file;
@@ -445,7 +445,7 @@ static void dump(Real time, long nblock, Info *infos, char *path) {
       attr_base = &attr_path[j + 1];
     }
   }
-  ncell = nblock * _BS_ * _BS_;
+  ncell = nblock * _BS_ * _BS_ * _BS_;
   MPI_Exscan(&ncell, &offset, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
   if (sim.rank == 0)
     offset = 0;
@@ -460,11 +460,10 @@ static void dump(Real time, long nblock, Info *infos, char *path) {
             "      <Time Value=\"%.16e\"/>\n"
             "      <Topology\n"
             "          Dimensions=\"%ld\"\n"
-            "          TopologyType=\"Quadrilateral\"/>\n"
-            "     <Geometry\n"
-            "         GeometryType=\"XY\">\n"
+            "          TopologyType=\"Hexahedron\"/>\n"
+            "     <Geometry>\n"
             "       <DataItem\n"
-            "           Dimensions=\"%ld 2\"\n"
+            "           Dimensions=\"%ld 3\"\n"
             "           Format=\"Binary\">\n"
             "         %s\n"
             "       </DataItem>\n"
@@ -482,11 +481,11 @@ static void dump(Real time, long nblock, Info *infos, char *path) {
             "    </Grid>\n"
             "  </Domain>\n"
             "</Xdmf>\n",
-            time, ncell_total, 4 * ncell_total, xyz_base, ncell_total,
+            time, ncell_total, 8 * ncell_total, xyz_base, ncell_total,
             attr_base);
     fclose(xmf);
   }
-  xyz = (float *)malloc(8 * ncell * sizeof *xyz);
+  xyz = (float *)malloc(8 * 3 * ncell * sizeof *xyz);
   attr = (float *)malloc(3 * ncell * sizeof *attr);
   k = 0;
   l = 0;
@@ -494,31 +493,59 @@ static void dump(Real time, long nblock, Info *infos, char *path) {
     Info *info = &infos[i];
     Real *b = (Real *)info->block;
     j = 0;
-    for (y = 0; y < _BS_; y++)
-      for (x = 0; x < _BS_; x++) {
-        double u0, v0, u1, v1, h;
-        h = sim.h0 / (1 << info->level);
-        u0 = info->origin[0] + h * x;
-        v0 = info->origin[1] + h * y;
-        u1 = u0 + h;
-        v1 = v0 + h;
-        xyz[k++] = u0;
-        xyz[k++] = v0;
-        xyz[k++] = u0;
-        xyz[k++] = v1;
-        xyz[k++] = u1;
-        xyz[k++] = v1;
-        xyz[k++] = u1;
-        xyz[k++] = v0;
-        attr[l++] = b[j++];
-        attr[l++] = b[j++];
-        attr[l++] = 0;
-      }
+    for (z = 0; z < _BS_; z++)
+      for (y = 0; y < _BS_; y++)
+        for (x = 0; x < _BS_; x++) {
+          double u0, v0, w0, u1, v1, w1, h;
+          h = sim.h0 / (1 << info->level);
+          u0 = info->origin[0] + h * x;
+          v0 = info->origin[1] + h * y;
+          w0 = info->origin[2] + h * z;
+          u1 = u0 + h;
+          v1 = v0 + h;
+          w1 = v0 + h;
+          xyz[k++] = u0;
+          xyz[k++] = v0;
+          xyz[k++] = w0;
+	  
+          xyz[k++] = u0;
+          xyz[k++] = v0;
+          xyz[k++] = w1;
+	  
+          xyz[k++] = u0;
+          xyz[k++] = v1;
+          xyz[k++] = w0;
+	  
+          xyz[k++] = u0;
+          xyz[k++] = v1;
+          xyz[k++] = w1;
+
+          xyz[k++] = u1;
+          xyz[k++] = v0;
+          xyz[k++] = w0;
+	  
+          xyz[k++] = u1;
+          xyz[k++] = v0;
+          xyz[k++] = w1;
+	  
+          xyz[k++] = u1;
+          xyz[k++] = v1;
+          xyz[k++] = w0;
+	  
+          xyz[k++] = u1;
+          xyz[k++] = v1;
+          xyz[k++] = w1;
+	  
+          attr[l++] = b[j++];
+          attr[l++] = b[j++];
+          attr[l++] = b[j++];
+        }
   }
   MPI_File_open(MPI_COMM_WORLD, xyz_path, MPI_MODE_CREATE | MPI_MODE_WRONLY,
                 MPI_INFO_NULL, &mpi_file);
-  MPI_File_write_at_all(mpi_file, 8 * offset * sizeof *xyz, xyz,
-                        8 * ncell * sizeof *xyz, MPI_BYTE, MPI_STATUS_IGNORE);
+  MPI_File_write_at_all(mpi_file, 3 * 8 * offset * sizeof *xyz, xyz,
+                        3 * 8 * ncell * sizeof *xyz, MPI_BYTE,
+                        MPI_STATUS_IGNORE);
   MPI_File_close(&mpi_file);
   free(xyz);
   MPI_File_open(MPI_COMM_WORLD, attr_path, MPI_MODE_CREATE | MPI_MODE_WRONLY,
