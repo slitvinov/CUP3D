@@ -7,9 +7,9 @@
 //
 
 #include "Ellipsoid.h"
-#include "extra/ObstacleLibrary.h"
+#include "ObstacleLibrary.h"
 
-#include <Cubism/ArgumentParser.h>
+#include <ArgumentParser.h>
 
 CubismUP_3D_NAMESPACE_BEGIN
 using namespace cubism;

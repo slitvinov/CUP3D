@@ -6,7 +6,7 @@
 
 #pragma once
 
-#include <Cubism/ArgumentParser.h>
+#include <ArgumentParser.h>
 #include "SimulationData.h"
 
 CubismUP_3D_NAMESPACE_BEGIN

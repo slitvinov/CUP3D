@@ -8,7 +8,7 @@
 
 #include "ObstacleFactory.h"
 #include "ObstacleVector.h"
-#include "extra/FactoryFileLineParser.h"
+#include "FactoryFileLineParser.h"
 
 #include "CarlingFish.h"
 #include "Cylinder.h"

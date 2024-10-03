@@ -8,11 +8,11 @@
 
 #pragma once
 
-#include "../SimulationData.h"
-#include "../operators/Operator.h"
+#include "SimulationData.h"
+#include "Operator.h"
 #include "PoissonSolverBase.h"
 #include "PoissonSolverAMRKernels.h"
-#include <Cubism/BlockInfo.h>
+#include "BlockInfo.h"
 #include <vector>
 #include <cassert>
 #include <cstring>

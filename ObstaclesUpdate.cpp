@@ -7,8 +7,8 @@
 //
 
 #include "ObstaclesUpdate.h"
-#include "../Obstacles/ObstacleVector.h"
-#include "../Utils/MatArrayMath.h"
+#include "ObstacleVector.h"
+#include "MatArrayMath.h"
 
 // define this to update obstacles with old (mrag-like) approach of integrating
 // momenta contained in chi before the penalization step:

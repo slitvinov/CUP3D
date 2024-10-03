@@ -6,7 +6,7 @@
 
 #pragma once
 
-#include "../SimulationData.h"
+#include "SimulationData.h"
 #include "Operator.h"
 
 using namespace cubism;

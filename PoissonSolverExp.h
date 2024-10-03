@@ -10,7 +10,7 @@
 
 #include <memory>
 
-#include <Cubism/BlockInfo.h>
+#include <BlockInfo.h>
 #include "../Definitions.h"
 #include "../SimulationData.h"
 #include "PoissonSolverBase.h"

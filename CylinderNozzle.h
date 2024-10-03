@@ -8,7 +8,7 @@
 
 #include "Obstacle.h"
 #include "Cylinder.h"
-#include "extra/Schedulers.h"
+#include "Schedulers.h"
 
 CubismUP_3D_NAMESPACE_BEGIN
 

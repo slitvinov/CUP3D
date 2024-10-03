@@ -9,7 +9,7 @@
 #ifndef CubismUP_3D_Interpolation1D_h
 #define CubismUP_3D_Interpolation1D_h
 
-#include "../../Base.h"
+#include "Base.h"
 
 #include <cstdio>
 

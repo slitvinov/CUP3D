@@ -6,8 +6,8 @@
 
 #pragma once
 
-#include "../ObstacleBlock.h"
-#include "../SimulationData.h"
+#include "ObstacleBlock.h"
+#include "SimulationData.h"
 
 #include <array>
 

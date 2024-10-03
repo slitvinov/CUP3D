@@ -5,7 +5,7 @@
 //
 
 #pragma once
-#include "../SimulationData.h"
+#include "SimulationData.h"
 
 CubismUP_3D_NAMESPACE_BEGIN
 

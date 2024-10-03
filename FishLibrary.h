@@ -6,10 +6,10 @@
 
 #pragma once
 
-#include "../LDefinitions.h"
-#include "../ObstacleBlock.h"
-#include "extra/Frenet.h"
-#include "extra/Schedulers.h"
+#include "LDefinitions.h"
+#include "ObstacleBlock.h"
+#include "Frenet.h"
+#include "Schedulers.h"
 
 #include <cmath>
 

@@ -10,9 +10,9 @@
 
 #include <memory>
 #include "Operator.h"
-#include "../poisson/PoissonSolverBase.h"
-#include "../Obstacles/ObstacleVector.h"
-#include "../poisson/PoissonSolverAMR.h"
+#include "PoissonSolverBase.h"
+#include "ObstacleVector.h"
+#include "PoissonSolverAMR.h"
 
 CubismUP_3D_NAMESPACE_BEGIN
 

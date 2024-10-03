@@ -12,7 +12,7 @@
 #include "FishShapes.h"
 #include "ObstacleVector.h"
 
-#include <Cubism/ArgumentParser.h>
+#include <ArgumentParser.h>
 
 #include <array>
 #include <cmath>

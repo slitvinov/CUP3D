@@ -7,10 +7,10 @@
 #include <unistd.h>
 
 #include "SimulationData.h"
-#include "operators/Operator.h"
-#include "Obstacles/ObstacleVector.h"
-#include <Cubism/ArgumentParser.h>
-#include <Cubism/Profiler.h>
+#include "Operator.h"
+#include "ObstacleVector.h"
+#include "ArgumentParser.h"
+#include "Profiler.h"
 
 CubismUP_3D_NAMESPACE_BEGIN
 using namespace cubism;

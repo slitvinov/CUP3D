@@ -8,9 +8,9 @@
 
 #include "InitialConditions.h"
 #include "ProcessHelpers.h"
-#include "../Obstacles/ObstacleVector.h"
-#include "../poisson/PoissonSolverBase.h"
-#include "../Obstacles/Pipe.h"
+#include "ObstacleVector.h"
+#include "PoissonSolverBase.h"
+#include "Pipe.h"
 #include <random>
 
 class PoissonSolverBase;

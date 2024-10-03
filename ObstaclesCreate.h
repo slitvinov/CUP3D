@@ -7,8 +7,8 @@
 #pragma once
 
 #include "Operator.h"
-#include "../Obstacles/ObstacleVector.h"
-#include "../Utils/MatArrayMath.h"
+#include "ObstacleVector.h"
+#include "MatArrayMath.h"
 
 CubismUP_3D_NAMESPACE_BEGIN
 

@@ -6,26 +6,26 @@
 
 #include "Simulation.h"
 
-#include "operators/InitialConditions.h"
-#include "operators/ObstaclesCreate.h"
-#include "operators/AdvectionDiffusion.h"
-#include "operators/AdvectionDiffusionImplicit.h"
-#include "operators/ExternalForcing.h"
-#include "operators/FixMassFlux.h"
-#include "operators/ObstaclesUpdate.h"
-#include "operators/Penalization.h"
-#include "operators/PressureProjection.h"
-#include "operators/ComputeDissipation.h"
-#include "operators/FluidSolidForces.h"
-#include "operators/ProcessHelpers.h"
-#include "Obstacles/ObstacleVector.h"
-#include "Obstacles/ObstacleFactory.h"
-#include <Cubism/HDF5Dumper.h>
-#include <Cubism/ArgumentParser.h>
+#include "InitialConditions.h"
+#include "ObstaclesCreate.h"
+#include "AdvectionDiffusion.h"
+#include "AdvectionDiffusionImplicit.h"
+#include "ExternalForcing.h"
+#include "FixMassFlux.h"
+#include "ObstaclesUpdate.h"
+#include "Penalization.h"
+#include "PressureProjection.h"
+#include "ComputeDissipation.h"
+#include "FluidSolidForces.h"
+#include "ProcessHelpers.h"
+#include "ObstacleVector.h"
+#include "ObstacleFactory.h"
+#include "HDF5Dumper.h"
+#include "ArgumentParser.h"
 #include <iomanip>
 #include <iostream>
 #include <sstream>
-#include "Utils/BufferedLogger.h"
+#include "BufferedLogger.h"
 
 CubismUP_3D_NAMESPACE_BEGIN
 using namespace cubism;

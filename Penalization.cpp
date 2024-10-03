@@ -5,7 +5,7 @@
 //
 
 #include "Penalization.h"
-#include "../Obstacles/ObstacleVector.h"
+#include "ObstacleVector.h"
 
 CubismUP_3D_NAMESPACE_BEGIN
 using namespace cubism;

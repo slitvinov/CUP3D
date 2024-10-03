@@ -11,15 +11,15 @@
 
 #include "Base.h"
 
-#include "Utils/AlignedAllocator.h"
+#include "AlignedAllocator.h"
 
-#include <Cubism/Grid.h>
-#include <Cubism/GridMPI.h>
-#include <Cubism/BlockInfo.h>
-#include <Cubism/BlockLab.h>
-#include <Cubism/BlockLabMPI.h>
-#include <Cubism/Definitions.h>
-#include <Cubism/AMR_MeshAdaptation.h>
+#include <Grid.h>
+#include <GridMPI.h>
+#include <BlockInfo.h>
+#include <BlockLab.h>
+#include <BlockLabMPI.h>
+#include <Definitions.h>
+#include <AMR_MeshAdaptation.h>
 
 using namespace cubism;
 

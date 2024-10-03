@@ -3,7 +3,7 @@
 #ifdef GPU_POISSON
 #include "PoissonSolverExp.h"
 #endif
-#include "../SimulationData.h"
+#include "SimulationData.h"
 
 namespace cubismup3d {
 

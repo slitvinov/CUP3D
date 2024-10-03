@@ -8,10 +8,10 @@
 
 #include "Operator.h"
 
-#include "../SimulationData.h"
-#include "../operators/Operator.h"
-#include "../poisson/DiffusionSolverAMRKernels.h"
-#include <Cubism/BlockInfo.h>
+#include "SimulationData.h"
+#include "Operator.h"
+#include "DiffusionSolverAMRKernels.h"
+#include <BlockInfo.h>
 #include <vector>
 #include <cassert>
 #include <cstring>

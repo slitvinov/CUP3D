@@ -7,8 +7,8 @@
 #include "Fish.h"
 #include "FishLibrary.h"
 
-#include <Cubism/ArgumentParser.h>
-#include <Cubism/HDF5Dumper.h>
+#include <ArgumentParser.h>
+#include <HDF5Dumper.h>
 
 CubismUP_3D_NAMESPACE_BEGIN
 using namespace cubism;

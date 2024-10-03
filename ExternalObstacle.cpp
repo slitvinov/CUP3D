@@ -4,16 +4,16 @@
 //  Distributed under the terms of the MIT license.
 //
 #include "ExternalObstacle.h"
-#include "extra/ObstacleLibrary.h"
+#include "ObstacleLibrary.h"
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wshadow"
-#include "extra/happly.h"
+#include "happly.h"
 #include <sys/stat.h>
 #include <unistd.h>
 #include <string>
 #include <fstream>
 
-#include <Cubism/ArgumentParser.h>
+#include <ArgumentParser.h>
 
 CubismUP_3D_NAMESPACE_BEGIN
 using namespace cubism;
