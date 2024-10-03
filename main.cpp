@@ -3330,7 +3330,6 @@ public:
   inline unsigned int *getSize() const { return (unsigned int *)m_vSize; }
   inline unsigned int getSize(int dim) const { return m_vSize[dim]; }
 };
-namespace cubism {
 #define memcpy2(a, b, c) memcpy((a), (b), (c))
 constexpr int default_start[3] = {-1, -1, -1};
 constexpr int default_end[3] = {2, 2, 2};
@@ -4509,8 +4508,6 @@ private:
   BlockLab(const BlockLab &) = delete;
   BlockLab &operator=(const BlockLab &) = delete;
 };
-} // namespace cubism
-namespace cubism {
 template <typename MyBlockLab> class BlockLabMPI : public MyBlockLab {
 public:
   using GridType = typename MyBlockLab::GridType;
@@ -4542,8 +4539,6 @@ public:
       MyBlockLab::post_load(info, t, applybc);
   }
 };
-} // namespace cubism
-namespace cubism {
 template <typename TGrid> class LoadBalancer {
 public:
   typedef typename TGrid::Block BlockType;
@@ -4908,8 +4903,6 @@ public:
     grid->FillPos();
   }
 };
-} // namespace cubism
-namespace cubism {
 template <typename TLab> class MeshAdaptation {
 protected:
   typedef typename TLab::GridType TGrid;
@@ -5473,8 +5466,6 @@ protected:
     return Leave;
   }
 };
-} // namespace cubism
-namespace cubism {
 template <typename Lab, typename Kernel, typename TGrid,
           typename TGrid_corr = TGrid>
 void compute(Kernel &&kernel, TGrid *g, TGrid_corr *g_corr = nullptr) {
@@ -5813,7 +5804,7 @@ template <int blocksize, int dim, typename TElement> struct GridBlock {
 };
 template <typename TGrid, int dim,
           template <typename X> class allocator = std::allocator>
-class BlockLabNeumann : public cubism::BlockLab<TGrid, allocator> {
+class BlockLabNeumann : public BlockLab<TGrid, allocator> {
   static constexpr int sizeX = TGrid::BlockType::sizeX;
   static constexpr int sizeY = TGrid::BlockType::sizeY;
   static constexpr int sizeZ = TGrid::BlockType::sizeZ;
@@ -5972,8 +5963,6 @@ public:
     }
   }
 };
-} // namespace cubism
-using namespace cubism;
 #ifndef CUP_BLOCK_SIZEX
 #define CUP_BLOCK_SIZEX 8
 #define CUP_BLOCK_SIZEY 8
@@ -6001,7 +5990,7 @@ extern BCflag cubismBCZ;
 template <typename TGrid,
           template <typename X> class allocator = std::allocator,
           int direction = 0>
-class BlockLabBC : public cubism::BlockLab<TGrid, allocator> {
+class BlockLabBC : public BlockLab<TGrid, allocator> {
   static constexpr int sizeX = TGrid::BlockType::sizeX;
   static constexpr int sizeY = TGrid::BlockType::sizeY;
   static constexpr int sizeZ = TGrid::BlockType::sizeZ;
@@ -6454,9 +6443,9 @@ public:
 };
 template <typename TGrid,
           template <typename X> class allocator = std::allocator>
-class BlockLabNeumann3D : public cubism::BlockLabNeumann<TGrid, 3, allocator> {
+class BlockLabNeumann3D : public BlockLabNeumann<TGrid, 3, allocator> {
 public:
-  using cubismLab = cubism::BlockLabNeumann<TGrid, 3, allocator>;
+  using cubismLab = BlockLabNeumann<TGrid, 3, allocator>;
   virtual bool is_xperiodic() override { return cubismBCX == periodic; }
   virtual bool is_yperiodic() override { return cubismBCY == periodic; }
   virtual bool is_zperiodic() override { return cubismBCZ == periodic; }
@@ -6515,18 +6504,16 @@ struct StreamerVectorZ {
 static constexpr int kBlockAlignment = 64;
 template <typename T>
 using aligned_block_allocator = aligned_allocator<T, kBlockAlignment>;
-using ScalarElement = cubism::ScalarElement;
 using ScalarBlock = GridBlock<CUP_BLOCK_SIZEX, 3, ScalarElement>;
 using ScalarGrid = GridMPI<Grid<ScalarBlock, aligned_block_allocator>>;
 using ScalarLab =
-    cubism::BlockLabMPI<BlockLabNeumann3D<ScalarGrid, aligned_block_allocator>>;
-using VectorElement = cubism::VectorElement;
+    BlockLabMPI<BlockLabNeumann3D<ScalarGrid, aligned_block_allocator>>;
 using VectorBlock = GridBlock<CUP_BLOCK_SIZEX, 3, VectorElement>;
 using VectorGrid = GridMPI<Grid<VectorBlock, aligned_block_allocator>>;
 using VectorLab =
-    cubism::BlockLabMPI<BlockLabBC<VectorGrid, aligned_block_allocator>>;
-using ScalarAMR = cubism::MeshAdaptation<ScalarLab>;
-using VectorAMR = cubism::MeshAdaptation<VectorLab>;
+    BlockLabMPI<BlockLabBC<VectorGrid, aligned_block_allocator>>;
+using ScalarAMR = MeshAdaptation<ScalarLab>;
+using VectorAMR = MeshAdaptation<VectorLab>;
 } // namespace cubismup3d
 namespace cubism {
 class ArgumentParser;
@@ -6815,11 +6802,11 @@ protected:
           }
     }
     using Lab0 =
-        cubism::BlockLabMPI<BlockLabBC<ScalarGrid, aligned_block_allocator, 0>>;
+        BlockLabMPI<BlockLabBC<ScalarGrid, aligned_block_allocator, 0>>;
     using Lab1 =
-        cubism::BlockLabMPI<BlockLabBC<ScalarGrid, aligned_block_allocator, 1>>;
+        BlockLabMPI<BlockLabBC<ScalarGrid, aligned_block_allocator, 1>>;
     using Lab2 =
-        cubism::BlockLabMPI<BlockLabBC<ScalarGrid, aligned_block_allocator, 2>>;
+        BlockLabMPI<BlockLabBC<ScalarGrid, aligned_block_allocator, 2>>;
     if (mydirection == 0)
       compute<Lab0>(KernelLHSDiffusion<Lab0>(sim, dt), sim.pres, sim.lhs);
     if (mydirection == 1)
@@ -8806,7 +8793,7 @@ public:
   ComputeQcriterion(SimulationData &s) : Operator(s) {}
   void operator()(const Real dt) {
     const KernelQcriterion K(sim);
-    cubism::compute<VectorLab>(K, sim.vel);
+    compute<VectorLab>(K, sim.vel);
   }
   std::string getName() { return "Qcriterion"; }
 };
@@ -8915,7 +8902,7 @@ public:
   ComputeDivergence(SimulationData &s) : Operator(s) {}
   void operator()(const Real dt) {
     const KernelDivergence K(sim);
-    cubism::compute<VectorLab>(K, sim.vel, sim.chi);
+    compute<VectorLab>(K, sim.vel, sim.chi);
     Real div_loc = 0.0;
     const std::vector<BlockInfo> &myInfo = sim.tmpVInfo();
 #pragma omp parallel for schedule(static) reduction(+ : div_loc)
@@ -10517,7 +10504,7 @@ void ComputeDissipation::operator()(const Real dt) {
     return;
   Real RDX[20] = {0.0};
   KernelDissipation diss(dt, sim.extents.data(), sim.nu, RDX, sim);
-  cubism::compute<KernelDissipation, VectorGrid, VectorLab, ScalarGrid,
+  compute<KernelDissipation, VectorGrid, VectorLab, ScalarGrid,
                   ScalarLab>(diss, *sim.vel, *sim.pres);
   MPI_Allreduce(MPI_IN_PLACE, RDX, 20, MPI_Real, MPI_SUM, sim.comm);
   size_t loc = sim.velInfo().size();
@@ -12603,7 +12590,7 @@ void ComputeForces::operator()(const Real dt) {
   if (sim.obstacle_vector->nObstacles() == 0)
     return;
   KernelComputeForces K(sim);
-  cubism::compute<KernelComputeForces, VectorGrid, VectorLab, ScalarGrid,
+  compute<KernelComputeForces, VectorGrid, VectorLab, ScalarGrid,
                   ScalarLab>(K, *sim.vel, *sim.chi);
   sim.obstacle_vector->computeForces();
 }
