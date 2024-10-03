@@ -470,7 +470,7 @@ static void dump(Real time, long nblock, Info *infos, char *path) {
             "     </Geometry>\n"
             "       <Attribute\n"
             "           AttributeType=\"Vector\"\n"
-            "           Name=\"vort\"\n"
+            "           Name=\"vel\"\n"
             "           Center=\"Cell\">\n"
             "         <DataItem\n"
             "             Dimensions=\"3 %ld\"\n"
@@ -485,7 +485,7 @@ static void dump(Real time, long nblock, Info *infos, char *path) {
             attr_base);
     fclose(xmf);
   }
-  xyz = (float *)malloc(8 * 3 * ncell * sizeof *xyz);
+  xyz = (float *)malloc(3 * 8 * ncell * sizeof *xyz);
   attr = (float *)malloc(3 * ncell * sizeof *attr);
   k = 0;
   l = 0;
@@ -514,11 +514,11 @@ static void dump(Real time, long nblock, Info *infos, char *path) {
 	  
           xyz[k++] = u0;
           xyz[k++] = v1;
-          xyz[k++] = w0;
+          xyz[k++] = w1;
 	  
           xyz[k++] = u0;
           xyz[k++] = v1;
-          xyz[k++] = w1;
+          xyz[k++] = w0;
 
           xyz[k++] = u1;
           xyz[k++] = v0;
@@ -530,11 +530,11 @@ static void dump(Real time, long nblock, Info *infos, char *path) {
 	  
           xyz[k++] = u1;
           xyz[k++] = v1;
-          xyz[k++] = w0;
+          xyz[k++] = w1;
 	  
           xyz[k++] = u1;
           xyz[k++] = v1;
-          xyz[k++] = w1;
+          xyz[k++] = w0;
 	  
           attr[l++] = b[j++];
           attr[l++] = b[j++];
