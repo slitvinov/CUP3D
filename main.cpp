@@ -419,7 +419,6 @@ struct BlockInfo {
     return Znei[1 + i][1 + j][1 + k];
   }
 };
-namespace cubism {
 template <typename BlockType,
           typename ElementType = typename BlockType::ElementType>
 struct BlockCase {
@@ -668,8 +667,6 @@ public:
     }
   }
 };
-} // namespace cubism
-namespace cubism {
 struct BlockGroup {
   int i_min[3];
   int i_max[3];
@@ -950,7 +947,6 @@ public:
   virtual int get_world_size() const { return 1; }
   virtual void UpdateBoundary(bool clean = false) {}
 };
-} // namespace cubism
 namespace cubism {
 struct StencilInfo {
   int sx;
@@ -6533,15 +6529,15 @@ static constexpr int kBlockAlignment = 64;
 template <typename T>
 using aligned_block_allocator = aligned_allocator<T, kBlockAlignment>;
 using ScalarElement = cubism::ScalarElement<Real>;
-using ScalarBlock = cubism::GridBlock<CUP_BLOCK_SIZEX, 3, ScalarElement>;
+using ScalarBlock = GridBlock<CUP_BLOCK_SIZEX, 3, ScalarElement>;
 using ScalarGrid =
-    cubism::GridMPI<cubism::Grid<ScalarBlock, aligned_block_allocator>>;
+    GridMPI<Grid<ScalarBlock, aligned_block_allocator>>;
 using ScalarLab =
     cubism::BlockLabMPI<BlockLabNeumann3D<ScalarGrid, aligned_block_allocator>>;
 using VectorElement = cubism::VectorElement<3, Real>;
-using VectorBlock = cubism::GridBlock<CUP_BLOCK_SIZEX, 3, VectorElement>;
+using VectorBlock = GridBlock<CUP_BLOCK_SIZEX, 3, VectorElement>;
 using VectorGrid =
-    cubism::GridMPI<cubism::Grid<VectorBlock, aligned_block_allocator>>;
+    GridMPI<Grid<VectorBlock, aligned_block_allocator>>;
 using VectorLab =
     cubism::BlockLabMPI<BlockLabBC<VectorGrid, aligned_block_allocator>>;
 using ScalarAMR = cubism::MeshAdaptation<ScalarLab>;
