@@ -7230,7 +7230,6 @@ public:
   inline bool exist(const std::string &key) const { return check(key); }
 };
 } // namespace cubism
-#define CubismUP_3D_utils_BufferedLogger_h
 namespace cubismup3d {
 struct BufferedLoggerImpl;
 class BufferedLogger {
@@ -7247,7 +7246,6 @@ public:
 };
 extern BufferedLogger logger;
 } // namespace cubismup3d
-#define CubismUP_3D_ObstacleBlock_h
 #define SURFDH 1
 namespace cubismup3d {
 struct surface_data {
@@ -7757,7 +7755,6 @@ struct Frenet3D {
     }
   }
 };
-#define CubismUP_3D_Interpolation1D_h
 namespace cubismup3d {
 class Interpolation1D {
 public:
@@ -7833,7 +7830,6 @@ public:
   }
 };
 } // namespace cubismup3d
-#define CubismUP_3D_Schedulers_h
 namespace cubismup3d {
 namespace Schedulers {
 template <int Npoints> struct ParameterScheduler {
@@ -8344,7 +8340,6 @@ struct PutNacaOnBlocks : public PutFishOnBlocks {
                    const std::vector<VolumeSegment_OBB *> &) const override;
 };
 } // namespace cubismup3d
-#define CubismUP_3D_FishShapes_h
 namespace cubismup3d {
 namespace MidlineShapes {
 void integrateBSpline(const Real *const xc, const Real *const yc, const int n,
@@ -8363,7 +8358,6 @@ void computeWidthsHeights(const std::string &heightName,
                           Real *height, Real *width, int nM, int mpirank);
 } // namespace MidlineShapes
 } // namespace cubismup3d
-#define CubismUP_3D_ComputeDissipation_h
 namespace cubismup3d {
 class ComputeDissipation : public Operator {
 public:
@@ -8372,7 +8366,6 @@ public:
   std::string getName() { return "Dissipation"; }
 };
 } // namespace cubismup3d
-#define CubismUP_3D_ObstacleLibrary_h
 namespace cubismup3d {
 template <typename Derived> struct FillBlocksBase {
   using CHIMAT =
@@ -8604,7 +8597,6 @@ public:
   std::string getName() { return "ComputeForces"; }
 };
 } // namespace cubismup3d
-#define CubismUP_3D_InitialConditions_h
 namespace cubismup3d {
 class InitialConditions : public Operator {
 public:
@@ -9017,7 +9009,6 @@ protected:
 };
 std::shared_ptr<PoissonSolverBase> makePoissonSolver(SimulationData &s);
 } // namespace cubismup3d
-#define CubismUP_3D_Pipe_h
 namespace cubismup3d {
 class Pipe : public Obstacle {
   const Real radius;
@@ -9037,7 +9028,6 @@ public:
   void computeVelocities() override;
 };
 } // namespace cubismup3d
-#define CubismUP_3D_ObstacleFactory_h
 namespace cubism {
 class ArgumentParser;
 }
@@ -9051,7 +9041,6 @@ public:
   void addObstacles(const std::string &factoryContent);
 };
 } // namespace cubismup3d
-#define CubismUP_3D_FactoryFileLineParser_h
 namespace cubismup3d {
 class FactoryFileLineParser : public cubism::ArgumentParser {
 protected:
@@ -9293,7 +9282,6 @@ public:
   std::string getName() { return "CreateObstacles"; }
 };
 } // namespace cubismup3d
-#define CubismUP_3D_ObstaclesUpdate_h
 namespace cubismup3d {
 class UpdateObstacles : public Operator {
 public:
@@ -9302,7 +9290,6 @@ public:
   std::string getName() { return "UpdateObstacles Vel"; }
 };
 } // namespace cubismup3d
-#define CubismUP_3D_Penalization_h
 namespace cubismup3d {
 class Penalization : public Operator {
 public:
