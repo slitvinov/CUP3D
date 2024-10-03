@@ -994,7 +994,6 @@ struct StencilInfo {
     return !(not0 || not1 || not2 || not3);
   }
 };
-namespace cubism {
 template <typename Real>
 inline void pack(const Real *const srcbase, Real *const dst,
                  const unsigned int gptfloats, int *selected_components,
@@ -1066,9 +1065,6 @@ inline void unpack_subregion(
         }
   }
 }
-} // namespace cubism
-namespace cubism {} // namespace cubism
-namespace cubism {
 template <typename T> class GrowingVector {
   size_t pos;
   size_t s;
@@ -2422,8 +2418,6 @@ public:
     }
   }
 };
-} // namespace cubism
-namespace cubism {
 template <typename TFluxCorrection>
 class FluxCorrectionMPI : public TFluxCorrection {
 public:
@@ -2826,8 +2820,6 @@ public:
       MPI_Waitall(send_requests.size(), &send_requests[0], MPI_STATUSES_IGNORE);
   }
 };
-} // namespace cubism
-namespace cubism {
 template <typename TGrid> class GridMPI : public TGrid {
 public:
   typedef typename TGrid::Real Real;
@@ -3249,7 +3241,6 @@ public:
   MPI_Comm getWorldComm() const { return worldcomm; }
   virtual int get_world_size() const override { return world_size; }
 };
-} // namespace cubism
 namespace cubism {
 template <class DataType, template <typename T> class allocator>
 class Matrix3D {
@@ -5491,7 +5482,7 @@ template <typename Lab, typename Kernel, typename TGrid,
 void compute(Kernel &&kernel, TGrid *g, TGrid_corr *g_corr = nullptr) {
   if (g_corr != nullptr)
     g_corr->Corrector.prepare(*g_corr);
-  cubism::SynchronizerMPI_AMR<typename TGrid::Real, TGrid> &Synch =
+  SynchronizerMPI_AMR<typename TGrid::Real, TGrid> &Synch =
       *(g->sync(kernel.stencil));
   std::vector<BlockInfo *> *inner = &Synch.avail_inner();
   std::vector<BlockInfo *> *halo_next;
