@@ -1,4 +1,4 @@
-#pragma once
+
 
 // https://github.com/open-mpi/ompi/issues/5157#issuecomment-388495496
 #define OMPI_SKIP_MPICXX 1 // silence annoying openmpi warnings

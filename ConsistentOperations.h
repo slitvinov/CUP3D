@@ -1,4 +1,4 @@
-#pragma once
+
 
 // Functions suggested in "Numerical symmetry-preserving techniques for
 // low-dissipation shock-capturing schemes" equation (19) for summation that

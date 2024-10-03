@@ -1,4 +1,4 @@
-#pragma once
+
 
 /* A header-only implementation of the .ply file format.
  * https://github.com/nmwsharp/happly

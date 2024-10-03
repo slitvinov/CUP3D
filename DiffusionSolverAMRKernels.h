@@ -1,4 +1,4 @@
-#pragma once
+
 namespace cubismup3d {
 namespace diffusion_kernels {
 

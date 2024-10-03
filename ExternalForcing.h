@@ -1,4 +1,4 @@
-#pragma once
+
 CubismUP_3D_NAMESPACE_BEGIN
 
     class ExternalForcing : public Operator {

@@ -1,4 +1,4 @@
-#pragma once
+
 namespace cubismup3d {
 
 class ComputeLHS : public Operator {

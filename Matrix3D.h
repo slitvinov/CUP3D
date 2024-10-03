@@ -1,4 +1,4 @@
-#pragma once
+
 
 #ifndef CUBISM_ALIGNMENT
 #define CUBISM_ALIGNMENT 32

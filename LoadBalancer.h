@@ -1,4 +1,4 @@
-#pragma once
+
 namespace cubism {
 
 /** Takes care of load-balancing of Blocks.

@@ -1,4 +1,4 @@
-#pragma once
+
 class SpRowInfo {
 public:
   const int rank_;

@@ -1,4 +1,4 @@
-#pragma once
+
 namespace cubism {
 #define memcpy2(a, b, c) memcpy((a), (b), (c))
 

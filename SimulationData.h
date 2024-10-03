@@ -1,4 +1,4 @@
-#pragma once
+
 namespace cubism {
 class Profiler;
 class ArgumentParser;
