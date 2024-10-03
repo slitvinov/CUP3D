@@ -7230,7 +7230,6 @@ public:
   inline bool exist(const std::string &key) const { return check(key); }
 };
 } // namespace cubism
-#ifndef CubismUP_3D_utils_BufferedLogger_h
 #define CubismUP_3D_utils_BufferedLogger_h
 namespace cubismup3d {
 struct BufferedLoggerImpl;
@@ -7248,7 +7247,6 @@ public:
 };
 extern BufferedLogger logger;
 } // namespace cubismup3d
-#endif
 #ifndef CubismUP_3D_ObstacleBlock_h
 #define CubismUP_3D_ObstacleBlock_h
 #define SURFDH 1
