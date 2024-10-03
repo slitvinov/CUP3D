@@ -2880,10 +2880,6 @@ public:
     for (long long n = n_start; n < n_start + my_blocks; n++)
       Zs[n - n_start] = n;
     initialize_blocks(Zs, levels);
-    if (myrank == 0) {
-      std::cout << "Total blocks = " << total_blocks << ", each rank gets "
-                << my_blocks << std::endl;
-    }
     MPI_Barrier(worldcomm);
   }
   virtual ~GridMPI() override {
@@ -17218,11 +17214,6 @@ void Simulation::setupOperators() {
   sim.pipeline.push_back(std::make_shared<PressureProjection>(sim));
   sim.pipeline.push_back(std::make_shared<ComputeForces>(sim));
   sim.pipeline.push_back(std::make_shared<ComputeDissipation>(sim));
-  if (sim.rank == 0) {
-    printf("[CUP3D] Operator ordering:\n");
-    for (size_t c = 0; c < sim.pipeline.size(); c++)
-      printf("\t - %s\n", sim.pipeline[c]->getName().c_str());
-  }
 }
 void Simulation::simulate() {
   for (;;) {
@@ -17272,7 +17263,7 @@ Real Simulation::calcMaxTimestep() {
   if (sim.DLM > 0)
     sim.lambda = sim.DLM / sim.dt;
   if (sim.rank == 0)
-    printf("[CUP3D] step: %d, time: %f\n", sim.step, sim.time);
+    printf("main.cpp: step: %d, time: %f\n", sim.step, sim.time);
   if (sim.step > sim.step_2nd_start) {
     const Real a = dt_old;
     const Real b = sim.dt;
