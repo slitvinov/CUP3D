@@ -6988,9 +6988,6 @@ public:
       alpha = temporary[0] / (temporary[1] + eps);
       r0r_prev = temporary[0];
       norm = std::sqrt(norm);
-      if (verbose)
-        std::cout << "[Diffusion solver, direction: " << mydirection
-                  << " ]: initial error norm:" << norm << "\n";
     }
     const Real init_norm = norm;
     int k;
@@ -14899,11 +14896,6 @@ void Obstacle::update() {
     ypr[0] *= rad2deg;
     ypr[1] *= rad2deg;
     ypr[2] *= rad2deg;
-    printf("pos:[%+.2f %+.2f %+.2f], u:[%+.2f %+.2f %+.2f], omega:[%+.2f %+.2f "
-           "%+.2f], yaw: %+.1f, pitch: %+.1f, roll: %+.1f \n",
-           absPos[0], absPos[1], absPos[2], transVel[0], transVel[1],
-           transVel[2], angVel[0], angVel[1], angVel[2], ypr[0], ypr[1],
-           ypr[2]);
   }
 #ifndef NDEBUG
   const Real q_length =
@@ -16623,8 +16615,6 @@ void PoissonSolverAMR::solve() {
     alpha = temporary[0] / (temporary[1] + eps);
     r0r_prev = temporary[0];
     norm = std::sqrt(temporary[2]);
-    if (verbose)
-      std::cout << "[Poisson solver]: initial error norm:" << norm << "\n";
   }
   const Real init_norm = norm;
   int k;
@@ -17527,15 +17517,8 @@ Real Simulation::calcMaxTimestep() {
   }
   if (sim.DLM > 0)
     sim.lambda = sim.DLM / sim.dt;
-  if (sim.rank == 0) {
-    printf("==================================================================="
-           "====\n");
-    printf("[CUP3D] step: %d, time: %f, dt: %.2e, uinf: {%f %f %f}, maxU:%f, "
-           "minH:%f, CFL:%.2e, lambda:%.2e, collision?:%d, blocks:%zu\n",
-           sim.step, sim.time, sim.dt, sim.uinf[0], sim.uinf[1], sim.uinf[2],
-           sim.uMax_measured, hMin, CFL, sim.lambda, sim.bCollision,
-           sim.velInfo().size());
-  }
+  if (sim.rank == 0)
+    printf("[CUP3D] step: %d, time: %f\n", sim.step, sim.time);
   if (sim.step > sim.step_2nd_start) {
     const Real a = dt_old;
     const Real b = sim.dt;
