@@ -12446,33 +12446,19 @@ void MidlineShapes::computeWidthsHeights(const std::string &heightName,
   }
   {
     if (heightName.compare("largefin") == 0) {
-      if (!mpirank)
-        cout << "Building object's height according to 'largefin' profile."
-             << endl;
       Real xh[8] = {0, 0, .2 * L, .4 * L, .6 * L, .8 * L, L, L};
       Real yh[8] = {0,        .055 * L, .18 * L,  .2 * L,
                     .064 * L, .002 * L, .325 * L, 0};
       integrateBSpline(xh, yh, 8, L, rS, height, nM);
     } else if (heightName.compare("tunaclone") == 0) {
-      if (!mpirank)
-        cout << "Building object's height according to 'tunaclone' profile."
-             << endl;
       Real xh[9] = {0, 0, 0.2 * L, .4 * L, .6 * L, .9 * L, .96 * L, L, L};
       Real yh[9] = {0, .05 * L, .14 * L, .15 * L, .11 * L,
                     0, .1 * L,  .2 * L,  0};
       integrateBSpline(xh, yh, 9, L, rS, height, nM);
     } else if (heightName.compare(0, 4, "naca") == 0) {
       Real t_naca = std::stoi(heightName.substr(5), nullptr, 10) * 0.01;
-      if (!mpirank)
-        cout << "Building object's height according to naca profile with adim. "
-                "thickness param set to "
-             << t_naca << " ." << endl;
       naca_width(t_naca, L, rS, height, nM);
     } else if (heightName.compare("danio") == 0) {
-      if (!mpirank)
-        cout << "Building object's height according to Danio (zebrafish) "
-                "profile from Maertens2017 (JFM)"
-             << endl;
       danio_height(L, rS, height, nM);
     } else if (heightName.compare("stefan") == 0) {
       if (!mpirank)
@@ -12483,9 +12469,6 @@ void MidlineShapes::computeWidthsHeights(const std::string &heightName,
         cout << "Building object's height according to Larval profile" << endl;
       larval_height(L, rS, height, nM);
     } else {
-      if (!mpirank)
-        cout << "Building object's height according to baseline profile."
-             << endl;
       Real xh[8] = {0, 0, .2 * L, .4 * L, .6 * L, .8 * L, L, L};
       Real yh[8] = {0,        .055 * L,  .068 * L, .076 * L,
                     .064 * L, .0072 * L, .11 * L,  0};
@@ -12494,51 +12477,24 @@ void MidlineShapes::computeWidthsHeights(const std::string &heightName,
   }
   {
     if (widthName.compare("fatter") == 0) {
-      if (!mpirank)
-        cout << "Building object's width according to 'fatter' profile."
-             << endl;
       Real xw[6] = {0, 0, L / 3., 2 * L / 3., L, L};
       Real yw[6] = {0, 8.9e-2 * L, 7.0e-2 * L, 3.0e-2 * L, 2.0e-2 * L, 0};
       integrateBSpline(xw, yw, 6, L, rS, width, nM);
     } else if (widthName.compare(0, 4, "naca") == 0) {
       Real t_naca = std::stoi(widthName.substr(5), nullptr, 10) * 0.01;
-      if (!mpirank)
-        cout << "Building object's width according to naca profile with adim. "
-                "thickness param set to "
-             << t_naca << " ." << endl;
       naca_width(t_naca, L, rS, width, nM);
     } else if (widthName.compare("danio") == 0) {
-      if (!mpirank)
-        cout << "Building object's width according to Danio (zebrafish) "
-                "profile from Maertens2017 (JFM)"
-             << endl;
       danio_width(L, rS, width, nM);
     } else if (widthName.compare("stefan") == 0) {
-      if (!mpirank)
-        cout << "Building object's width according to Stefan profile" << endl;
       stefan_width(L, rS, width, nM);
     } else if (widthName.compare("larval") == 0) {
-      if (!mpirank)
-        cout << "Building object's width according to Larval profile" << endl;
       larval_width(L, rS, width, nM);
     } else {
-      if (!mpirank)
-        cout << "Building object's width according to baseline profile."
-             << endl;
       Real xw[6] = {0, 0, L / 3., 2 * L / 3., L, L};
       Real yw[6] = {0, 8.9e-2 * L, 1.7e-2 * L, 1.6e-2 * L, 1.3e-2 * L, 0};
       integrateBSpline(xw, yw, 6, L, rS, width, nM);
     }
   }
-#if 0
-  if(!mpirank) {
-    FILE * heightWidth;
-    heightWidth = fopen("widthHeight.dat","w");
-    for(int i=0; i<nM; ++i)
-      fprintf(heightWidth,"%.8e \t %.8e \t %.8e \n", rS[i], width[i], height[i]);
-    fclose(heightWidth);
-  }
-#endif
 }
 } // namespace cubismup3d
 namespace cubismup3d {
