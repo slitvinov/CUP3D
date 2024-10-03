@@ -10479,7 +10479,6 @@ std::shared_ptr<Simulation>
 createSimulation(MPI_Comm comm, const std::vector<std::string> &argv);
 } // namespace cubismup3d
 namespace cubismup3d {
-#define DISABLE_OPTIMIZATIONS
 struct KernelAdvectDiffuse {
   KernelAdvectDiffuse(const SimulationData &s, const Real a_coef)
       : sim(s), coef(a_coef) {}
@@ -10750,7 +10749,6 @@ void AdvectionDiffusion::operator()(const Real dt) {
 }
 } // namespace cubismup3d
 namespace cubismup3d {
-#define DISABLE_OPTIMIZATIONS
 struct KernelDiffusionRHS {
   SimulationData &sim;
   StencilInfo stencil = StencilInfo(-1, -1, -1, 2, 2, 2, false, {0, 1, 2});
