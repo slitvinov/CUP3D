@@ -6638,7 +6638,7 @@ struct SimulationData {
   int freqDiagnostics = 0;
   int saveFreq = 0;
   Real dumpTime = 0;
-  Real nextSaveTime = 0;
+  Real nextDumpTime = 0;
   std::string path4serialization = "./";
   bool dumpP;
   bool dumpChi;
@@ -15290,16 +15290,12 @@ Real Simulation::calcMaxTimestep() {
   return sim.dt;
 }
 bool Simulation::advance(const Real dt) {
-  const bool bDumpFreq =
-      (sim.saveFreq > 0 && (sim.step + 1) % sim.saveFreq == 0);
-  const bool bDumpTime =
-      (sim.dumpTime > 0 && (sim.time + dt) > sim.nextSaveTime);
-  if (bDumpTime) {
+  if (sim.dumpTime > 0 && sim.time >= sim.nextDumpTime) {
+    sim.nextDumpTime += sim.dumpTime;
     char path[FILENAME_MAX];
     snprintf(path, sizeof path, "vel.%08d", sim.step);
     fprintf(stderr, "main.cpp: %s\n", path);
     dump(sim.time, sim.vel->m_vInfo.size(), sim.vel->m_vInfo.data(), path);
-    sim.nextSaveTime += sim.dumpTime;
   }
   if (sim.step % 20 == 0 || sim.step < 10)
     adaptMesh();
