@@ -43,7 +43,6 @@
 #include <vector>
 typedef double Real;
 static const MPI_Datatype MPI_Real = MPI_DOUBLE;
-namespace cubismup3d {
 template <typename T, int kAlignment> class aligned_allocator {
 public:
   typedef T *pointer;
@@ -87,8 +86,6 @@ public:
     return 1;
   }
 };
-} // namespace cubismup3d
-namespace cubism {
 class SpaceFillingCurve {
 protected:
   int BX;
@@ -314,7 +311,7 @@ public:
     return retval;
   }
 };
-} // namespace cubism
+
 namespace cubism {
 enum State : signed char { Leave = 0, Refine = 1, Compress = -1 };
 struct TreePosition {
