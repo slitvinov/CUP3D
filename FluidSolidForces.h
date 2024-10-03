@@ -1,8 +1,4 @@
 #pragma once
-
-#include "Operator.h"
-#include "ObstacleVector.h"
-
 CubismUP_3D_NAMESPACE_BEGIN
 
     class ComputeForces : public Operator {

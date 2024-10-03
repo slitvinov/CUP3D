@@ -1,6 +1,8 @@
 #include <algorithm>
 #include <array>
 #include <cassert>
+#include <cctype>
+#include <climits>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -25,6 +27,7 @@
 #include <sstream>
 #include <string>
 #include <sys/stat.h>
+#include <type_traits>
 #include <unistd.h>
 #include <unordered_map>
 #include <utility>
@@ -53,7 +56,12 @@
 #include "AdvectionDiffusionImplicit.h"
 #include "ArgumentParser.h"
 #include "BufferedLogger.h"
+#include "Obstacle.h"
+#include "Fish.h"
 #include "CarlingFish.h"
+#include "ObstacleBlock.h"
+#include "Frenet.h"
+#include "Schedulers.h"
 #include "FishLibrary.h"
 #include "FishShapes.h"
 #include "ComputeDissipation.h"
@@ -64,16 +72,14 @@
 #include "ExternalForcing.h"
 #include "ExternalObstacle.h"
 #include "happly.h"
-#include "Fish.h"
 #include "FixMassFlux.h"
+#include "ObstacleVector.h"
 #include "FluidSolidForces.h"
 #include "InitialConditions.h"
 #include "ProcessHelpers.h"
-#include "ObstacleVector.h"
 #include "PoissonSolverBase.h"
 #include "Pipe.h"
 #include "Naca.h"
-#include "Obstacle.h"
 #include "ObstacleFactory.h"
 #include "FactoryFileLineParser.h"
 #include "SmartNaca.h"

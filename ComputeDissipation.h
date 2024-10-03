@@ -1,8 +1,6 @@
 #ifndef CubismUP_3D_ComputeDissipation_h
 #define CubismUP_3D_ComputeDissipation_h
 
-#include "Operator.h"
-
 CubismUP_3D_NAMESPACE_BEGIN
 
     class ComputeDissipation : public Operator {

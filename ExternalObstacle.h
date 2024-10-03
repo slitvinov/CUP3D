@@ -1,8 +1,5 @@
 #ifndef CubismUP_3D_ExternalObstacle_h
 #define CubismUP_3D_ExternalObstacle_h
-
-#include "Obstacle.h"
-
 CubismUP_3D_NAMESPACE_BEGIN
 
     template <typename T>

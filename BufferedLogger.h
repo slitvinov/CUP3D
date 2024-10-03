@@ -1,7 +1,6 @@
 #ifndef CubismUP_3D_utils_BufferedLogger_h
 #define CubismUP_3D_utils_BufferedLogger_h
 
-#include <sstream>
 
 namespace cubismup3d {
 

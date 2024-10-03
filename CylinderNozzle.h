@@ -1,9 +1,4 @@
 #pragma once
-
-#include "Obstacle.h"
-#include "Cylinder.h"
-#include "Schedulers.h"
-
 CubismUP_3D_NAMESPACE_BEGIN
 
     class CylinderNozzle : public Cylinder {

@@ -1,7 +1,4 @@
 #pragma once
-
-#include "Operator.h"
-
 CubismUP_3D_NAMESPACE_BEGIN
 
     class FixMassFlux : public Operator {

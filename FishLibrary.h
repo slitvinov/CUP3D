@@ -1,12 +1,4 @@
 #pragma once
-
-#include "LDefinitions.h"
-#include "ObstacleBlock.h"
-#include "Frenet.h"
-#include "Schedulers.h"
-
-#include <cmath>
-
 CubismUP_3D_NAMESPACE_BEGIN
 
     class FishMidlineData {

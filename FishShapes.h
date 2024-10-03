@@ -1,9 +1,6 @@
 #ifndef CubismUP_3D_FishShapes_h
 #define CubismUP_3D_FishShapes_h
 
-#include "LDefinitions.h"
-
-#include <cmath>
 
 CubismUP_3D_NAMESPACE_BEGIN
 

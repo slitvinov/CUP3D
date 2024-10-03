@@ -1,8 +1,4 @@
 #pragma once
-
-#include "SimulationData.h"
-#include "Operator.h"
-
 CubismUP_3D_NAMESPACE_BEGIN
 
     class ExternalForcing : public Operator {
