@@ -15401,6 +15401,8 @@ void SimulationData::_preprocessArguments() {
   };
   const Real maxbpd = std::max({NFE[0], NFE[1], NFE[2]});
   maxextent = std::max({extents[0], extents[1], extents[2]});
+  sim.h0 = maxextent / std::max({bpdx, bpdy, bpdz}) / _BS_;
+
   if (extents[0] <= 0 || extents[1] <= 0 || extents[2] <= 0) {
     extents[0] = (NFE[0] / maxbpd) * maxextent;
     extents[1] = (NFE[1] / maxbpd) * maxextent;
@@ -15980,15 +15982,15 @@ StefanFish::getShear(const std::array<Real, 3> pSurf) const {
   return std::array<Real, 3>{{myF[0], myF[1], myF[2]}};
 };
 int main(int argc, char **argv) {
-  int provided, rank;
-  const auto SECURITY = MPI_THREAD_FUNNELED;
-  MPI_Init_thread(&argc, &argv, SECURITY, &provided);
-  MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+  int provided;
+  MPI_Init_thread(&argc, &argv, MPI_THREAD_FUNNELED, &provided);
+  MPI_Comm_rank(MPI_COMM_WORLD, &sim.rank);
+  MPI_Comm_size(MPI_COMM_WORLD, &sim.size);
   MPI_Barrier(MPI_COMM_WORLD);
-  Simulation *sim = new Simulation(argc, argv, MPI_COMM_WORLD);
-  sim->init();
-  sim->simulate();
-  delete sim;
+  Simulation *sim0 = new Simulation(argc, argv, MPI_COMM_WORLD);
+  sim0->init();
+  sim0->simulate();
+  delete sim0;
   MPI_Barrier(MPI_COMM_WORLD);
   MPI_Finalize();
 }
