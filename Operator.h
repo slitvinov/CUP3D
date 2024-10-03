@@ -1,12 +1,4 @@
-//
-//  Cubism3D
-//  Copyright (c) 2018 CSE-Lab, ETH Zurich, Switzerland.
-//  Distributed under the terms of the MIT license.
-//
-
 #pragma once
-#include "SimulationData.h"
-
 CubismUP_3D_NAMESPACE_BEGIN
 
     class Operator {

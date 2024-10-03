@@ -16,6 +16,7 @@
 #include <random>
 #include <gsl/gsl_linalg.h>
 
+#include "SimulationData.h"
 #include "Operator.h"
 #include "AdvectionDiffusion.h"
 #include "AdvectionDiffusionImplicit.h"
@@ -56,7 +57,6 @@
 #include "Penalization.h"
 #include "PoissonSolverAMR.h"
 #include "PoissonSolverAMRKernels.h"
-#include "SimulationData.h"
 #include "PressureProjection.h"
 #include "Simulation.h"
 #include "Profiler.h"
