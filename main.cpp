@@ -7247,7 +7247,6 @@ public:
 };
 extern BufferedLogger logger;
 } // namespace cubismup3d
-#ifndef CubismUP_3D_ObstacleBlock_h
 #define CubismUP_3D_ObstacleBlock_h
 #define SURFDH 1
 namespace cubismup3d {
@@ -7484,7 +7483,6 @@ struct ObstacleBlock {
   }
 };
 } // namespace cubismup3d
-#endif
 namespace cubism {
 class ArgumentParser;
 }
