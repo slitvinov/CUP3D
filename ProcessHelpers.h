@@ -1,8 +1,4 @@
 #pragma once
-
-#include "SimulationData.h"
-#include "Operator.h"
-
 using namespace cubism;
 
 CubismUP_3D_NAMESPACE_BEGIN

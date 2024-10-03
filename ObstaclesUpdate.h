@@ -1,8 +1,6 @@
 #ifndef CubismUP_3D_ObstaclesUpdate_h
 #define CubismUP_3D_ObstaclesUpdate_h
 
-#include "Operator.h"
-
 CubismUP_3D_NAMESPACE_BEGIN
 
     class UpdateObstacles : public Operator {
