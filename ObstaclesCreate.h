@@ -1,9 +1,5 @@
 #pragma once
 
-#include "Operator.h"
-#include "ObstacleVector.h"
-#include "MatArrayMath.h"
-
 CubismUP_3D_NAMESPACE_BEGIN
 
     class CreateObstacles : public Operator {

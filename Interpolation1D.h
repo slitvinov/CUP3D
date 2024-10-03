@@ -1,9 +1,5 @@
 #ifndef CubismUP_3D_Interpolation1D_h
 #define CubismUP_3D_Interpolation1D_h
-
-#include "Base.h"
-
-
 CubismUP_3D_NAMESPACE_BEGIN
 
     class Interpolation1D {

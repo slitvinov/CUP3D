@@ -1,7 +1,4 @@
 #pragma once
-
-#include "BlockInfo.h"
-
 namespace cubism {
 
 /** Takes care of load-balancing of Blocks.

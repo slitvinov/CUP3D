@@ -1,6 +1,5 @@
 #ifndef CubismUP_3D_Schedulers_h
 #define CubismUP_3D_Schedulers_h
-#include "Interpolation1D.h"
 
 CubismUP_3D_NAMESPACE_BEGIN
 

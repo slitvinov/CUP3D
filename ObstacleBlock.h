@@ -1,8 +1,6 @@
 #ifndef CubismUP_3D_ObstacleBlock_h
 #define CubismUP_3D_ObstacleBlock_h
 
-#include "LDefinitions.h"
-
 // to shift the surface where I compute gradchi for surface integrals
 // if set to value greater than 0, it shifts surface by that many mesh sizes
 #define SURFDH 1

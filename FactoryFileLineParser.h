@@ -1,6 +1,5 @@
 #ifndef CubismUP_3D_FactoryFileLineParser_h
 #define CubismUP_3D_FactoryFileLineParser_h
-#include "ArgumentParser.h"
 
 CubismUP_3D_NAMESPACE_BEGIN
 

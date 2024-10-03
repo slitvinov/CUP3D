@@ -1,9 +1,5 @@
 #pragma once
 
-#include "Operator.h"
-#include "PoissonSolverBase.h"
-#include "ObstacleVector.h"
-#include "PoissonSolverAMR.h"
 
 CubismUP_3D_NAMESPACE_BEGIN
 

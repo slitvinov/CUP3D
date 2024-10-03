@@ -1,11 +1,5 @@
 #pragma once
 
-#if DIMENSION == 3
-#include "SpaceFillingCurve.h"
-#else
-#include "SpaceFillingCurve2D.h"
-#endif
-
 namespace cubism {
 
 template <typename Grid>

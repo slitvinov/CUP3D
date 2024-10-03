@@ -1,5 +1,4 @@
 #pragma once
-#include "Obstacle.h"
 CubismUP_3D_NAMESPACE_BEGIN
 
     class ObstacleVector : public Obstacle {

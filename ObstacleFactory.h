@@ -1,8 +1,5 @@
 #ifndef CubismUP_3D_ObstacleFactory_h
 #define CubismUP_3D_ObstacleFactory_h
-
-#include "ObstacleVector.h"
-
 namespace cubism {
 class ArgumentParser;
 }

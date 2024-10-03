@@ -1,8 +1,5 @@
 #ifndef CubismUP_3D_InitialConditions_h
 #define CubismUP_3D_InitialConditions_h
-
-#include "Operator.h"
-
 CubismUP_3D_NAMESPACE_BEGIN
 
     class InitialConditions : public Operator {
