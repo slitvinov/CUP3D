@@ -6470,36 +6470,6 @@ public:
     }
   }
 };
-struct StreamerVectorX {
-  static constexpr int NCHANNELS = 1;
-  template <typename TBlock, typename T>
-  static void operate(TBlock &b, const int ix, const int iy, const int iz,
-                      T output[NCHANNELS]) {
-    output[0] = b(ix, iy, iz).u[0];
-  }
-  static std::string prefix() { return std::string(""); }
-  static const char *getAttributeName() { return "VectorX"; }
-};
-struct StreamerVectorY {
-  static constexpr int NCHANNELS = 1;
-  template <typename TBlock, typename T>
-  static void operate(TBlock &b, const int ix, const int iy, const int iz,
-                      T output[NCHANNELS]) {
-    output[0] = b(ix, iy, iz).u[1];
-  }
-  static std::string prefix() { return std::string(""); }
-  static const char *getAttributeName() { return "VectorY"; }
-};
-struct StreamerVectorZ {
-  static constexpr int NCHANNELS = 1;
-  template <typename TBlock, typename T>
-  static void operate(TBlock &b, const int ix, const int iy, const int iz,
-                      T output[NCHANNELS]) {
-    output[0] = b(ix, iy, iz).u[2];
-  }
-  static std::string prefix() { return std::string(""); }
-  static const char *getAttributeName() { return "VectorZ"; }
-};
 static constexpr int kBlockAlignment = 64;
 template <typename T>
 using aligned_block_allocator = aligned_allocator<T, kBlockAlignment>;
