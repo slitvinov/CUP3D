@@ -70,7 +70,6 @@
 #include "ExternalObstacle.h"
 #include "happly.h"
 #include "Fish.h"
-#include "HDF5Dumper.h"
 #include "FixMassFlux.h"
 #include "FluidSolidForces.h"
 #include "InitialConditions.h"
