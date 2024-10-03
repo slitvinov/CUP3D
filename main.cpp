@@ -9009,25 +9009,6 @@ protected:
 };
 std::shared_ptr<PoissonSolverBase> makePoissonSolver(SimulationData &s);
 } // namespace cubismup3d
-namespace cubismup3d {
-class Pipe : public Obstacle {
-  const Real radius;
-  const Real halflength;
-  std::string section = "circular";
-  Real umax = 0;
-  Real vmax = 0;
-  Real wmax = 0;
-  Real tmax = 1;
-  bool accel = false;
-
-public:
-  Pipe(SimulationData &s, cubism::ArgumentParser &p);
-  void _init(void);
-  void create() override;
-  void finalize() override;
-  void computeVelocities() override;
-};
-} // namespace cubismup3d
 namespace cubism {
 class ArgumentParser;
 }
@@ -12980,83 +12961,6 @@ public:
         }
   }
 };
-class KernelIC_channel {
-  const int dir;
-  const std::array<Real, 3> ext;
-  const Real uMax, H = ext[dir], FAC = 4 * uMax / H / H;
-
-public:
-  KernelIC_channel(const std::array<Real, 3> &extents, const Real U,
-                   const int _dir)
-      : dir(_dir), ext{extents}, uMax(U) {}
-  void operator()(const BlockInfo &info, VectorBlock &block) const {
-    for (int iz = 0; iz < VectorBlock::sizeZ; ++iz)
-      for (int iy = 0; iy < VectorBlock::sizeY; ++iy)
-        for (int ix = 0; ix < VectorBlock::sizeX; ++ix) {
-          block(ix, iy, iz).clear();
-          Real p[3];
-          info.pos(p, ix, iy, iz);
-          block(ix, iy, iz).u[0] = FAC * p[dir] * (H - p[dir]);
-        }
-  }
-};
-class KernelIC_channelrandom {
-  const int dir;
-  const std::array<Real, 3> ext;
-  const Real uMax, H = ext[dir], FAC = 4 * uMax / H / H;
-
-public:
-  KernelIC_channelrandom(const std::array<Real, 3> &extents, const Real U,
-                         const int _dir)
-      : dir(_dir), ext{extents}, uMax(U) {}
-  void operator()(const BlockInfo &info, VectorBlock &block) const {
-    std::random_device seed;
-    std::mt19937 gen(seed());
-    std::normal_distribution<Real> dist(0.0, 0.01);
-    for (int iz = 0; iz < VectorBlock::sizeZ; ++iz)
-      for (int iy = 0; iy < VectorBlock::sizeY; ++iy)
-        for (int ix = 0; ix < VectorBlock::sizeX; ++ix) {
-          block(ix, iy, iz).clear();
-          block(ix, iy, iz).u[0] = dist(gen);
-        }
-    for (int iz = 0; iz < ScalarBlock::sizeZ; ++iz)
-      for (int iy = 0; iy < ScalarBlock::sizeY; ++iy)
-        for (int ix = 0; ix < ScalarBlock::sizeX; ++ix) {
-          Real p[3];
-          info.pos(p, ix, iy, iz);
-          const Real U = FAC * p[dir] * (H - p[dir]);
-          block(ix, iy, iz).u[0] = U * (block(ix, iy, iz).u[0] + 1.0);
-        }
-  }
-};
-class KernelIC_pipe {
-  const Real mu, R, uMax, G = (16 * mu * uMax) / (3 * R * R);
-  Real position[3] = {0, 0, 0};
-
-public:
-  KernelIC_pipe(const Real _mu, const Real _R, const int _uMax, Real _pos[])
-      : mu(_mu), R(_R), uMax(_uMax) {
-    for (size_t i = 0; i < 3; i++)
-      position[i] = _pos[i];
-  }
-  void operator()(const BlockInfo &info, VectorBlock &block) const {
-    for (int iz = 0; iz < VectorBlock::sizeZ; ++iz)
-      for (int iy = 0; iy < VectorBlock::sizeY; ++iy)
-        for (int ix = 0; ix < VectorBlock::sizeX; ++ix) {
-          Real p[3];
-          info.pos(p, ix, iy, iz);
-          const Real dxSq = (position[0] - p[0]) * (position[0] - p[0]);
-          const Real dySq = (position[1] - p[1]) * (position[1] - p[1]);
-          const Real rSq = dxSq + dySq;
-          block(ix, iy, iz).clear();
-          const Real RSq = R * R;
-          if (rSq < RSq)
-            block(ix, iy, iz).u[2] = G / (4 * mu) * (RSq - rSq);
-          else
-            block(ix, iy, iz).u[2] = 0.0;
-        }
-  }
-};
 class IC_vorticity {
 public:
   SimulationData &sim;
@@ -13241,47 +13145,6 @@ void InitialConditions::operator()(const Real dt) {
   }
   if (sim.initCond == "taylorGreen") {
     run(KernelIC_taylorGreen(sim.extents, sim.uMax_forced));
-  }
-  if (sim.initCond == "channelRandom") {
-    if (sim.BCx_flag == wall) {
-      printf("ERROR: channel flow must be periodic or dirichlet in x.\n");
-      fflush(0);
-      abort();
-    }
-    const bool channelY = sim.BCy_flag == wall, channelZ = sim.BCz_flag == wall;
-    if ((channelY && channelZ) or (!channelY && !channelZ)) {
-      printf("ERROR: wrong channel flow BC in y or z.\n");
-      fflush(0);
-      abort();
-    }
-    const int dir = channelY ? 1 : 2;
-    run(KernelIC_channelrandom(sim.extents, sim.uMax_forced, dir));
-  }
-  if (sim.initCond == "channel") {
-    if (sim.BCx_flag == wall) {
-      printf("ERROR: channel flow must be periodic or dirichlet in x.\n");
-      fflush(0);
-      abort();
-    }
-    const bool channelY = sim.BCy_flag == wall, channelZ = sim.BCz_flag == wall;
-    if ((channelY && channelZ) or (!channelY && !channelZ)) {
-      printf("ERROR: wrong channel flow BC in y or z.\n");
-      fflush(0);
-      abort();
-    }
-    const int dir = channelY ? 1 : 2;
-    run(KernelIC_channel(sim.extents, sim.uMax_forced, dir));
-  }
-  if (sim.initCond == "pipe") {
-    if (sim.BCz_flag != periodic) {
-      printf("ERROR: pipe flow must be periodic in z.\n");
-      fflush(0);
-      abort();
-    }
-    const auto &obstacles = sim.obstacle_vector->getObstacleVector();
-    Pipe *pipe = dynamic_cast<Pipe *>(obstacles[0].get());
-    run(KernelIC_pipe(sim.nu, pipe->length / 2.0, sim.uMax_forced,
-                      pipe->position));
   }
   if (sim.initCond == "vorticity") {
     IC_vorticity ic_vorticity(sim);
@@ -15012,85 +14875,6 @@ void Penalization::operator()(const Real dt) {
   kernelFinalizePenalizationForce(sim);
 }
 } // namespace cubismup3d
-namespace cubismup3d {
-using namespace cubism;
-namespace PipeObstacle {
-struct FillBlocks : FillBlocksBase<FillBlocks> {
-  const Real radius, halflength, h, safety = (8 + SURFDH) * h;
-  const Real position[3];
-  const Real box[3][2] = {
-      {(Real)position[0] - (std::sqrt(2) / 2 * radius) + safety,
-       (Real)position[0] + (std::sqrt(2) / 2 * radius) - safety},
-      {(Real)position[1] - (std::sqrt(2) / 2 * radius) + safety,
-       (Real)position[1] + (std::sqrt(2) / 2 * radius) - safety},
-      {(Real)position[2] - halflength - safety,
-       (Real)position[2] + halflength + safety}};
-  FillBlocks(const Real r, const Real halfl, const Real _h, const Real p[3])
-      : radius(r), halflength(halfl), h(_h), position{p[0], p[1], p[2]} {}
-  inline bool isTouching(const BlockInfo &info, const ScalarBlock &b) const {
-    Real MINP[3], MAXP[3];
-    info.pos(MINP, 0, 0, 0);
-    info.pos(MAXP, ScalarBlock::sizeX - 1, ScalarBlock::sizeY - 1,
-             ScalarBlock::sizeZ - 1);
-    const Real intersect[3][2] = {
-        {std::max(MINP[0], box[0][0]), std::min(MAXP[0], box[0][1])},
-        {std::max(MINP[1], box[1][0]), std::min(MAXP[1], box[1][1])},
-        {std::max(MINP[2], box[2][0]), std::min(MAXP[2], box[2][1])}};
-    return not(intersect[0][1] - intersect[0][0] > 0 &&
-               intersect[1][1] - intersect[1][0] > 0 &&
-               intersect[2][1] - intersect[2][0] > 0);
-  }
-  inline Real signedDistance(const Real xo, const Real yo,
-                             const Real zo) const {
-    const Real x = xo - position[0], y = yo - position[1], z = zo - position[2];
-    const Real planeDist = radius - std::sqrt(x * x + y * y);
-    const Real vertiDist = halflength - std::fabs(z);
-    return -std::min(planeDist, vertiDist);
-  }
-};
-} // namespace PipeObstacle
-Pipe::Pipe(SimulationData &s, ArgumentParser &p)
-    : Obstacle(s, p), radius(.5 * length),
-      halflength(p("-halflength").asDouble(.5 * sim.extents[2])) {
-  section = p("-section").asString("circular");
-  accel = p("-accel").asBool(false);
-  if (accel) {
-    if (not bForcedInSimFrame[0]) {
-      printf("Warning: Pipe was not set to be forced in x-dir, yet the accel "
-             "pattern is active.\n");
-    }
-    umax = -p("-xvel").asDouble(0.0);
-    vmax = -p("-yvel").asDouble(0.0);
-    wmax = -p("-zvel").asDouble(0.0);
-    tmax = p("-T").asDouble(1.0);
-  }
-  _init();
-}
-void Pipe::_init(void) {
-  bBlockRotation[0] = true;
-  bBlockRotation[1] = true;
-  bBlockRotation[2] = true;
-}
-void Pipe::create() {
-  const Real h = sim.hmin;
-  const PipeObstacle::FillBlocks kernel(radius, halflength, h, position);
-  create_base<PipeObstacle::FillBlocks>(kernel);
-}
-void Pipe::computeVelocities() {
-  if (accel) {
-    if (sim.time < tmax)
-      transVel_imposed[0] = umax * sim.time / tmax;
-    else {
-      transVel_imposed[0] = umax;
-      transVel_imposed[1] = vmax;
-      transVel_imposed[2] = wmax;
-    }
-  }
-  Obstacle::computeVelocities();
-}
-void Pipe::finalize() {}
-} // namespace cubismup3d
-namespace cubismup3d {
 using namespace cubism;
 static void _normalize(Real *const x, Real *const y, Real *const z) {
   const Real norm = std::sqrt(*x * *x + *y * *y + *z * *z);
@@ -15112,7 +14896,6 @@ static void _normalized_cross(const Real ax, const Real ay, const Real az,
   *cx = inv * x;
   *cy = inv * y;
   *cz = inv * z;
-}
 }
 namespace cubismup3d {
 void PoissonSolverAMR::solve() {
