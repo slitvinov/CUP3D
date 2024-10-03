@@ -24,15 +24,13 @@ def plot(path):
     xyz = np.memmap(xyz_path, np.dtype("f4"), "r", order="C")
     xyz = np.reshape(xyz, (-1, 8, 3))
     xyz = xyz[:, 0, :]
-
     attr = np.memmap(attr_path, np.dtype("f4"), "r", order="C")
-    attr = np.reshape(attr, (-1, 3))
 
     xx = []
     yy = []
     zz = []
-    for (x, y, z), (vx, vy, vz) in zip(xyz, attr):
-        if abs(vx) or abs(vy) or abs(vz):
+    for (x, y, z), chi in zip(xyz, attr):
+        if chi > 0:
             xx.append(x)
             yy.append(y)
             zz.append(z)
@@ -41,6 +39,6 @@ def plot(path):
 
 plt.axis("equal")
 plt.axis((0, 1, 0, 1))
-points, = plt.plot([], [], 'o', alpha=0.001)
+points, = plt.plot([], [], 'o', alpha=0.1)
 anim = matplotlib.animation.FuncAnimation(plt.gcf(), plot, sys.argv[1:])
 anim.save("post.mp4")
