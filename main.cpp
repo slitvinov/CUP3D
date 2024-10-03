@@ -9458,7 +9458,6 @@ struct Simulation {
   const std::vector<std::shared_ptr<Obstacle>> &getShapes() const;
   Real calcMaxTimestep();
   bool advance(Real dt);
-  void insertOperator(std::shared_ptr<Operator> op);
 };
 struct KernelAdvectDiffuse {
   KernelAdvectDiffuse(const SimulationData &s, const Real a_coef)
@@ -15328,9 +15327,6 @@ bool Simulation::advance(const Real dt) {
     return true;
   }
   return false;
-}
-void Simulation::insertOperator(std::shared_ptr<Operator> op) {
-  sim.pipeline.push_back(std::move(op));
 }
 BCflag cubismBCX;
 BCflag cubismBCY;
