@@ -9458,7 +9458,6 @@ struct Simulation {
   const std::vector<std::shared_ptr<Obstacle>> &getShapes() const;
   Real calcMaxTimestep();
   bool advance(Real dt);
-  void computeVorticity();
   void insertOperator(std::shared_ptr<Operator> op);
 };
 struct KernelAdvectDiffuse {
@@ -15183,7 +15182,8 @@ void Simulation::initialGridRefinement() {
   }
 }
 void Simulation::adaptMesh() {
-  computeVorticity();
+  ComputeVorticity findOmega(sim);
+  findOmega(0);
   compute<ScalarLab>(GradChiOnTmp(sim), sim.chi);
   sim.tmpV_amr->Tag();
   sim.lhs_amr->TagLike(sim.tmpVInfo());
@@ -15328,10 +15328,6 @@ bool Simulation::advance(const Real dt) {
     return true;
   }
   return false;
-}
-void Simulation::computeVorticity() {
-  ComputeVorticity findOmega(sim);
-  findOmega(0);
 }
 void Simulation::insertOperator(std::shared_ptr<Operator> op) {
   sim.pipeline.push_back(std::move(op));
