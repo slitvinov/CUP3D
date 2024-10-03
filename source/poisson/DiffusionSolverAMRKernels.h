@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../Definitions.h"
+#include "../LDefinitions.h"
 
 namespace cubismup3d {
 namespace diffusion_kernels {
