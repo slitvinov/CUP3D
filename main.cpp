@@ -7113,10 +7113,6 @@ public:
       norm = std::sqrt(norm);
       serious_breakdown = r0r * r0r < 1e-16 * norm_1 * norm_2;
       if (serious_breakdown) {
-        if (verbose)
-          std::cout << "  [Diffusion solver, direction: " << mydirection
-                    << " ]: Restart at iteration: " << k << " norm: " << norm
-                    << std::endl;
 #pragma omp parallel for
         for (size_t i = 0; i < N; i++)
           r0[i] = r[i];
@@ -7149,15 +7145,8 @@ public:
           x_opt[i] = x[i];
       }
       if (norm < max_error || norm / (init_norm + eps) < max_rel_error) {
-        if (verbose)
-          std::cout << "  [Diffusion solver, direction: " << mydirection
-                    << " ]: Converged after " << k << " iterations.\n";
         break;
       }
-    }
-    if (verbose) {
-      std::cout << " Error norm (relative) = " << min_norm << "/" << max_error
-                << std::endl;
     }
     Real *xsol = useXopt ? x_opt.data() : x.data();
 #pragma omp parallel for
