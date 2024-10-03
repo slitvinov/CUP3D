@@ -1188,8 +1188,7 @@ inline void unpack_subregion(
   }
 }
 } // namespace cubism
-namespace cubism {
-} // namespace cubism
+namespace cubism {} // namespace cubism
 namespace cubism {
 template <typename T> class GrowingVector {
   size_t pos;
@@ -4275,8 +4274,7 @@ protected:
       }
     }
   }
-  void
-  CoarseFineInterpolation(const BlockInfo &info) {
+  void CoarseFineInterpolation(const BlockInfo &info) {
     const int nX = BlockType::sizeX;
     const int nY = BlockType::sizeY;
     const int nZ = BlockType::sizeZ;
