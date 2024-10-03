@@ -503,19 +503,19 @@ static void dump(Real time, long nblock, Info *infos, char *path) {
           w0 = info->origin[2] + h * z;
           u1 = u0 + h;
           v1 = v0 + h;
-          w1 = v0 + h;
+          w1 = w0 + h;
           xyz[k++] = u0;
           xyz[k++] = v0;
           xyz[k++] = w0;
-	  
+
           xyz[k++] = u0;
           xyz[k++] = v0;
           xyz[k++] = w1;
-	  
+
           xyz[k++] = u0;
           xyz[k++] = v1;
           xyz[k++] = w1;
-	  
+
           xyz[k++] = u0;
           xyz[k++] = v1;
           xyz[k++] = w0;
@@ -523,19 +523,19 @@ static void dump(Real time, long nblock, Info *infos, char *path) {
           xyz[k++] = u1;
           xyz[k++] = v0;
           xyz[k++] = w0;
-	  
+
           xyz[k++] = u1;
           xyz[k++] = v0;
           xyz[k++] = w1;
-	  
+
           xyz[k++] = u1;
           xyz[k++] = v1;
           xyz[k++] = w1;
-	  
+
           xyz[k++] = u1;
           xyz[k++] = v1;
           xyz[k++] = w0;
-	  
+
           attr[l++] = b[j++];
           attr[l++] = b[j++];
           attr[l++] = b[j++];
