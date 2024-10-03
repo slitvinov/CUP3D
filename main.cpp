@@ -11,6 +11,8 @@
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <mpi.h>
+#include <omp.h>
 #include <random>
 #include <random>
 #include <sstream>

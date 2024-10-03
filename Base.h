@@ -12,9 +12,6 @@
  * Macros and definition used by other header files.
  */
 
-#include <mpi.h>
-#include <omp.h>
-
 #ifndef CubismUP_3D_NAMESPACE_BEGIN
 #define CubismUP_3D_NAMESPACE_BEGIN namespace cubismup3d {
 #endif
