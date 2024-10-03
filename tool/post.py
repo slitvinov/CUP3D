@@ -6,46 +6,41 @@ import xml.etree.ElementTree
 import matplotlib.pyplot as plt
 import matplotlib.animation
 
+
+def norm(path):
+    path = re.sub("^[ \t\n]*", "", path)
+    path = re.sub("[ \t\n]*$", "", path)
+    return path
+
+
 def plot(path):
     x = xml.etree.ElementTree.parse(path)
     root = x.getroot()
-    bin_data = root.find('.//DataItem[@Format="Binary"]')
-    bin_path = bin_data.text
-    bin_path = re.sub("^[ \t\n]*", "", bin_path)
-    bin_path = re.sub("[ \t\n]*$", "", bin_path)
-    bin_data = re.sub("^.*:", "", bin_path)
-    bin_path = re.sub(":[^:]*$", "", bin_path)
+    xyz, attr = root.findall('.//DataItem[@Format="Binary"]')
     dirname = os.path.dirname(path)
-    bin_path = os.path.join(dirname, bin_path)
-    xx = [ ]
-    yy = [ ]
-    zz = [ ]
-    with h5py.File(bin_path) as f:
-        offset = 0
-        for grid in root.findall('.//Grid[@GridType="Uniform"]'):
-            topology = grid.find('./Topology')
-            geometry = grid.find('./Geometry[@GeometryType="ORIGIN_DXDYDZ"]')
-            dorg, dspa = geometry.findall("./DataItem")
-            ddim = topology.get("Dimensions")
-            ox, oy, oz = [float(e) for e in dorg.text.split()]
-            sx, sy, sz = [float(e) for e in dspa.text.split()]
-            nx, ny, nz = [int(e) for e in ddim.split()]
-            size = (nx - 1) * (ny - 1) * (nz - 1)
-            data = f[bin_data][offset:offset + size]
-            data = data.reshape((nx - 1, ny - 1, nz - 1))
-            ix, iy, iz = np.where(data > 0)
-            x = (ix + 1 / 2) * sx + ox
-            y = (iy + 1 / 2) * sy + oy
-            z = (iz + 1 / 2) * sz + oz
+    xyz_path = os.path.join(dirname, norm(xyz.text))
+    attr_path = os.path.join(dirname, norm(attr.text))
+
+    xyz = np.memmap(xyz_path, np.dtype("f4"), "r", order="C")
+    xyz = np.reshape(xyz, (-1, 8, 3))
+    xyz = xyz[:, 0, :]
+
+    attr = np.memmap(attr_path, np.dtype("f4"), "r", order="C")
+    attr = np.reshape(attr, (-1, 3))
+
+    xx = []
+    yy = []
+    zz = []
+    for (x, y, z), (vx, vy, vz) in zip(xyz, attr):
+        if abs(vx) or abs(vy) or abs(vz):
             xx.append(x)
             yy.append(y)
             zz.append(z)
-            offset += size
-    points.set_data(np.concatenate(zz), np.concatenate(yy))
+    points.set_data(xx, yy)
 
-plt.axis((0, 1, 0, 1))
-plt.xticks([], [])
+
 plt.axis("equal")
-points, = plt.plot([], [], 'o', alpha=0.1)
+plt.axis((0, 1, 0, 1))
+points, = plt.plot([], [], 'o', alpha=0.001)
 anim = matplotlib.animation.FuncAnimation(plt.gcf(), plot, sys.argv[1:])
-anim.save("plot.mp4")
+anim.save("post.mp4")
