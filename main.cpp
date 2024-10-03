@@ -15294,8 +15294,13 @@ bool Simulation::advance(const Real dt) {
       (sim.saveFreq > 0 && (sim.step + 1) % sim.saveFreq == 0);
   const bool bDumpTime =
       (sim.dumpTime > 0 && (sim.time + dt) > sim.nextSaveTime);
-  if (bDumpTime)
+  if (bDumpTime) {
+    char path[FILENAME_MAX];
+    snprintf(path, sizeof path, "vel.%08d", sim.step);
+    fprintf(stderr, "main.cpp: %s\n", path);
+    dump(sim.time, sim.vel->m_vInfo.size(), sim.vel->m_vInfo.data(), path);
     sim.nextSaveTime += sim.dumpTime;
+  }
   if (sim.step % 20 == 0 || sim.step < 10)
     adaptMesh();
   for (size_t c = 0; c < sim.pipeline.size(); c++) {
