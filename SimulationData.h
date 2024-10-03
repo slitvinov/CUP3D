@@ -1,17 +1,4 @@
-//
-//  CubismUP_3D
-//  Copyright (c) 2022 CSE-Lab, ETH Zurich, Switzerland.
-//  Distributed under the terms of the MIT license.
-//
-
 #pragma once
-
-#include "LDefinitions.h"
-#include <array>
-#include <vector>
-#include <random>
-#include <memory>
-
 namespace cubism {
 class Profiler;
 class ArgumentParser;
