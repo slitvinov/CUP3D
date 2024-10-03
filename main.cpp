@@ -7343,7 +7343,6 @@ public:
   void mute() { bVerbose = false; }
   void loud() { bVerbose = true; }
   void save_options(const std::string &path = ".");
-  void print_args();
 };
 class ArgumentParser : public CommandlineParser {
   typedef std::map<std::string, Value> ArgMap;
@@ -7370,10 +7369,6 @@ public:
   void readFile(const std::string &filepath);
   Value &operator()(std::string key);
   inline bool exist(const std::string &key) const { return check(key); }
-  void write_runtime_environment() const;
-  void read_runtime_environment();
-  Value &parseRuntime(std::string key);
-  void print_args(void);
 };
 } // namespace cubism
 #ifndef CubismUP_3D_utils_BufferedLogger_h
@@ -10959,15 +10954,6 @@ void CommandlineParser::save_options(const std::string &path) {
   fprintf(f, "%s\n", options.data());
   fclose(f);
 }
-void CommandlineParser::print_args() {
-  for (std::map<std::string, Value>::iterator it = mapArguments.begin();
-       it != mapArguments.end(); it++) {
-    std::cout.width(50);
-    std::cout.fill('.');
-    std::cout << std::left << it->first;
-    std::cout << ": " << it->second.asString() << std::endl;
-  }
-}
 void ArgumentParser::_ignoreComments(std::istream &stream,
                                      const char commentChar) {
   stream >> std::ws;
@@ -11027,61 +11013,7 @@ Value &ArgumentParser::operator()(std::string key) {
     from_code[key] = &retval;
   return retval;
 }
-void ArgumentParser::write_runtime_environment() const {
-  time_t rawtime;
-  std::time(&rawtime);
-  struct tm *timeinfo = std::localtime(&rawtime);
-  char buf[256];
-  std::strftime(buf, 256, "%A, %h %d %Y, %r", timeinfo);
-  std::ofstream runtime("runtime_environment.conf");
-  runtime << commentStart << " RUNTIME ENVIRONMENT SETTINGS" << std::endl;
-  runtime << commentStart << " ============================" << std::endl;
-  runtime << commentStart << " " << buf << std::endl;
-  runtime << commentStart
-          << " Use this file to set runtime parameter interactively."
-          << std::endl;
-  runtime << commentStart
-          << " The parameter are read every \"refreshperiod\" steps."
-          << std::endl;
-  runtime << commentStart
-          << " When editing this file, you may use comments and string "
-             "concatenation."
-          << std::endl;
-  runtime << commentStart
-          << " The simulation can be terminated without killing it by setting "
-             "\"exit\" to true."
-          << std::endl;
-  runtime << commentStart
-          << " (This will write a serialized restart state. Set \"exitsave\" "
-             "to false if not desired.)"
-          << std::endl;
-  runtime << commentStart << std::endl;
-  runtime << commentStart
-          << " !!! WARNING !!! EDITING THIS FILE CAN POTENTIALLY CRASH YOUR "
-             "SIMULATION !!! WARNING !!!"
-          << std::endl;
-  for (typename std::map<std::string, Value>::const_iterator it =
-           mapArguments.begin();
-       it != mapArguments.end(); ++it)
-    runtime << it->first << '\t' << it->second << std::endl;
-}
-void ArgumentParser::read_runtime_environment() {
-  mapRuntime.clear();
-  std::ifstream runtime("runtime_environment.conf");
-  if (runtime.good())
-    _parseFile(runtime, mapRuntime);
-  runtime.close();
-}
-Value &ArgumentParser::parseRuntime(std::string key) {
-  _normalizeKey(key);
-  if (!_existKey(key, mapRuntime)) {
-    printf("ERROR: Runtime parsing for key %s NOT FOUND!! Check your "
-           "runtime_environment.conf file\n",
-           key.data());
-    abort();
-  }
-  return mapRuntime[key];
-}
+} // namespace cubism
 namespace cubismup3d {
 BufferedLogger logger;
 struct BufferedLoggerImpl {
