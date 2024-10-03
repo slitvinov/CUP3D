@@ -9531,14 +9531,11 @@ public:
   void operator()(Real dt) override;
   std::string getName() { return "PressureProjection"; }
 };
-} // namespace cubism
+} // namespace cubismup3d
 namespace cubismup3d {
-class Simulation {
-protected:
-  cubism::ArgumentParser parser;
-
-public:
+struct Simulation {
   SimulationData sim;
+  cubism::ArgumentParser parser;
   void initialGridRefinement();
   void setupOperators();
   void setupGrid();
@@ -15328,8 +15325,7 @@ void PressureProjection::operator()(const Real dt) {
 namespace cubismup3d {
 using namespace cubism;
 Simulation::Simulation(int argc, char **argv, MPI_Comm comm)
-    : parser(argc, argv), sim(comm, parser) {
-}
+    : parser(argc, argv), sim(comm, parser) {}
 void Simulation::init() {
   sim._preprocessArguments();
   setupGrid();
