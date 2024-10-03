@@ -42,71 +42,16594 @@
 #include <utility>
 #include <vector>
 
-#include "Base.h"
-#include "AlignedAllocator.h"
-#include "SpaceFillingCurve.h"
-#include "BlockInfo.h"
-#include "FluxCorrection.h"
-#include "Grid.h"
-#include "StencilInfo.h"
-#include "PUPkernelsMPI.h"
-#include "ConsistentOperations.h"
-#include "AMR_SynchronizerMPI.h"
-#include "FluxCorrectionMPI.h"
-#include "GridMPI.h"
-#include "Matrix3D.h"
-#include "BlockLab.h"
-#include "BlockLabMPI.h"
-#include "LoadBalancer.h"
-#include "AMR_MeshAdaptation.h"
-#include "Definitions.h"
-#include "LDefinitions.h"
-#include "SimulationData.h"
-#include "Operator.h"
-#include "AdvectionDiffusion.h"
-#include "DiffusionSolverAMRKernels.h"
-#include "AdvectionDiffusionImplicit.h"
-#include "ArgumentParser.h"
-#include "BufferedLogger.h"
-#include "ObstacleBlock.h"
-#include "Obstacle.h"
-#include "Fish.h"
-#include "CarlingFish.h"
-#include "Frenet.h"
-#include "Interpolation1D.h"
-#include "Schedulers.h"
-#include "FishLibrary.h"
-#include "FishShapes.h"
-#include "ComputeDissipation.h"
-#include "Cylinder.h"
-#include "ObstacleLibrary.h"
-#include "CylinderNozzle.h"
-#include "Ellipsoid.h"
-#include "ExternalForcing.h"
-#include "ExternalObstacle.h"
-#include "happly.h"
-#include "FixMassFlux.h"
-#include "ObstacleVector.h"
-#include "FluidSolidForces.h"
-#include "InitialConditions.h"
-#include "ProcessHelpers.h"
-#include "PoissonSolverBase.h"
-#include "Pipe.h"
-#include "Naca.h"
-#include "ObstacleFactory.h"
-#include "FactoryFileLineParser.h"
-#include "SmartNaca.h"
-#include "Plate.h"
-#include "Sphere.h"
-#include "StefanFish.h"
-#include "MatArrayMath.h"
-#include "ObstaclesCreate.h"
-#include "ObstaclesUpdate.h"
-#include "Penalization.h"
-#include "PoissonSolverAMRKernels.h"
-#include "PoissonSolverAMR.h"
-#include "PressureProjection.h"
-#include "Profiler.h"
+
+
+/*
+ * Macros and definition used by other header files.
+ */
+
+#ifndef CubismUP_3D_NAMESPACE_BEGIN
+#define CubismUP_3D_NAMESPACE_BEGIN namespace cubismup3d {
+#endif
+
+#ifndef CubismUP_3D_NAMESPACE_END
+#define CubismUP_3D_NAMESPACE_END } // namespace cubismup3d
+#endif
+
+#ifndef CUP_ALIGNMENT
+#define CUP_ALIGNMENT 64
+#endif
+#define CUBISM_ALIGNMENT CUP_ALIGNMENT
+
+#ifdef _FLOAT_PRECISION_
+using Real = float;
+#define MPI_Real MPI_FLOAT
+#endif
+#ifdef _DOUBLE_PRECISION_
+using Real = double;
+#define MPI_Real MPI_DOUBLE
+#endif
+#ifdef _LONG_DOUBLE_PRECISION_
+using Real = long double;
+#define MPI_Real MPI_LONG_DOUBLE
+#endif
+#ifndef CubismUP_3D_aligned_allocator_h
+#define CubismUP_3D_aligned_allocator_h
+
+
+CubismUP_3D_NAMESPACE_BEGIN
+
+    template <typename T, int kAlignment>
+    class aligned_allocator {
+public:
+  typedef T *pointer;
+  typedef T const *const_pointer;
+  typedef T &reference;
+  typedef T const &const_reference;
+  typedef T value_type;
+  typedef std::size_t size_type;
+  typedef std::ptrdiff_t difference_type;
+
+  template <typename U> struct rebind {
+    typedef aligned_allocator<U, kAlignment> other;
+  };
+
+  aligned_allocator() noexcept {}
+
+  aligned_allocator(aligned_allocator const &a) noexcept {}
+
+  template <typename S>
+  aligned_allocator(aligned_allocator<S, kAlignment> const &b) noexcept {}
+
+  pointer allocate(size_type n) {
+    pointer p;
+    if (posix_memalign(reinterpret_cast<void **>(&p), kAlignment,
+                       n * sizeof(T)))
+      throw std::bad_alloc();
+    return p;
+  }
+
+  void deallocate(pointer p, size_type n) noexcept { std::free(p); }
+
+  size_type max_size() const noexcept {
+    std::allocator<T> a;
+    return a.max_size();
+  }
+
+  template <typename C, class... Args> void construct(C *c, Args &&... args) {
+    new ((void *)c) C(std::forward<Args>(args)...);
+  }
+
+  template <typename C> void destroy(C *c) { c->~C(); }
+
+  bool operator==(aligned_allocator const &a2) const noexcept { return 1; }
+
+  bool operator!=(aligned_allocator const &a2) const noexcept { return 0; }
+
+  template <typename S>
+  bool operator==(aligned_allocator<S, kAlignment> const &b) const noexcept {
+    return 0;
+  }
+
+  template <typename S>
+  bool operator!=(aligned_allocator<S, kAlignment> const &b) const noexcept {
+    return 1;
+  }
+};
+
+CubismUP_3D_NAMESPACE_END
+#endif // CubismUP_3D_aligned_allocator_h
+
+
+namespace cubism {
+
+/**
+ * @brief Hilbert Space-Filling Curve(SFC) in 3D.
+ *
+ * The Octree of GridBlocks of a simulation is traversed by an SFC.
+ * Each node of the Octree (aka each GridBlock) is associated with
+ * (i) a refinement level
+ * (ii) indices (i,j,k) that indicate its coordinates in a uniform grid of the
+ * same refinement level (iii) a Z-order index which is a unique integer along
+ * an SFC that would traverse a uniform grid of the same refinement level (iv) a
+ * unique integer (blockID_2). This class provides trasformations from each of
+ * these attributes to the others.
+ */
+class SpaceFillingCurve {
+protected:
+  int BX;         ///< number of blocks in the x-direction at the coarsest level
+  int BY;         ///< number of blocks in the y-direction at the coarsest level
+  int BZ;         ///< number of blocks in the z-direction at the coarsest level
+  int levelMax;   ///< maximum level allowed
+  bool isRegular; ///< true if BX,BY,BZ are powers of 2
+  int base_level; ///< minimum (starting) level (determined from BX,BY,BZ)
+  std::vector<std::vector<long long>>
+      Zsave; ///< option to save block indices instead of computing them every
+             ///< time
+  std::vector<std::vector<int>>
+      i_inverse; ///< option to save blocks i index instead of computing it
+                 ///< every time
+  std::vector<std::vector<int>>
+      j_inverse; ///< option to save blocks j index instead of computing it
+                 ///< every time
+  std::vector<std::vector<int>>
+      k_inverse; ///< option to save blocks k index instead of computing it
+                 ///< every time
+
+  /// coordinates (i,j,k) to Z-index at given level b
+  long long AxestoTranspose(const int *X_in,
+                            int b) const // position, #bits, dimension
+  {
+    if (b == 0) {
+      assert(X_in[0] == 0);
+      assert(X_in[1] == 0);
+      assert(X_in[2] == 0);
+      return 0;
+    }
+
+    const int n = 3;
+    int X[3] = {X_in[0], X_in[1], X_in[2]};
+
+    assert(b - 1 >= 0);
+
+    int M = 1 << (b - 1), P, Q, t;
+    int i;
+
+    // Inverse undo
+    for (Q = M; Q > 1; Q >>= 1) {
+      P = Q - 1;
+      for (i = 0; i < n; i++)
+        if (X[i] & Q)
+          X[0] ^= P; // invert
+        else {
+          t = (X[0] ^ X[i]) & P;
+          X[0] ^= t;
+          X[i] ^= t;
+        }
+    } // exchange
+
+    // Gray encode
+    for (i = 1; i < n; i++)
+      X[i] ^= X[i - 1];
+    t = 0;
+    for (Q = M; Q > 1; Q >>= 1)
+      if (X[n - 1] & Q)
+        t ^= Q - 1;
+    for (i = 0; i < n; i++)
+      X[i] ^= t;
+
+    long long retval = 0;
+    long long a = 0;
+    const long long one = 1;
+    const long long two = 2;
+    for (long long level = 0; level < b; level++) {
+      const long long a0 = ((one) << (a)) * ((long long)X[2] >> level & one);
+      const long long a1 =
+          ((one) << (a + one)) * ((long long)X[1] >> level & one);
+      const long long a2 =
+          ((one) << (a + two)) * ((long long)X[0] >> level & one);
+      retval += a0 + a1 + a2;
+      a += 3;
+    }
+
+    return retval;
+  }
+
+  /// Z-index to coordinates (i,j,k) at given level b
+  void TransposetoAxes(long long index, long long *X,
+                       int b) const // position, #bits, dimension
+  {
+    const int n = 3;
+
+    X[0] = 0;
+    X[1] = 0;
+    X[2] = 0;
+    if (b == 0 && index == 0)
+      return;
+
+    long long aa = 0;
+    const long long one = 1;
+    const long long two = 2;
+    for (long long i = 0; index > 0; i++) {
+      long long x2 = index % two;
+      index = index / two;
+      long long x1 = index % two;
+      index = index / two;
+      long long x0 = index % two;
+      index = index / two;
+
+      X[0] += x0 * (one << aa);
+      X[1] += x1 * (one << aa);
+      X[2] += x2 * (one << aa);
+
+      aa += 1;
+    }
+
+    int N = 2 << (b - 1), P, Q, t;
+    int i;
+
+    // Gray decode by H ^ (H/2)
+    t = X[n - 1] >> 1;
+    for (i = n - 1; i >= 1; i--)
+      X[i] ^= X[i - 1];
+    X[0] ^= t;
+
+    // Undo excess work
+    for (Q = 2; Q != N; Q <<= 1) {
+      P = Q - 1;
+      for (i = n - 1; i >= 0; i--)
+        if (X[i] & Q)
+          X[0] ^= P; // invert
+        else {
+          t = (X[0] ^ X[i]) & P;
+          X[0] ^= t;
+          X[i] ^= t;
+        }
+    } // exchange
+  }
+
+public:
+  /// Desctructor.
+  SpaceFillingCurve(){};
+
+  /// Constructor.
+  SpaceFillingCurve(int a_BX, int a_BY, int a_BZ, int lmax)
+      : BX(a_BX), BY(a_BY), BZ(a_BZ), levelMax(lmax) {
+    int n_max = std::max(std::max(BX, BY), BZ);
+    base_level = (log(n_max) / log(2));
+    if (base_level < (double)(log(n_max) / log(2)))
+      base_level++;
+
+    i_inverse.resize(lmax);
+    j_inverse.resize(lmax);
+    k_inverse.resize(lmax);
+    Zsave.resize(lmax);
+    {
+      const int l = 0;
+      int aux = pow(pow(2, l), 3);
+      i_inverse[l].resize(BX * BY * BZ * aux, -1);
+      j_inverse[l].resize(BX * BY * BZ * aux, -1);
+      k_inverse[l].resize(BX * BY * BZ * aux, -1);
+      Zsave[l].resize(BX * BY * BZ * aux, -1);
+    }
+
+    isRegular = true;
+#pragma omp parallel for collapse(3)
+    for (int k = 0; k < BZ; k++)
+      for (int j = 0; j < BY; j++)
+        for (int i = 0; i < BX; i++) {
+          const int c[3] = {i, j, k};
+          long long index = AxestoTranspose(c, base_level);
+          long long substract = 0;
+          for (long long h = 0; h < index; h++) {
+            long long X[3] = {0, 0, 0};
+            TransposetoAxes(h, X, base_level);
+            if (X[0] >= BX || X[1] >= BY || X[2] >= BZ)
+              substract++;
+          }
+          index -= substract;
+          if (substract > 0)
+            isRegular = false;
+          i_inverse[0][index] = i;
+          j_inverse[0][index] = j;
+          k_inverse[0][index] = k;
+          Zsave[0][k * BX * BY + j * BX + i] = index;
+        }
+  }
+
+  /// space-filling curve (i,j,k) --> 1D index (given level l)
+  long long forward(const int l, const int i, const int j, const int k) {
+    const int aux = 1 << l;
+
+    if (l >= levelMax)
+      return 0; //-1;
+    long long retval;
+    if (!isRegular) {
+      const int I = i / aux;
+      const int J = j / aux;
+      const int K = k / aux;
+      assert(!(I >= BX || J >= BY || K >= BZ));
+      const int c2_a[3] = {i - I * aux, j - J * aux, k - K * aux};
+      retval = AxestoTranspose(c2_a, l);
+      retval += IJK_to_index(I, J, K) * aux * aux * aux;
+    } else {
+      const int c2_a[3] = {i, j, k};
+      retval = AxestoTranspose(c2_a, l + base_level);
+    }
+    return retval;
+  }
+
+  /// space-filling curve Z-index --> (i,j,k) (given level l)
+  void inverse(long long Z, int l, int &i, int &j, int &k) {
+    if (isRegular) {
+      long long X[3] = {0, 0, 0};
+      TransposetoAxes(Z, X, l + base_level);
+      i = X[0];
+      j = X[1];
+      k = X[2];
+    } else {
+      long long aux = 1 << l;
+      long long Zloc = Z % (aux * aux * aux);
+      long long X[3] = {0, 0, 0};
+      TransposetoAxes(Zloc, X, l);
+      long long index = Z / (aux * aux * aux);
+      int I, J, K;
+      index_to_IJK(index, I, J, K);
+      i = X[0] + I * aux;
+      j = X[1] + J * aux;
+      k = X[2] + K * aux;
+    }
+    return;
+  }
+
+  /// space-filling curve (i,j,k) --> 1D index (at level 0)
+  long long IJK_to_index(int I, int J, int K) {
+    // int index = (J + K * BY) * BX + I;
+    long long index = Zsave[0][(J + K * BY) * BX + I];
+    return index;
+  }
+
+  /// space-filling curve Z-index --> (i,j,k) (at level 0)
+  void index_to_IJK(long long index, int &I, int &J, int &K) {
+    // K = index / (BX*BY);
+    // J = (index - K*(BX*BY) ) / BX;
+    // I = index - K*(BX*BY) - J*BX;
+    I = i_inverse[0][index];
+    J = j_inverse[0][index];
+    K = k_inverse[0][index];
+    return;
+  }
+
+  /// convert Z-index, level and ijk index to single unique number
+  long long Encode(int level, long long Z, int index[3]) {
+    int lmax = levelMax;
+    long long retval = 0;
+
+    int ix = index[0];
+    int iy = index[1];
+    int iz = index[2];
+    for (int l = level; l >= 0; l--) {
+      long long Zp = forward(l, ix, iy, iz);
+      retval += Zp;
+      ix /= 2;
+      iy /= 2;
+      iz /= 2;
+    }
+
+    ix = 2 * index[0];
+    iy = 2 * index[1];
+    iz = 2 * index[2];
+    for (int l = level + 1; l < lmax; l++) {
+      long long Zc = forward(l, ix, iy, iz);
+
+      Zc -= Zc % 8;
+      retval += Zc;
+
+      int ix1, iy1, iz1;
+      ix1 = ix;
+      iy1 = iy;
+      iz1 = iz;
+
+      inverse(Zc, l, ix1, iy1, iz1);
+      ix = 2 * ix1;
+      iy = 2 * iy1;
+      iz = 2 * iz1;
+    }
+
+    retval += level;
+
+    return retval;
+  }
+};
+
+} // namespace cubism
+
+
+namespace cubism {
+
+enum State : signed char { Leave = 0, Refine = 1, Compress = -1 };
+
+/// Single integer used to recognize if a Block exists in the Grid and by which
+/// MPI rank it is owned.
+struct TreePosition {
+  int position{-3};
+  bool CheckCoarser() const { return position == -2; }
+  bool CheckFiner() const { return position == -1; }
+  bool Exists() const { return position >= 0; }
+  int rank() const { return position; }
+  void setrank(const int r) { position = r; }
+  void setCheckCoarser() { position = -2; }
+  void setCheckFiner() { position = -1; }
+};
+
+/** @brief Meta-data for each GridBlock.
+ *
+ * This struct holds information such as the grid spacing and the level of
+ * refinement of each GridBlock. It is also used to access the data of the
+ * GridBlock through a relevant pointer. Importantly, all blocks are organized
+ * in a single Octree/Quadtree, regardless of the number of fields/variables
+ * used in the simulation (and the number of Grids). For this reason, only one
+ * instance of SpaceFillingCurve is needed, which is owned as a static member of
+ * the BlockInfo struct. The functions of the SpaceFillingCurve are also
+ * accessed through static functions of BlockInfo.
+ */
+struct BlockInfo {
+  long long
+      blockID; ///< all n BlockInfos owned by one rank have blockID=0,1,...,n-1
+  long long blockID_2;     ///< unique index of each BlockInfo, based on its
+                           ///< refinement level and Z-order curve index
+  long long Z;             ///< Z-order curve index of this block
+  long long Znei[3][3][3]; ///< Z-order curve index of 26 neighboring boxes
+                           ///< (Znei[1][1][1] = Z)
+  long long halo_block_id; ///< all m blocks at the boundary of a rank are
+                           ///< numbered by halo_block_id=0,1,...,m-1
+  long long Zparent; ///< Z-order curve index of parent block (after comression)
+  long long Zchild[2][2][2]; ///< Z-order curve index of blocks that replace
+                             ///< this one during refinement
+  double h;                  ///< grid spacing
+  double origin[3];          ///<(x,y,z) of block's origin
+  int index[3]; ///<(i,j,k) coordinates of block at given refinement level
+  int level;    ///< refinement level
+  void *ptrBlock{nullptr}; ///< Pointer to data stored in user-defined Block
+  void *auxiliary;         ///< Pointer to blockcase
+  bool changed2; ///< =true if block will be refined/compressed; used to update
+                 ///< State of neighbouring blocks among ranks
+  State state;   ///< Refine/Compress/Leave this block
+
+  /// Static function used to initialize static SFC
+  static int levelMax(int l = 0) {
+    static int lmax = l;
+    return lmax;
+  }
+
+#if DIMENSION == 3
+
+  /// Static function used to initialize static SFC
+  static int blocks_per_dim(int i, int nx = 0, int ny = 0, int nz = 0) {
+    static int a[3] = {nx, ny, nz};
+    return a[i];
+  }
+
+  /// Pointer to single instance of SFC used
+  static SpaceFillingCurve *SFC() {
+    static SpaceFillingCurve Zcurve(blocks_per_dim(0), blocks_per_dim(1),
+                                    blocks_per_dim(2), levelMax());
+    return &Zcurve;
+  }
+
+  /// get Z-order index for coordinates (ix,iy,iz) and refinement level
+  static long long forward(int level, int ix, int iy, int iz) {
+    return (*SFC()).forward(level, ix, iy, iz);
+  }
+
+  /// get unique blockID_2 index from refinement level, Z-order index and
+  /// coordinates
+  static long long Encode(int level, long long Z, int index[3]) {
+    return (*SFC()).Encode(level, Z, index);
+  }
+
+  /// get coordinates from refinement level and Z-order index
+  static void inverse(long long Z, int l, int &i, int &j, int &k) {
+    (*SFC()).inverse(Z, l, i, j, k);
+  }
+
+#else
+
+  /// Static function used to initialize static SFC (same as above but in 2D)
+  static int blocks_per_dim(int i, int nx = 0, int ny = 0) {
+    static int a[2] = {nx, ny};
+    return a[i];
+  }
+
+  /// Pointer to single instance of SFC used (same as above but in 2D)
+  static SpaceFillingCurve2D *SFC() {
+    static SpaceFillingCurve2D Zcurve(blocks_per_dim(0), blocks_per_dim(1),
+                                      levelMax());
+    return &Zcurve;
+  }
+
+  /// get Z-order index for coordinates (ix,iy,iz) and refinement level
+  static long long forward(int level, int ix, int iy) {
+    return (*SFC()).forward(level, ix, iy);
+  }
+
+  /// get unique blockID_2 index from refinement level, Z-order index and
+  /// coordinates
+  static long long Encode(int level, long long Z, int index[2]) {
+    return (*SFC()).Encode(level, Z, index);
+  }
+
+  /// get coordinates from refinement level and Z-order index
+  static void inverse(long long Z, int l, int &i, int &j) {
+    (*SFC()).inverse(Z, l, i, j);
+  }
+
+#endif
+
+#if DIMENSION == 3
+  /// return position (x,y,z) in 3D, given indices of grid point
+  template <typename T> inline void pos(T p[3], int ix, int iy, int iz) const {
+    p[0] = origin[0] + h * (ix + 0.5);
+    p[1] = origin[1] + h * (iy + 0.5);
+    p[2] = origin[2] + h * (iz + 0.5);
+  }
+
+  /// return position (x,y,z) in 3D, given indices of grid point
+  template <typename T>
+  inline std::array<T, 3> pos(int ix, int iy, int iz) const {
+    std::array<T, 3> result;
+    pos(result.data(), ix, iy, iz);
+    return result;
+  }
+#else
+  /// return position (x,y) in 2D, given indices of grid point
+  template <typename T> inline void pos(T p[2], int ix, int iy) const {
+    p[0] = origin[0] + h * (ix + 0.5);
+    p[1] = origin[1] + h * (iy + 0.5);
+  }
+
+  /// return position (x,y) in 2D, given indices of grid point
+  template <typename T> inline std::array<T, 2> pos(int ix, int iy) const {
+    std::array<T, 2> result;
+    pos(result.data(), ix, iy);
+    return result;
+  }
+#endif
+
+  /// used to order/sort blocks based on blockID_2, which is only a function of
+  /// Z and level
+  bool operator<(const BlockInfo &other) const {
+    return (blockID_2 < other.blockID_2);
+  }
+
+  /// constructor will do nothing, 'setup' needs to be called instead
+  BlockInfo(){};
+
+  /// Provide level, grid spacing, (x,y,z) origin and Z-index to
+  /// setup/initialize a blockinfo
+  void setup(const int a_level, const double a_h, const double a_origin[3],
+             const long long a_Z) {
+    level = a_level;
+    Z = a_Z;
+    state = Leave;
+    level = a_level;
+    h = a_h;
+    origin[0] = a_origin[0];
+    origin[1] = a_origin[1];
+    origin[2] = a_origin[2];
+    changed2 = true;
+    auxiliary = nullptr;
+
+    const int TwoPower = 1 << level;
+
+// Now we also set the indices of the neighbouring blocks, parent block and
+// child blocks.
+#if DIMENSION == 3
+    inverse(Z, level, index[0], index[1], index[2]);
+
+    const int Bmax[3] = {blocks_per_dim(0) * TwoPower,
+                         blocks_per_dim(1) * TwoPower,
+                         blocks_per_dim(2) * TwoPower};
+    for (int i = -1; i < 2; i++)
+      for (int j = -1; j < 2; j++)
+        for (int k = -1; k < 2; k++)
+          Znei[i + 1][j + 1][k + 1] =
+              forward(level, (index[0] + i + Bmax[0]) % Bmax[0],
+                      (index[1] + j + Bmax[1]) % Bmax[1],
+                      (index[2] + k + Bmax[2]) % Bmax[2]);
+
+    for (int i = 0; i < 2; i++)
+      for (int j = 0; j < 2; j++)
+        for (int k = 0; k < 2; k++)
+          Zchild[i][j][k] = forward(level + 1, 2 * index[0] + i,
+                                    2 * index[1] + j, 2 * index[2] + k);
+
+    Zparent = (level == 0)
+                  ? 0
+                  : forward(level - 1, (index[0] / 2 + Bmax[0]) % Bmax[0],
+                            (index[1] / 2 + Bmax[1]) % Bmax[1],
+                            (index[2] / 2 + Bmax[2]) % Bmax[2]);
+#else
+    inverse(Z, level, index[0], index[1]);
+    index[2] = 0;
+
+    const int Bmax[3] = {blocks_per_dim(0) * TwoPower,
+                         blocks_per_dim(1) * TwoPower, 1};
+    for (int i = -1; i < 2; i++)
+      for (int j = -1; j < 2; j++)
+        for (int k = -1; k < 2; k++)
+          Znei[i + 1][j + 1][k + 1] =
+              forward(level, (index[0] + i + Bmax[0]) % Bmax[0],
+                      (index[1] + j + Bmax[1]) % Bmax[1]);
+
+    for (int i = 0; i < 2; i++)
+      for (int j = 0; j < 2; j++)
+        for (int k = 0; k < 2; k++)
+          Zchild[i][j][k] =
+              forward(level + 1, 2 * index[0] + i, 2 * index[1] + j);
+
+    Zparent = (level == 0)
+                  ? 0
+                  : forward(level - 1, (index[0] / 2 + Bmax[0]) % Bmax[0],
+                            (index[1] / 2 + Bmax[1]) % Bmax[1]);
+#endif
+    blockID_2 = Encode(level, Z, index);
+    blockID = blockID_2;
+  }
+
+  /// used for easier access of Znei[][][]
+  long long Znei_(const int i, const int j, const int k) const {
+    assert(abs(i) <= 1);
+    assert(abs(j) <= 1);
+    assert(abs(k) <= 1);
+    return Znei[1 + i][1 + j][1 + k];
+  }
+};
+} // namespace cubism
+
+
+namespace cubism {
+
+/**
+ * @brief Auxiliary struct used to perform flux corrections at coarse-fine block
+ * interfaces.
+ *
+ * This struct can save the fluxes passing though the six faces of one
+ * GridBlock. Each BlockInfo owns a pointer to its own BlockCase. The pointer is
+ * not a nullptr only if any of the six faces of the block have a neighboring
+ * block at a different refinement level. When a stencil computation is
+ * performed, each block can fill its own BlockCase with the fluxes passing
+ * through its faces. Then, the FluxCorrection class will replace the coarse
+ * fluxes with the sum of the fine fluxes, which ensures conservation of the
+ * quantity whose flux we compute.
+ *
+ * @tparam BlockType The user-defined GridBlock
+ * @tparam ElementType The type of elements stored by the user-defined GridBlock
+ */
+template <typename BlockType,
+          typename ElementType = typename BlockType::ElementType>
+struct BlockCase {
+  std::vector<std::vector<ElementType>>
+      m_pData;             ///< six vectors, one for each face
+  unsigned int m_vSize[3]; ///< sizes of the faces (in x,y and z)
+  bool storedFace[6]; ///< boolean variables, one for each face (=true if this
+                      ///< face needs flux corrections because it is at a
+                      ///< coarse-fine interface)
+  int level;          ///< refinement level of the associated block
+  long long Z;        ///< Z-order index of the associated block
+
+  /// Constructor.
+  BlockCase(bool _storedFace[6], unsigned int nX, unsigned int nY,
+            unsigned int nZ, int _level, long long _Z) {
+    m_vSize[0] = nX;
+    m_vSize[1] = nY;
+    m_vSize[2] = nZ;
+
+    storedFace[0] = _storedFace[0];
+    storedFace[1] = _storedFace[1];
+    storedFace[2] = _storedFace[2];
+    storedFace[3] = _storedFace[3];
+    storedFace[4] = _storedFace[4];
+    storedFace[5] = _storedFace[5];
+
+    m_pData.resize(6);
+
+    for (int d = 0; d < 3; d++) {
+      int d1 = (d + 1) % 3;
+      int d2 = (d + 2) % 3;
+
+      // assume everything is initialized to 0!!!!!!!!
+      if (storedFace[2 * d])
+        m_pData[2 * d].resize(m_vSize[d1] * m_vSize[d2]);
+      if (storedFace[2 * d + 1])
+        m_pData[2 * d + 1].resize(m_vSize[d1] * m_vSize[d2]);
+    }
+    level = _level;
+    Z = _Z;
+  }
+
+  ~BlockCase() {}
+};
+
+/**
+ * @brief Performs flux corrections at coarse-fine block interfaces.
+ *
+ * This class can replace the coarse fluxes stored at BlockCases with the sum of
+ * the fine fluxes (also stored at BlockCases). This ensures conservation of the
+ * quantity whose flux we compute.
+ *
+ * @tparam TGrid The user-defined Grid/GridMPI
+ * @tparam BlockType The user-defined GridBlock used by TGrid
+ */
+template <typename TGrid> class FluxCorrection {
+public:
+  using GridType = TGrid; ///< should be a 'Grid', 'GridMPI' or derived class
+  typedef typename GridType::BlockType BlockType;
+  typedef typename BlockType::ElementType ElementType;
+  typedef typename ElementType::RealType Real;
+  typedef BlockCase<BlockType> Case;
+  int rank{
+      0}; ///< MPI process ID (set to zero here, for a serial implementation)
+
+protected:
+  std::map<std::array<long long, 2>, Case *>
+      MapOfCases; ///< map between BlockCases and BlockInfos (two integers:
+                  ///< refinement level and Z-order index)
+  TGrid *grid;    ///< grid for which we perform the flux corrections
+  std::vector<Case> Cases; ///< BlockCases owned by FluxCorrection; BlockInfos
+                           ///< have pointers to these (in needed)
+
+  /// Perform flux correction for BlockInfo 'info' in the direction/face
+  /// specified by 'code'
+  void FillCase(BlockInfo &info, const int *const code) {
+    const int myFace = abs(code[0]) * std::max(0, code[0]) +
+                       abs(code[1]) * (std::max(0, code[1]) + 2) +
+                       abs(code[2]) * (std::max(0, code[2]) + 4);
+    const int otherFace = abs(-code[0]) * std::max(0, -code[0]) +
+                          abs(-code[1]) * (std::max(0, -code[1]) + 2) +
+                          abs(-code[2]) * (std::max(0, -code[2]) + 4);
+
+    std::array<long long, 2> temp = {(long long)info.level, info.Z};
+    auto search = MapOfCases.find(temp);
+
+    Case &CoarseCase = (*search->second);
+    std::vector<ElementType> &CoarseFace = CoarseCase.m_pData[myFace];
+
+    assert(myFace / 2 == otherFace / 2);
+    assert(search != MapOfCases.end());
+    assert(CoarseCase.Z == info.Z);
+    assert(CoarseCase.level == info.level);
+
+#if DIMENSION == 3
+    for (int B = 0; B <= 3;
+         B++) // loop over fine blocks that make up coarse face
+#else
+    for (int B = 0; B <= 1;
+         B++) // loop over fine blocks that make up coarse face
+#endif
+    {
+      const int aux = (abs(code[0]) == 1) ? (B % 2) : (B / 2);
+#if DIMENSION == 3
+      const long long Z = (*grid).getZforward(
+          info.level + 1,
+          2 * info.index[0] + std::max(code[0], 0) + code[0] +
+              (B % 2) * std::max(0, 1 - abs(code[0])),
+          2 * info.index[1] + std::max(code[1], 0) + code[1] +
+              aux * std::max(0, 1 - abs(code[1])),
+          2 * info.index[2] + std::max(code[2], 0) + code[2] +
+              (B / 2) * std::max(0, 1 - abs(code[2])));
+#else
+      const long long Z = (*grid).getZforward(
+          info.level + 1,
+          2 * info.index[0] + std::max(code[0], 0) + code[0] +
+              (B % 2) * std::max(0, 1 - abs(code[0])),
+          2 * info.index[1] + std::max(code[1], 0) + code[1] +
+              aux * std::max(0, 1 - abs(code[1])));
+#endif
+
+      const int other_rank = grid->Tree(info.level + 1, Z).rank();
+      if (other_rank != rank)
+        continue;
+      auto search1 = MapOfCases.find({info.level + 1, Z});
+
+      Case &FineCase = (*search1->second);
+      std::vector<ElementType> &FineFace = FineCase.m_pData[otherFace];
+      const int d = myFace / 2;
+      const int d1 = std::max((d + 1) % 3, (d + 2) % 3);
+      const int d2 = std::min((d + 1) % 3, (d + 2) % 3);
+      const int N1F = FineCase.m_vSize[d1];
+      const int N2F = FineCase.m_vSize[d2];
+      const int N1 = N1F;
+      const int N2 = N2F;
+      int base = 0;
+      if (B == 1)
+        base = (N2 / 2) + (0) * N2;
+      else if (B == 2)
+        base = (0) + (N1 / 2) * N2;
+      else if (B == 3)
+        base = (N2 / 2) + (N1 / 2) * N2;
+      assert(search1 != MapOfCases.end());
+      assert(N1F == (int)CoarseCase.m_vSize[d1]);
+      assert(N2F == (int)CoarseCase.m_vSize[d2]);
+      assert(FineFace.size() == CoarseFace.size());
+#if DIMENSION == 3
+      for (int i1 = 0; i1 < N1; i1 += 2)
+        for (int i2 = 0; i2 < N2; i2 += 2) {
+          CoarseFace[base + (i2 / 2) + (i1 / 2) * N2] +=
+              FineFace[i2 + i1 * N2] + FineFace[i2 + 1 + i1 * N2] +
+              FineFace[i2 + (i1 + 1) * N2] + FineFace[i2 + 1 + (i1 + 1) * N2];
+          FineFace[i2 + i1 * N2].clear();
+          FineFace[i2 + 1 + i1 * N2].clear();
+          FineFace[i2 + (i1 + 1) * N2].clear();
+          FineFace[i2 + 1 + (i1 + 1) * N2].clear();
+        }
+#else
+      for (int i2 = 0; i2 < N2; i2 += 2) {
+        CoarseFace[base + i2 / 2] += FineFace[i2] + FineFace[i2 + 1];
+        FineFace[i2].clear();
+        FineFace[i2 + 1].clear();
+      }
+#endif
+    }
+  }
+
+public:
+  /// Prepare the FluxCorrection class for a given 'grid' by allocating
+  /// BlockCases at each coarse-fine interface
+  virtual void prepare(TGrid &_grid) {
+    if (_grid.UpdateFluxCorrection == false)
+      return;
+    _grid.UpdateFluxCorrection = false;
+
+    Cases.clear();
+    MapOfCases.clear();
+    grid = &_grid;
+    std::vector<BlockInfo> &B = (*grid).getBlocksInfo();
+
+    std::array<int, 3> blocksPerDim = (*grid).getMaxBlocks();
+    std::array<int, 6> icode = {1 * 2 + 3 * 1 + 9 * 1, 1 * 0 + 3 * 1 + 9 * 1,
+                                1 * 1 + 3 * 2 + 9 * 1, 1 * 1 + 3 * 0 + 9 * 1,
+                                1 * 1 + 3 * 1 + 9 * 2, 1 * 1 + 3 * 1 + 9 * 0};
+
+    for (auto &info : B) {
+      grid->getBlockInfoAll(info.level, info.Z).auxiliary = nullptr;
+      const int aux = 1 << info.level;
+
+      const bool xskin =
+          info.index[0] == 0 || info.index[0] == blocksPerDim[0] * aux - 1;
+      const bool yskin =
+          info.index[1] == 0 || info.index[1] == blocksPerDim[1] * aux - 1;
+      const bool zskin =
+          info.index[2] == 0 || info.index[2] == blocksPerDim[2] * aux - 1;
+      const int xskip = info.index[0] == 0 ? -1 : 1;
+      const int yskip = info.index[1] == 0 ? -1 : 1;
+      const int zskip = info.index[2] == 0 ? -1 : 1;
+
+      bool storeFace[6] = {false, false, false, false, false, false};
+      bool stored = false;
+
+      for (int f = 0; f < 6; f++) {
+        const int code[3] = {icode[f] % 3 - 1, (icode[f] / 3) % 3 - 1,
+                             (icode[f] / 9) % 3 - 1};
+        if (!_grid.xperiodic && code[0] == xskip && xskin)
+          continue;
+        if (!_grid.yperiodic && code[1] == yskip && yskin)
+          continue;
+        if (!_grid.zperiodic && code[2] == zskip && zskin)
+          continue;
+#if DIMENSION == 2
+        if (code[2] != 0)
+          continue;
+#endif
+
+        if (!grid->Tree(info.level, info.Znei_(code[0], code[1], code[2]))
+                 .Exists()) {
+          storeFace[abs(code[0]) * std::max(0, code[0]) +
+                    abs(code[1]) * (std::max(0, code[1]) + 2) +
+                    abs(code[2]) * (std::max(0, code[2]) + 4)] = true;
+          stored = true;
+        }
+      }
+      if (stored) {
+        Cases.push_back(Case(storeFace, BlockType::sizeX, BlockType::sizeY,
+                             BlockType::sizeZ, info.level, info.Z));
+      }
+    }
+    size_t Cases_index = 0;
+    if (Cases.size() > 0)
+      for (auto &info : B) {
+        if (Cases_index == Cases.size())
+          break;
+        if (Cases[Cases_index].level == info.level &&
+            Cases[Cases_index].Z == info.Z) {
+          MapOfCases.insert(std::pair<std::array<long long, 2>, Case *>(
+              {Cases[Cases_index].level, Cases[Cases_index].Z},
+              &Cases[Cases_index]));
+          grid->getBlockInfoAll(Cases[Cases_index].level, Cases[Cases_index].Z)
+              .auxiliary = &Cases[Cases_index];
+          info.auxiliary = &Cases[Cases_index];
+          Cases_index++;
+        }
+      }
+  }
+
+  /// Go over each coarse-fine interface and perform the flux corrections,
+  /// assuming the associated BlockCases have been filled with the fluxes by the
+  /// user
+  virtual void FillBlockCases() {
+    // This assumes that the BlockCases have been filled by the user somehow...
+    std::vector<BlockInfo> &B = (*grid).getBlocksInfo();
+
+    std::array<int, 3> blocksPerDim = (*grid).getMaxBlocks();
+
+    std::array<int, 6> icode = {1 * 2 + 3 * 1 + 9 * 1, 1 * 0 + 3 * 1 + 9 * 1,
+                                1 * 1 + 3 * 2 + 9 * 1, 1 * 1 + 3 * 0 + 9 * 1,
+                                1 * 1 + 3 * 1 + 9 * 2, 1 * 1 + 3 * 1 + 9 * 0};
+
+#pragma omp parallel for
+    for (size_t i = 0; i < B.size(); i++) {
+      BlockInfo &info = B[i];
+      const int aux = 1 << info.level;
+      const bool xskin =
+          info.index[0] == 0 || info.index[0] == blocksPerDim[0] * aux - 1;
+      const bool yskin =
+          info.index[1] == 0 || info.index[1] == blocksPerDim[1] * aux - 1;
+      const bool zskin =
+          info.index[2] == 0 || info.index[2] == blocksPerDim[2] * aux - 1;
+      const int xskip = info.index[0] == 0 ? -1 : 1;
+      const int yskip = info.index[1] == 0 ? -1 : 1;
+      const int zskip = info.index[2] == 0 ? -1 : 1;
+
+      for (int f = 0; f < 6; f++) {
+        const int code[3] = {icode[f] % 3 - 1, (icode[f] / 3) % 3 - 1,
+                             (icode[f] / 9) % 3 - 1};
+
+        if (!grid->xperiodic && code[0] == xskip && xskin)
+          continue;
+        if (!grid->yperiodic && code[1] == yskip && yskin)
+          continue;
+        if (!grid->zperiodic && code[2] == zskip && zskin)
+          continue;
+#if DIMENSION == 2
+        if (code[2] != 0)
+          continue;
+#endif
+
+        bool checkFiner =
+            grid->Tree(info.level, info.Znei_(code[0], code[1], code[2]))
+                .CheckFiner();
+
+        if (checkFiner) {
+          FillCase(info, code);
+
+          const int myFace = abs(code[0]) * std::max(0, code[0]) +
+                             abs(code[1]) * (std::max(0, code[1]) + 2) +
+                             abs(code[2]) * (std::max(0, code[2]) + 4);
+          std::array<long long, 2> temp = {(long long)info.level, info.Z};
+          auto search = MapOfCases.find(temp);
+          assert(search != MapOfCases.end());
+          Case &CoarseCase = (*search->second);
+          std::vector<ElementType> &CoarseFace = CoarseCase.m_pData[myFace];
+          const int d = myFace / 2;
+          const int d2 = std::min((d + 1) % 3, (d + 2) % 3);
+          const int N2 = CoarseCase.m_vSize[d2];
+          BlockType &block = *(BlockType *)info.ptrBlock;
+
+#if DIMENSION == 3
+          // WARNING: tmp indices are tmp[z][y][x][Flow Quantity]!
+          const int d1 = std::max((d + 1) % 3, (d + 2) % 3);
+          const int N1 = CoarseCase.m_vSize[d1];
+          if (d == 0) {
+            const int j = (myFace % 2 == 0) ? 0 : BlockType::sizeX - 1;
+            for (int i1 = 0; i1 < N1; i1++)
+              for (int i2 = 0; i2 < N2; i2++) {
+                block(j, i2, i1) += CoarseFace[i2 + i1 * N2];
+                CoarseFace[i2 + i1 * N2].clear();
+              }
+          } else if (d == 1) {
+            const int j = (myFace % 2 == 0) ? 0 : BlockType::sizeY - 1;
+            for (int i1 = 0; i1 < N1; i1++)
+              for (int i2 = 0; i2 < N2; i2++) {
+                block(i2, j, i1) += CoarseFace[i2 + i1 * N2];
+                CoarseFace[i2 + i1 * N2].clear();
+              }
+          } else {
+            const int j = (myFace % 2 == 0) ? 0 : BlockType::sizeZ - 1;
+            for (int i1 = 0; i1 < N1; i1++)
+              for (int i2 = 0; i2 < N2; i2++) {
+                block(i2, i1, j) += CoarseFace[i2 + i1 * N2];
+                CoarseFace[i2 + i1 * N2].clear();
+              }
+          }
+#else
+          assert(d != 2);
+          if (d == 0) {
+            const int j = (myFace % 2 == 0) ? 0 : BlockType::sizeX - 1;
+            for (int i2 = 0; i2 < N2; i2++) {
+              block(j, i2) += CoarseFace[i2];
+              CoarseFace[i2].clear();
+            }
+          } else // if (d == 1)
+          {
+            const int j = (myFace % 2 == 0) ? 0 : BlockType::sizeY - 1;
+            for (int i2 = 0; i2 < N2; i2++) {
+              block(i2, j) += CoarseFace[i2];
+              CoarseFace[i2].clear();
+            }
+          }
+#endif
+        }
+      }
+    }
+  }
+};
+
+} // namespace cubism
+
+
+
+namespace cubism {
+
+/** When dumping a Grid, blocks are grouped into larger rectangular regions
+ *  of uniform resolution. These regions (BlockGroups) have blocks with the
+ *  same level and with various Space-filling-curve coordinates Z.
+ *  They have NXX x NYY x NZZ grid points, grid spacing h, an origin and a
+ *  minimum and maximum index (indices of bottom left and top right blocks).
+ */
+struct BlockGroup {
+  int i_min[3];             ///< min (i,j,k) index of a block of this group
+  int i_max[3];             ///< max (i,j,k) index of a block of this group
+  int level;                ///< refinement level
+  std::vector<long long> Z; ///< Z-order indices of blocks of this group
+  size_t ID;                ///< unique group number
+  double origin[3];         ///< Coordinates (x,y,z) of origin
+  double h;                 ///< Grid spacing of the group
+  int NXX;                  ///< Grid points of the group in the x-direction
+  int NYY;                  ///< Grid points of the group in the y-direction
+  int NZZ;                  ///< Grid points of the group in the z-direction
+};
+
+/** Holds the GridBlocks and their meta-data (BlockInfos).
+ * This class provides information about the current state of the Octree of
+ * blocks in the simulation. The user can request if a particular block is
+ * present in the Octree or if its parent/ children block(s) are present
+ * instead. This class also provides access to the raw data from the simulation.
+ */
+template <typename Block,
+          template <typename X> class allocator = std::allocator>
+class Grid {
+public:
+  typedef Block BlockType;
+  using ElementType = typename Block::ElementType; ///< Blocks hold ElementTypes
+  typedef typename Block::RealType Real; ///< Blocks must provide `RealType`.
+
+  /** A map from unique BlockInfo IDs to pointers to BlockInfos.
+   *  Should be accessed through function 'getBlockInfoAll'. If a Block does not
+   * belong to this rank and it is not adjacent to it, this map should not
+   * return something meaningful.
+   */
+  std::unordered_map<long long, BlockInfo *> BlockInfoAll;
+
+  /** A map from unique BlockInfo IDs to pointers to integers (TreePositions)
+   * that encode whether a BlockInfo is present in the Octree (and to which rank
+   * it belongs to) or not. This is a seperate object from BlockInfoAll because
+   * all the information we need for some blocks is merely whether they exist or
+   * not (i.e. we don't need their grid spacing or other meta-data) held by
+   * BlockInfos.
+   */
+  std::unordered_map<long long, TreePosition> Octree;
+
+  /** Meta-data for blocks that belong to this rank.
+   *  This vector holds all the BlockInfos for blocks that belong to this rank.
+   * When the mesh changes, the contents of this vector become outdated and need
+   * to be updated. This is done through the FillPos() function. This array
+   * should be used when iterating over the blocks owned by a Grid.
+   */
+  std::vector<BlockInfo> m_vInfo;
+
+  const int NX;           ///< Total # of blocks for level 0 in X-direction
+  const int NY;           ///< Total # of blocks for level 0 in Y-direction
+  const int NZ;           ///< Total # of blocks for level 0 in Z-direction
+  const double maxextent; ///< Maximum domain extent
+  const int levelMax;     ///< Maximum refinement level allowed
+  const int levelStart;   ///< Initial refinement level
+  const bool xperiodic;   ///< grid periodicity in x-direction
+  const bool yperiodic;   ///< grid periodicity in y-direction
+  const bool zperiodic;   ///< grid periodicity in z-direction
+  std::vector<BlockGroup> MyGroups; ///< used for dumping data
+  std::vector<long long>
+      level_base; ///< auxiliary array used when searching is std::unordered_map
+  bool UpdateFluxCorrection{
+      true}; ///< FluxCorrection updates only when grid is refined/compressed
+  bool UpdateGroups{
+      true}; ///< (inactive) BlockGroups updated only when this is true
+  bool FiniteDifferences{
+      true}; ///< used by BlockLab, to determine what kind of coarse-fine
+             ///< interface interpolation to make.true means that biased
+             ///< stencils will be used to get an O(h^3) approximation
+  FluxCorrection<Grid> CorrectorGrid; ///< used for AMR flux-corrections at
+                                      ///< coarse-fine interfaces
+
+  /// Get the TreePosition of block with Z-order index 'm', at refinement level
+  /// 'n'.
+  TreePosition &Tree(const int m, const long long n) {
+    /*
+     * Return the position in the Octree of a Block at level m and SFC
+     * coordinate n.
+     */
+    const long long aux = level_base[m] + n;
+    const auto retval = Octree.find(aux);
+    if (retval == Octree.end()) {
+      {
+        const auto retval1 = Octree.find(aux);
+        if (retval1 == Octree.end()) {
+          TreePosition dum;
+          Octree[aux] = dum;
+        }
+      }
+      return Tree(m, n);
+    } else {
+      return retval->second;
+    }
+  }
+  /// Get the TreePosition of block with BlockInfo 'info'.
+  TreePosition &Tree(BlockInfo &info) { return Tree(info.level, info.Z); }
+  /// Get the TreePosition of block with BlockInfo 'info'.
+  TreePosition &Tree(const BlockInfo &info) { return Tree(info.level, info.Z); }
+
+  /// Called in constructor to allocate all blocks at level=levelStart.
+  void _alloc() {
+    const int m = levelStart;
+    const int TwoPower = 1 << m;
+    for (long long n = 0; n < NX * NY * NZ * pow(TwoPower, DIMENSION); n++) {
+      Tree(m, n).setrank(0);
+      _alloc(m, n);
+    }
+    if (m - 1 >= 0) {
+      for (long long n = 0; n < NX * NY * NZ * pow((1 << (m - 1)), DIMENSION);
+           n++)
+        Tree(m - 1, n).setCheckFiner();
+    }
+    if (m + 1 < levelMax) {
+      for (long long n = 0; n < NX * NY * NZ * pow((1 << (m + 1)), DIMENSION);
+           n++)
+        Tree(m + 1, n).setCheckCoarser();
+    }
+    FillPos();
+  }
+
+  /// Called to allocate a block with Z-order index 'm' at refinement level 'n',
+  /// when the grid is refined.
+  void _alloc(const int m, const long long n) {
+    allocator<Block> alloc;
+
+    BlockInfo &new_info = getBlockInfoAll(m, n);
+    new_info.ptrBlock = alloc.allocate(1);
+#pragma omp critical
+    { m_vInfo.push_back(new_info); }
+    Tree(m, n).setrank(rank());
+  }
+
+  /// Called in destructor to deallocate all blocks.
+  void _deallocAll() {
+    allocator<Block> alloc;
+    for (size_t i = 0; i < m_vInfo.size(); i++) {
+      const int m = m_vInfo[i].level;
+      const long long n = m_vInfo[i].Z;
+      alloc.deallocate((Block *)getBlockInfoAll(m, n).ptrBlock, 1);
+    }
+    std::vector<long long> aux;
+    for (auto &m : BlockInfoAll)
+      aux.push_back(m.first);
+    for (size_t i = 0; i < aux.size(); i++) {
+      const auto retval = BlockInfoAll.find(aux[i]);
+      if (retval != BlockInfoAll.end()) {
+        delete retval->second;
+      }
+    }
+    m_vInfo.clear();
+    BlockInfoAll.clear();
+    Octree.clear();
+  }
+
+  /// Called to deallocate a block with Z-order index 'm' at refinement level
+  /// 'n', when the grid is compressed.
+  void _dealloc(const int m, const long long n) {
+    allocator<Block> alloc;
+    alloc.deallocate((Block *)getBlockInfoAll(m, n).ptrBlock, 1);
+    for (size_t j = 0; j < m_vInfo.size(); j++) {
+      if (m_vInfo[j].level == m && m_vInfo[j].Z == n) {
+        m_vInfo.erase(m_vInfo.begin() + j);
+        return;
+      }
+    }
+  }
+
+  /// Called to deallocate many blocks with blockIDs in the vector 'dealloc_IDs'
+  void dealloc_many(const std::vector<long long> &dealloc_IDs) {
+    for (size_t j = 0; j < m_vInfo.size(); j++)
+      m_vInfo[j].changed2 = false;
+
+    allocator<Block> alloc;
+
+    for (size_t i = 0; i < dealloc_IDs.size(); i++)
+      for (size_t j = 0; j < m_vInfo.size(); j++) {
+        if (m_vInfo[j].blockID_2 == dealloc_IDs[i]) {
+          const int m = m_vInfo[j].level;
+          const long long n = m_vInfo[j].Z;
+          m_vInfo[j].changed2 = true;
+          alloc.deallocate((Block *)getBlockInfoAll(m, n).ptrBlock, 1);
+          break;
+        }
+      }
+    // for c++20
+    // std::erase_if(m_vInfo, [](BlockInfo & x) { return x.changed2; });
+    // for c++17
+    m_vInfo.erase(std::remove_if(m_vInfo.begin(), m_vInfo.end(),
+                                 [](const BlockInfo &x) { return x.changed2; }),
+                  m_vInfo.end());
+  }
+
+  /** Used when Block at level m_new with SFC coordinate n_new is added to the
+   * Grid as a result of compression of Block (m,n). Sets the state of the newly
+   * added Block. It also replaces BlockInfo(m,n) and Block(m,n) with
+   *  BlockInfo(m_new,n_new) and Block(m_new,n_new).
+   * @param m: Refinement level of the GridBlock that is compressed.
+   * @param n: Z-order index of the GridBlock that is compressed.
+   * @param m_new: Refinement level of the GridBlock that will replace the
+   * compressed GridBlock.
+   * @param n_new: Z-order index of the GridBlock that will replace the
+   * compressed GridBlock.
+   */
+  void FindBlockInfo(const int m, const long long n, const int m_new,
+                     const long long n_new) {
+    for (size_t j = 0; j < m_vInfo.size(); j++)
+      if (m == m_vInfo[j].level && n == m_vInfo[j].Z) {
+        BlockInfo &correct_info = getBlockInfoAll(m_new, n_new);
+        correct_info.state = Leave;
+        m_vInfo[j] = correct_info;
+        return;
+      }
+  }
+
+  /** The data in BlockInfoAll is always correct (states, blockIDs etc.), but
+   * this is not the case for m_vInfo, whose content might be outdated after
+   * grid refinement/compression or exchange of blocks between different ranks.
+   * This function updates their content.
+   * @param CopyInfos: set to true if the correct BlockInfos from BlockInfoAll
+   * should be copied to m_vInfo. Otherwise only selected variables are copied.
+   */
+  virtual void FillPos(bool CopyInfos = true) {
+    std::sort(m_vInfo.begin(), m_vInfo.end()); // sort according to blockID_2
+    if (CopyInfos)
+      for (size_t j = 0; j < m_vInfo.size(); j++) {
+        const int m = m_vInfo[j].level;
+        const long long n = m_vInfo[j].Z;
+        BlockInfo &correct_info = getBlockInfoAll(m, n);
+        correct_info.blockID = j;
+        m_vInfo[j] = correct_info;
+        assert(Tree(m, n).Exists());
+      }
+    else
+      for (size_t j = 0; j < m_vInfo.size(); j++) {
+        const int m = m_vInfo[j].level;
+        const long long n = m_vInfo[j].Z;
+        BlockInfo &correct_info = getBlockInfoAll(m, n);
+        correct_info.blockID = j;
+        m_vInfo[j].blockID = j;
+        m_vInfo[j].state = correct_info.state;
+        assert(Tree(m, n).Exists());
+      }
+  }
+
+  /** Constructor.
+   * @param _NX: total number of blocks in the x-direction, at the coarsest
+   * refinement level.
+   * @param _NY: total number of blocks in the y-direction, at the coarsest
+   * refinement level.
+   * @param _NZ: total number of blocks in the z-direction, at the coarsest
+   * refinement level.
+   * @param _maxextent: maximum extent of the simulation (largest side of the
+   * rectangular domain).
+   * @param _levelStart: refinement level where all allocated GridBlocks will be
+   * @param _levelMax: maximum refinement level allowed
+   * @param AllocateBlocks: true if GridBlocks should be allocated (false if
+   * they are allocated by a derived class)
+   * @param a_xperiodic: true if the domain is periodic in the x-direction
+   * @param a_yperiodic: true if the domain is periodic in the y-direction
+   * @param a_zperiodic: true if the domain is periodic in the z-direction
+   */
+  Grid(const unsigned int _NX, const unsigned int _NY = 1,
+       const unsigned int _NZ = 1, const double _maxextent = 1,
+       const unsigned int _levelStart = 0, const unsigned int _levelMax = 1,
+       const bool AllocateBlocks = true, const bool a_xperiodic = true,
+       const bool a_yperiodic = true, const bool a_zperiodic = true)
+      : NX(_NX), NY(_NY), NZ(_NZ), maxextent(_maxextent), levelMax(_levelMax),
+        levelStart(_levelStart), xperiodic(a_xperiodic), yperiodic(a_yperiodic),
+        zperiodic(a_zperiodic) {
+    BlockInfo dummy;
+#if DIMENSION == 3
+    const int nx = dummy.blocks_per_dim(0, NX, NY, NZ);
+    const int ny = dummy.blocks_per_dim(1, NX, NY, NZ);
+    const int nz = dummy.blocks_per_dim(2, NX, NY, NZ);
+#else
+    const int nx = dummy.blocks_per_dim(0, NX, NY);
+    const int ny = dummy.blocks_per_dim(1, NX, NY);
+    const int nz = 1;
+#endif
+    const int lvlMax = dummy.levelMax(levelMax);
+
+    for (int m = 0; m < lvlMax; m++) {
+      const int TwoPower = 1 << m;
+      const long long Ntot = nx * ny * nz * pow(TwoPower, DIMENSION);
+      if (m == 0)
+        level_base.push_back(Ntot);
+      if (m > 0)
+        level_base.push_back(level_base[m - 1] + Ntot);
+    }
+    if (AllocateBlocks)
+      _alloc();
+  }
+
+  /// Destructor
+  virtual ~Grid() { _deallocAll(); }
+
+  /// Returns GridBlock at level 'm' with Z-index 'n'
+  virtual Block *avail(const int m, const long long n) {
+    return (Block *)getBlockInfoAll(m, n).ptrBlock;
+  }
+
+  /// Returns MPI ranks of this Grid
+  virtual int rank() const { return 0; }
+
+  /**Given two vectors with the SFC coordinate (Z) and the level of each block,
+   * this function will erase the current structure of the grid and create a new
+   * one, with the given blocks. This is used when reading data from file
+   * (possibly to restart) or when initializing the simulation.*/
+  virtual void initialize_blocks(const std::vector<long long> &blocksZ,
+                                 const std::vector<short int> &blockslevel) {
+    _deallocAll();
+
+    for (size_t i = 0; i < blocksZ.size(); i++) {
+      const int level = blockslevel[i];
+      const long long Z = blocksZ[i];
+
+      _alloc(level, Z);
+      Tree(level, Z).setrank(rank());
+
+#if DIMENSION == 3
+      int p[3];
+      BlockInfo::inverse(Z, level, p[0], p[1], p[2]);
+      if (level < levelMax - 1)
+        for (int k1 = 0; k1 < 2; k1++)
+          for (int j1 = 0; j1 < 2; j1++)
+            for (int i1 = 0; i1 < 2; i1++) {
+              const long long nc = getZforward(level + 1, 2 * p[0] + i1,
+                                               2 * p[1] + j1, 2 * p[2] + k1);
+              Tree(level + 1, nc).setCheckCoarser();
+            }
+      if (level > 0) {
+        const long long nf =
+            getZforward(level - 1, p[0] / 2, p[1] / 2, p[2] / 2);
+        Tree(level - 1, nf).setCheckFiner();
+      }
+#else
+      int p[2];
+      BlockInfo::inverse(Z, level, p[0], p[1]);
+      if (level < levelMax - 1)
+        for (int j1 = 0; j1 < 2; j1++)
+          for (int i1 = 0; i1 < 2; i1++) {
+            const long long nc =
+                getZforward(level + 1, 2 * p[0] + i1, 2 * p[1] + j1);
+            Tree(level + 1, nc).setCheckCoarser();
+          }
+      if (level > 0) {
+        const long long nf = getZforward(level - 1, p[0] / 2, p[1] / 2);
+        Tree(level - 1, nf).setCheckFiner();
+      }
+#endif
+    }
+    FillPos();
+    UpdateFluxCorrection = true;
+    UpdateGroups = true;
+  }
+
+#if DIMENSION == 3
+  /// Returns Z-index of GridBlock with indices ijk (ix,iy,iz) at level 'level'
+  long long getZforward(const int level, const int i, const int j,
+                        const int k) const {
+    const int TwoPower = 1 << level;
+    const int ix = (i + TwoPower * NX) % (NX * TwoPower);
+    const int iy = (j + TwoPower * NY) % (NY * TwoPower);
+    const int iz = (k + TwoPower * NZ) % (NZ * TwoPower);
+    return BlockInfo::forward(level, ix, iy, iz);
+  }
+
+  /// Returns GridBlock with indices ijk (ix,iy,iz) at level 'm'
+  Block *avail1(const int ix, const int iy, const int iz, const int m) {
+    const long long n = getZforward(m, ix, iy, iz);
+    return avail(m, n);
+  }
+
+#else // DIMENSION = 2
+
+  /// Returns Z-index of GridBlock with indices ij (ix,iy) at level 'level'
+  long long getZforward(const int level, const int i, const int j) const {
+    const int TwoPower = 1 << level;
+    const int ix = (i + TwoPower * NX) % (NX * TwoPower);
+    const int iy = (j + TwoPower * NY) % (NY * TwoPower);
+    return BlockInfo::forward(level, ix, iy);
+  }
+
+  /// Returns GridBlock with indices ij (ix,iy) at level 'm'
+  Block *avail1(const int ix, const int iy, const int m) {
+    const long long n = getZforward(m, ix, iy);
+    return avail(m, n);
+  }
+
+#endif
+
+  /// Used to iterate though all blocks (ID=0,...,m_vInfo.size()-1)
+  Block &operator()(const long long ID) {
+    return *(Block *)m_vInfo[ID].ptrBlock;
+  }
+
+  /// Returns the number of blocks at refinement level 0
+  std::array<int, 3> getMaxBlocks() const { return {NX, NY, NZ}; }
+
+  /// Returns the number of blocks at refinement level 'levelMax-1'
+  std::array<int, 3> getMaxMostRefinedBlocks() const {
+    return {
+        NX << (levelMax - 1),
+        NY << (levelMax - 1),
+        DIMENSION == 3 ? (NZ << (levelMax - 1)) : 1,
+    };
+  }
+
+  /// Returns the number of grid points at refinement level 'levelMax-1'
+  std::array<int, 3> getMaxMostRefinedCells() const {
+    const auto b = getMaxMostRefinedBlocks();
+    return {b[0] * Block::sizeX, b[1] * Block::sizeY, b[2] * Block::sizeZ};
+  }
+
+  /// Returns the maximum refinement level allowed
+  inline int getlevelMax() const { return levelMax; }
+
+  /**
+   * Access BlockInfo at level m with Space-Filling-Curve coordinate n.
+   * If the BlockInfo has not been allocated (not found in the
+   * std::unordered_map), allocate it as well.
+   */
+  BlockInfo &getBlockInfoAll(const int m, const long long n) {
+    const long long aux = level_base[m] + n;
+    const auto retval = BlockInfoAll.find(aux);
+    if (retval != BlockInfoAll.end()) {
+      return *retval->second;
+    } else {
+      {
+        const auto retval1 = BlockInfoAll.find(aux);
+        if (retval1 == BlockInfoAll.end()) {
+          BlockInfo *dumm = new BlockInfo();
+          const int TwoPower = 1 << m;
+          const double h0 = (maxextent / std::max(NX * Block::sizeX,
+                                                  std::max(NY * Block::sizeY,
+                                                           NZ * Block::sizeZ)));
+          const double h = h0 / TwoPower;
+          double origin[3];
+          int i, j, k;
+#if DIMENSION == 3
+          BlockInfo::inverse(n, m, i, j, k);
+#else
+          BlockInfo::inverse(n, m, i, j);
+          k = 0;
+#endif
+          origin[0] = i * Block::sizeX * h;
+          origin[1] = j * Block::sizeY * h;
+          origin[2] = k * Block::sizeZ * h;
+          dumm->setup(m, h, origin, n);
+          BlockInfoAll[aux] = dumm;
+        }
+      }
+      return getBlockInfoAll(m, n);
+    }
+  }
+
+  /// Returns the vector of BlockInfos of this Grid
+  std::vector<BlockInfo> &getBlocksInfo() { return m_vInfo; }
+
+  /// Returns the vector of BlockInfos of this Grid
+  const std::vector<BlockInfo> &getBlocksInfo() const { return m_vInfo; }
+
+  /// Returns the total number of MPI processes
+  virtual int get_world_size() const { return 1; }
+
+  /// Does nothing for a single rank (no MPI)
+  virtual void UpdateBoundary(bool clean = false) {}
+
+  /// Used to create BlockGroups, when the Grid is to be dumped to a file
+  void UpdateMyGroups() {
+    /*
+     * This function is used before dumping the Grid. It groups adjacent blocks
+     * of the same resolution (and owned by the same MPI rank) to BlockGroups
+     * that will be dumped as a collection of rectangular uniform grids.
+     */
+
+    // if (!UpdateGroups) return; //TODO : does not work for CUP2D
+    if (rank() == 0)
+      std::cout << "Updating groups..." << std::endl;
+
+    const unsigned int nX = BlockType::sizeX;
+    const unsigned int nY = BlockType::sizeY;
+    const size_t Ngrids = getBlocksInfo().size();
+    const auto &MyInfos = getBlocksInfo();
+    UpdateGroups = false;
+    MyGroups.clear();
+    std::vector<bool> added(MyInfos.size(), false);
+
+#if DIMENSION == 3
+    const unsigned int nZ = BlockType::sizeZ;
+    for (unsigned int m = 0; m < Ngrids; m++) {
+      const BlockInfo &I = MyInfos[m];
+
+      if (added[I.blockID])
+        continue;
+      added[I.blockID] = true;
+      BlockGroup newGroup;
+
+      newGroup.level = I.level;
+      newGroup.h = I.h;
+      newGroup.Z.push_back(I.Z);
+
+      const int base[3] = {I.index[0], I.index[1], I.index[2]};
+      int i_off[6] = {};
+      bool ready_[6] = {};
+
+      int d = 0;
+      auto blk = getMaxBlocks();
+      do {
+        if (ready_[d] == false) {
+          bool valid = true;
+          i_off[d]++;
+          const int i0 =
+              (d < 3) ? (base[d] - i_off[d]) : (base[d - 3] + i_off[d]);
+          const int d0 = (d < 3) ? (d) % 3 : (d - 3) % 3;
+          const int d1 = (d < 3) ? (d + 1) % 3 : (d - 3 + 1) % 3;
+          const int d2 = (d < 3) ? (d + 2) % 3 : (d - 3 + 2) % 3;
+
+          for (int i2 = base[d2] - i_off[d2]; i2 <= base[d2] + i_off[d2 + 3];
+               i2++)
+            for (int i1 = base[d1] - i_off[d1]; i1 <= base[d1] + i_off[d1 + 3];
+                 i1++) {
+              if (valid == false)
+                break;
+
+              if (i0 < 0 || i1 < 0 || i2 < 0 ||
+                  i0 >= blk[d0] * (1 << I.level) ||
+                  i1 >= blk[d1] * (1 << I.level) ||
+                  i2 >= blk[d2] * (1 << I.level)) {
+                valid = false;
+                break;
+              }
+              long long n;
+              if (d == 0 || d == 3)
+                n = getZforward(I.level, i0, i1, i2);
+              else if (d == 1 || d == 4)
+                n = getZforward(I.level, i2, i0, i1);
+              else /*if (d==2||d==5)*/
+                n = getZforward(I.level, i1, i2, i0);
+
+              if (Tree(I.level, n).rank() != rank()) {
+                valid = false;
+                break;
+              }
+              if (added[getBlockInfoAll(I.level, n).blockID] == true) {
+                valid = false;
+              }
+            }
+
+          if (valid == false) {
+            i_off[d]--;
+            ready_[d] = true;
+          } else {
+            for (int i2 = base[d2] - i_off[d2]; i2 <= base[d2] + i_off[d2 + 3];
+                 i2++)
+              for (int i1 = base[d1] - i_off[d1];
+                   i1 <= base[d1] + i_off[d1 + 3]; i1++) {
+                long long n;
+                if (d == 0 || d == 3)
+                  n = getZforward(I.level, i0, i1, i2);
+                else if (d == 1 || d == 4)
+                  n = getZforward(I.level, i2, i0, i1);
+                else /*if (d==2||d==5)*/
+                  n = getZforward(I.level, i1, i2, i0);
+                newGroup.Z.push_back(n);
+                added[getBlockInfoAll(I.level, n).blockID] = true;
+              }
+          }
+        }
+        d = (d + 1) % 6;
+      } while (ready_[0] == false || ready_[1] == false || ready_[2] == false ||
+               ready_[3] == false || ready_[4] == false || ready_[5] == false);
+
+      const int ix_min = base[0] - i_off[0];
+      const int iy_min = base[1] - i_off[1];
+      const int iz_min = base[2] - i_off[2];
+      const int ix_max = base[0] + i_off[3];
+      const int iy_max = base[1] + i_off[4];
+      const int iz_max = base[2] + i_off[5];
+
+      long long n_base = getZforward(I.level, ix_min, iy_min, iz_min);
+
+      newGroup.i_min[0] = ix_min;
+      newGroup.i_min[1] = iy_min;
+      newGroup.i_min[2] = iz_min;
+
+      newGroup.i_max[0] = ix_max;
+      newGroup.i_max[1] = iy_max;
+      newGroup.i_max[2] = iz_max;
+
+      const BlockInfo &info = getBlockInfoAll(I.level, n_base);
+      newGroup.origin[0] = info.origin[0];
+      newGroup.origin[1] = info.origin[1];
+      newGroup.origin[2] = info.origin[2];
+
+      newGroup.NXX = (newGroup.i_max[0] - newGroup.i_min[0] + 1) * nX + 1;
+      newGroup.NYY = (newGroup.i_max[1] - newGroup.i_min[1] + 1) * nY + 1;
+      newGroup.NZZ = (newGroup.i_max[2] - newGroup.i_min[2] + 1) * nZ + 1;
+
+      MyGroups.push_back(newGroup);
+    }
+#else
+    for (unsigned int m = 0; m < Ngrids; m++) {
+      const BlockInfo &I = MyInfos[m];
+
+      if (added[I.blockID])
+        continue;
+      added[I.blockID] = true;
+      BlockGroup newGroup;
+
+      newGroup.level = I.level;
+      newGroup.h = I.h;
+      newGroup.Z.push_back(I.Z);
+
+      const int base[3] = {I.index[0], I.index[1], 0}; // I.index[2]
+      int i_off[4] = {};
+      bool ready_[4] = {};
+
+      int d = 0;
+      auto blk = getMaxBlocks();
+      do {
+        if (ready_[d] == false) {
+          bool valid = true;
+          i_off[d]++;
+          const int i0 =
+              (d < 2) ? (base[d] - i_off[d]) : (base[d - 2] + i_off[d]);
+          const int d0 = (d < 2) ? (d) % 2 : (d - 2) % 2;
+          const int d1 = (d < 2) ? (d + 1) % 2 : (d - 2 + 1) % 2;
+
+          for (int i1 = base[d1] - i_off[d1]; i1 <= base[d1] + i_off[d1 + 2];
+               i1++) {
+            if (valid == false)
+              break;
+
+            if (i0 < 0 || i1 < 0 || i0 >= blk[d0] * (1 << I.level) ||
+                i1 >= blk[d1] * (1 << I.level)) {
+              valid = false;
+              break;
+            }
+            long long n = (d == 0 || d == 2) ? getZforward(I.level, i0, i1)
+                                             : getZforward(I.level, i1, i0);
+
+            if (Tree(I.level, n).rank() != rank()) {
+              valid = false;
+              break;
+            }
+            if (added[getBlockInfoAll(I.level, n).blockID] == true) {
+              valid = false;
+            }
+          }
+
+          if (valid == false) {
+            i_off[d]--;
+            ready_[d] = true;
+          } else {
+            for (int i1 = base[d1] - i_off[d1]; i1 <= base[d1] + i_off[d1 + 2];
+                 i1++) {
+              long long n = (d == 0 || d == 2) ? getZforward(I.level, i0, i1)
+                                               : getZforward(I.level, i1, i0);
+              newGroup.Z.push_back(n);
+              added[getBlockInfoAll(I.level, n).blockID] = true;
+            }
+          }
+        }
+        d = (d + 1) % 4;
+      } while (ready_[0] == false || ready_[1] == false || ready_[2] == false ||
+               ready_[3] == false);
+
+      const int ix_min = base[0] - i_off[0];
+      const int iy_min = base[1] - i_off[1];
+      const int iz_min = 0; // base[2] - i_off[2];
+      const int ix_max = base[0] + i_off[2];
+      const int iy_max = base[1] + i_off[3];
+      const int iz_max = 0; // base[2] + i_off[5];
+
+      long long n_base = getZforward(I.level, ix_min, iy_min);
+
+      newGroup.i_min[0] = ix_min;
+      newGroup.i_min[1] = iy_min;
+      newGroup.i_min[2] = iz_min;
+
+      newGroup.i_max[0] = ix_max;
+      newGroup.i_max[1] = iy_max;
+      newGroup.i_max[2] = iz_max;
+
+      const BlockInfo &info = getBlockInfoAll(I.level, n_base);
+      newGroup.origin[0] = info.origin[0];
+      newGroup.origin[1] = info.origin[1];
+      newGroup.origin[2] = info.origin[2];
+
+      newGroup.NXX = (newGroup.i_max[0] - newGroup.i_min[0] + 1) * nX + 1;
+      newGroup.NYY = (newGroup.i_max[1] - newGroup.i_min[1] + 1) * nY + 1;
+      newGroup.NZZ = 2; //(newGroup.i_max[2] - newGroup.i_min[2] + 1)*nZ + 1;
+
+      MyGroups.push_back(newGroup);
+    }
+#endif
+  }
+};
+
+} // namespace cubism
+
+
+namespace cubism {
+
+/**
+ * @brief Describes a stencil of points.
+ *
+ * This struct is used by BlockLab to determine what halo cells need to be
+ * communicated between different GridBlocks. For a gridpoint (i,j,k) the
+ * gridpoints included in the stencil are points (i+ix,j+iy,k+iz), where
+ * ix,iy,iz are determined by the stencil starts and ends.
+ */
+struct StencilInfo {
+  int sx; ///< start of stencil in the x-direction (sx <= ix)
+  int sy; ///< start of stencil in the y-direction (sy <= iy)
+  int sz; ///< start of stencil in the z-direction (sz <= iz)
+  int ex; ///< end of stencil (+1) in the x-direction (ix < ex)
+  int ey; ///< end of stencil (+1) in the y-direction (iy < ey)
+  int ez; ///< end of stencil (+1) in the z-direction (iz < ez)
+  std::vector<int>
+      selcomponents; ///< Components ('members') of Element that will be used
+  bool tensorial;    ///< if false, stencil only includes points with
+                     ///< |ix|+|iy|+|iz| <= 1
+
+  /// Empty constructor.
+  StencilInfo() {}
+
+  /// Constructor
+  StencilInfo(int _sx, int _sy, int _sz, int _ex, int _ey, int _ez,
+              bool _tensorial, const std::vector<int> &components)
+      : sx(_sx), sy(_sy), sz(_sz), ex(_ex), ey(_ey), ez(_ez),
+        selcomponents(components), tensorial(_tensorial) {
+    assert(selcomponents.size() > 0);
+
+    if (!isvalid()) {
+      std::cout << "Stencilinfo instance not valid. Aborting\n";
+      abort();
+    }
+  }
+
+  /// Copy constructor.
+  StencilInfo(const StencilInfo &c)
+      : sx(c.sx), sy(c.sy), sz(c.sz), ex(c.ex), ey(c.ey), ez(c.ez),
+        selcomponents(c.selcomponents), tensorial(c.tensorial) {}
+
+  /// Return a vector with all integers that make up this StencilInfo.
+  std::vector<int> _all() const {
+    int extra[] = {sx, sy, sz, ex, ey, ez, (int)tensorial};
+    std::vector<int> all(selcomponents);
+    all.insert(all.end(), extra, extra + sizeof(extra) / sizeof(int));
+
+    return all;
+  }
+
+  /// Check if one stencil is contained in another.
+  bool operator<(StencilInfo s) const {
+    std::vector<int> me = _all(), you = s._all();
+
+    const int N = std::min(me.size(), you.size());
+
+    for (int i = 0; i < N; ++i)
+      if (me[i] < you[i])
+        return true;
+      else if (me[i] > you[i])
+        return false;
+
+    return me.size() < you.size();
+  }
+
+  /// Check if the ends are smaller than the starts of this stencil.
+  bool isvalid() const {
+    const bool not0 = selcomponents.size() == 0;
+    const bool not1 = sx > 0 || ex <= 0 || sx > ex;
+    const bool not2 = sy > 0 || ey <= 0 || sy > ey;
+    const bool not3 = sz > 0 || ez <= 0 || sz > ez;
+
+    return !(not0 || not1 || not2 || not3);
+  }
+};
+
+} // namespace cubism
+
+
+namespace cubism {
+
+template <typename Real>
+inline void pack(const Real *const srcbase, Real *const dst,
+                 const unsigned int gptfloats, int *selected_components,
+                 const int ncomponents, const int xstart, const int ystart,
+                 const int zstart, const int xend, const int yend,
+                 const int zend, const int BSX, const int BSY) {
+  if (gptfloats == 1) {
+    const int mod = (xend - xstart) % 4;
+    for (int idst = 0, iz = zstart; iz < zend; ++iz)
+      for (int iy = ystart; iy < yend; ++iy) {
+        for (int ix = xstart; ix < xend - mod; ix += 4, idst += 4) {
+          dst[idst + 0] = srcbase[ix + 0 + BSX * (iy + BSY * iz)];
+          dst[idst + 1] = srcbase[ix + 1 + BSX * (iy + BSY * iz)];
+          dst[idst + 2] = srcbase[ix + 2 + BSX * (iy + BSY * iz)];
+          dst[idst + 3] = srcbase[ix + 3 + BSX * (iy + BSY * iz)];
+        }
+        for (int ix = xend - mod; ix < xend; ix++, idst++) {
+          dst[idst] = srcbase[ix + BSX * (iy + BSY * iz)];
+        }
+      }
+  } else {
+    for (int idst = 0, iz = zstart; iz < zend; ++iz)
+      for (int iy = ystart; iy < yend; ++iy)
+        for (int ix = xstart; ix < xend; ++ix) {
+          const Real *src = srcbase + gptfloats * (ix + BSX * (iy + BSY * iz));
+          for (int ic = 0; ic < ncomponents; ic++, idst++)
+            dst[idst] = src[selected_components[ic]];
+        }
+  }
+}
+
+template <typename Real>
+inline void unpack_subregion(
+    const Real *const pack, Real *const dstbase, const unsigned int gptfloats,
+    const int *const selected_components, const int ncomponents,
+    const int srcxstart, const int srcystart, const int srczstart, const int LX,
+    const int LY, const int dstxstart, const int dstystart, const int dstzstart,
+    const int dstxend, const int dstyend, const int dstzend, const int xsize,
+    const int ysize, const int zsize) {
+  if (gptfloats == 1) {
+    const int mod = (dstxend - dstxstart) % 4;
+    for (int zd = dstzstart; zd < dstzend; ++zd)
+      for (int yd = dstystart; yd < dstyend; ++yd) {
+        const int offset = -dstxstart + srcxstart +
+                           LX * (yd - dstystart + srcystart +
+                                 LY * (zd - dstzstart + srczstart));
+        const int offset_dst = xsize * (yd + ysize * zd);
+        for (int xd = dstxstart; xd < dstxend - mod; xd += 4) {
+          dstbase[xd + 0 + offset_dst] = pack[xd + 0 + offset];
+          dstbase[xd + 1 + offset_dst] = pack[xd + 1 + offset];
+          dstbase[xd + 2 + offset_dst] = pack[xd + 2 + offset];
+          dstbase[xd + 3 + offset_dst] = pack[xd + 3 + offset];
+        }
+        for (int xd = dstxend - mod; xd < dstxend; ++xd) {
+          dstbase[xd + offset_dst] = pack[xd + offset];
+        }
+      }
+  } else {
+    for (int zd = dstzstart; zd < dstzend; ++zd)
+      for (int yd = dstystart; yd < dstyend; ++yd)
+        for (int xd = dstxstart; xd < dstxend; ++xd) {
+          Real *const dst =
+              dstbase + gptfloats * (xd + xsize * (yd + ysize * zd));
+          const Real *src =
+              pack + ncomponents * (xd - dstxstart + srcxstart +
+                                    LX * (yd - dstystart + srcystart +
+                                          LY * (zd - dstzstart + srczstart)));
+          for (int c = 0; c < ncomponents; ++c)
+            dst[selected_components[c]] = src[c];
+        }
+  }
+}
+
+} // namespace cubism
+
+// Functions suggested in "Numerical symmetry-preserving techniques for
+// low-dissipation shock-capturing schemes" equation (19) for summation that
+// does not favor a spatial direction
+
+namespace cubism {
+#ifdef PRESERVE_SYMMETRY
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function" // silence annoying warnings
+
+template <typename T> static T ConsistentSum(const T a, const T b, const T c) {
+  const T s1 = a + (b + c);
+  const T s2 = b + (c + a);
+  const T s3 = c + (a + b);
+  return 0.5 * (std::min({s1, s2, s3}) + std::max({s1, s2, s3}));
+}
+
+template <typename T>
+static T ConsistentSum(const T a, const T b, const T c, const T d) {
+  const T s1 = (a + b) + (c + d);
+  const T s2 = (c + a) + (b + d);
+  const T s3 = (b + c) + (a + d);
+  return 0.5 * (std::min({s1, s2, s3}) + std::max({s1, s2, s3}));
+}
+
+template <typename T>
+static T ConsistentAverage(const T e000, const T e001, const T e010,
+                           const T e011, const T e100, const T e101,
+                           const T e110, const T e111) {
+  const T a = e000 + e111;
+  const T b = e001 + e110;
+  const T c = e010 + e101;
+  const T d = e100 + e011;
+  return 0.125 * ConsistentSum(a, b, c, d);
+}
+
+#pragma GCC diagnostic pop
+#endif
+} // namespace cubism
+
+
+namespace cubism {
+
+/** \brief Auxiliary class for SynchronizerMPI_AMR; similar to std::vector
+ * however, the stored data does not decrease in size, it can only increase (the
+ * use of this class instead of std::vector in AMR_Synchronizer resulted in
+ * faster performance). */
+template <typename T> class GrowingVector {
+  size_t pos;
+  size_t s;
+
+public:
+  std::vector<T> v;
+  GrowingVector() {
+    pos = 0;
+    s = 0;
+  }
+  GrowingVector(size_t size) { resize(size); }
+  GrowingVector(size_t size, T value) { resize(size, value); }
+
+  void resize(size_t new_size, T value) {
+    v.resize(new_size, value);
+    s = new_size;
+  }
+  void resize(size_t new_size) {
+    v.resize(new_size);
+    s = new_size;
+  }
+
+  size_t size() { return s; }
+
+  void clear() {
+    pos = 0;
+    s = 0;
+  }
+
+  void push_back(T value) {
+    if (pos < v.size())
+      v[pos] = value;
+    else
+      v.push_back(value);
+    pos++;
+    s++;
+  }
+
+  T *data() { return v.data(); }
+
+  T &operator[](size_t i) { return v[i]; }
+
+  T &back() { return v[pos - 1]; }
+  typename std::vector<T>::iterator begin() { return v.begin(); }
+  typename std::vector<T>::iterator end() { return v.begin() + pos; }
+
+  void EraseAll() {
+    v.clear();
+    pos = 0;
+    s = 0;
+  }
+
+  ~GrowingVector() { v.clear(); }
+};
+
+/** \brief Auxiliary struct for SynchronizerMPI_AMR; describes how two adjacent
+ * blocks touch.*/
+struct Interface {
+  BlockInfo *infos[2]; ///< the two blocks of the interface
+  int icode[2]; ///< Two integers from 0 to 26. Each integer can be decoded to a
+                ///< 3-digit number ABC. icode[0] = 1-10 (A=1,B=-1,C=0) means
+                ///< Block 1 is at the +x,-y side of Block 0.
+  bool CoarseStencil; ///< =true if the blocks need to exchange cells of their
+                      ///< parent blocks
+  bool ToBeKept; ///< false if this inteface is a subset of another inteface
+                 ///< that will be sent anyway
+  int dis;       ///< auxiliary variable
+
+  /// Class constructor
+  Interface(BlockInfo &i0, BlockInfo &i1, const int a_icode0,
+            const int a_icode1) {
+    infos[0] = &i0;
+    infos[1] = &i1;
+    icode[0] = a_icode0;
+    icode[1] = a_icode1;
+    CoarseStencil = false;
+    ToBeKept = true;
+    dis = 0;
+  }
+
+  bool operator<(const Interface &other) const {
+    if (infos[0]->blockID_2 == other.infos[0]->blockID_2) {
+      if (icode[0] == other.icode[0]) {
+        if (infos[1]->blockID_2 == other.infos[1]->blockID_2) {
+          return (icode[1] < other.icode[1]);
+        }
+        return (infos[1]->blockID_2 < other.infos[1]->blockID_2);
+      }
+      return (icode[0] < other.icode[0]);
+    }
+    return (infos[0]->blockID_2 < other.infos[0]->blockID_2);
+  }
+};
+
+/** Auxiliary struct for SynchronizerMPI_AMR; similar to StencilInfo.
+ * It is possible that the halo cells needed by two or more blocks overlap. To
+ * avoid sending the same data twice, this struct has the option to keep track
+ * of other MyRanges that are contained in it and do not need to be
+ * sent/received.
+ */
+struct MyRange {
+  std::vector<int>
+      removedIndices;  ///< keep track of all 'index' from other MyRange
+                       ///< instances that are contained in this one
+  int index;           ///< index of this instance of MyRange
+  int sx;              ///< stencil start in x-direction
+  int sy;              ///< stencil start in y-direction
+  int sz;              ///< stencil start in z-direction
+  int ex;              ///< stencil end in x-direction
+  int ey;              ///< stencil end in y-direction
+  int ez;              ///< stencil end in z-direction
+  bool needed{true};   ///< set to false if this MyRange is contained in another
+  bool avg_down{true}; ///< set to true if gridpoints of this MyRange will be
+                       ///< averaged down for coarse stencil interpolation
+
+  /// check if another MyRange is contained here
+  bool contains(MyRange &r) const {
+    if (avg_down != r.avg_down)
+      return false;
+    int V = (ez - sz) * (ey - sy) * (ex - sx);
+    int Vr = (r.ez - r.sz) * (r.ey - r.sy) * (r.ex - r.sx);
+    return (sx <= r.sx && r.ex <= ex) && (sy <= r.sy && r.ey <= ey) &&
+           (sz <= r.sz && r.ez <= ez) && (Vr < V);
+  }
+
+  /// keep track of indices of other MyRanges that are contained here
+  void Remove(const MyRange &other) {
+    size_t s = removedIndices.size();
+    removedIndices.resize(s + other.removedIndices.size());
+    for (size_t i = 0; i < other.removedIndices.size(); i++)
+      removedIndices[s + i] = other.removedIndices[i];
+  }
+};
+
+/** Auxiliary struct for SynchronizerMPI_AMR; Meta-data of buffers sent among
+ * processes. Data is received in one contiguous buffer. This struct helps
+ * unpack the buffer and put data in the correct locations.
+ */
+struct UnPackInfo {
+  int offset;    ///< Offset in the buffer where the data related to this
+                 ///< UnPackInfo starts.
+  int lx;        ///< Total size of data in x-direction
+  int ly;        ///< Total size of data in y-direction
+  int lz;        ///< Total size of data in z-direction
+  int srcxstart; ///< Where in x-direction to start receiving data
+  int srcystart; ///< Where in y-direction to start receiving data
+  int srczstart; ///< Where in z-direction to start receiving data
+  int LX;
+  int LY;
+  int CoarseVersionOffset; ///< Offset in the buffer where the coarsened data
+                           ///< related to this UnPackInfo starts.
+  int CoarseVersionLX;
+  int CoarseVersionLY;
+  int CoarseVersionsrcxstart; ///< Where in x-direction to start receiving
+                              ///< coarsened data
+  int CoarseVersionsrcystart; ///< Where in y-direction to start receiving
+                              ///< coarsened data
+  int CoarseVersionsrczstart; ///< Where in z-direction to start receiving
+                              ///< coarsened data
+  int level;                  ///< refinement level of data
+  int icode; ///< Integer from 0 to 26, can be decoded to a 3-digit number ABC.
+             ///< icode = 1-10 (A=1,B=-1,C=0) means Block 1 is at the +x,-y side
+             ///< of Block 0.
+  int rank;  ///< rank from which this data is received
+  int index_0;          ///< index of Block in x-direction that sent this data
+  int index_1;          ///< index of Block in y-direction that sent this data
+  int index_2;          ///< index of Block in z-direction that sent this data
+  long long IDreceiver; ///< unique blockID2 of receiver
+};
+
+/** Auxiliary struct for SynchronizerMPI_AMR; keeps track of stencil and range
+ * sizes that need to be sent/received. For a block in 3D, there are a total of
+ * 26 possible directions that might require halo cells. There are also four
+ * types of halo cells to exchange, based on the refinement level of the two
+ *  neighboring blocks: 1)same level 2)coarse-fine 3)fine-coarse 4)same level
+ * that also need to exchange averaged down data, in order to perform
+ * coarse-fine interpolation for other blocks. This class creates 4 x 26
+ * (actually 4 x 27) MyRange instances, based on a given StencilInfo.
+ */
+struct StencilManager {
+  const StencilInfo stencil; ///< stencil to send/receive
+  const StencilInfo
+      Cstencil; ///< stencil used by BlockLab for coarse-fine interpolation
+  int nX;       ///< Block size if x-direction
+  int nY;       ///< Block size if y-direction
+  int nZ;       ///< Block size if z-direction
+  int sLength[3 * 27 * 3]; ///< Length of all possible stencils to send/receive
+  std::array<MyRange, 3 * 27>
+      AllStencils;      ///< All possible stencils to send/receive
+  MyRange Coarse_Range; ///< range for Cstencil
+
+  /// Class constructor
+  StencilManager(StencilInfo a_stencil, StencilInfo a_Cstencil, int a_nX,
+                 int a_nY, int a_nZ)
+      : stencil(a_stencil), Cstencil(a_Cstencil), nX(a_nX), nY(a_nY), nZ(a_nZ) {
+    const int sC[3] = {(stencil.sx - 1) / 2 + Cstencil.sx,
+                       (stencil.sy - 1) / 2 + Cstencil.sy,
+                       (stencil.sz - 1) / 2 + Cstencil.sz};
+    const int eC[3] = {stencil.ex / 2 + Cstencil.ex,
+                       stencil.ey / 2 + Cstencil.ey,
+                       stencil.ez / 2 + Cstencil.ez};
+
+    for (int icode = 0; icode < 27; icode++) {
+      const int code[3] = {icode % 3 - 1, (icode / 3) % 3 - 1,
+                           (icode / 9) % 3 - 1};
+
+      // This also works for DIMENSION=2 and code[2]=0
+      // Same level sender and receiver
+      MyRange &range0 = AllStencils[icode];
+      range0.sx = code[0] < 1 ? (code[0] < 0 ? nX + stencil.sx : 0) : 0;
+      range0.sy = code[1] < 1 ? (code[1] < 0 ? nY + stencil.sy : 0) : 0;
+      range0.sz = code[2] < 1 ? (code[2] < 0 ? nZ + stencil.sz : 0) : 0;
+      range0.ex = code[0] < 1 ? nX : stencil.ex - 1;
+      range0.ey = code[1] < 1 ? nY : stencil.ey - 1;
+      range0.ez = code[2] < 1 ? nZ : stencil.ez - 1;
+      sLength[3 * icode + 0] = range0.ex - range0.sx;
+      sLength[3 * icode + 1] = range0.ey - range0.sy;
+      sLength[3 * icode + 2] = range0.ez - range0.sz;
+
+      // Fine sender, coarse receiver
+      // Fine sender just needs to send "double" the stencil, so that what it
+      // sends gets averaged down
+      MyRange &range1 = AllStencils[icode + 27];
+      range1.sx = code[0] < 1 ? (code[0] < 0 ? nX + 2 * stencil.sx : 0) : 0;
+      range1.sy = code[1] < 1 ? (code[1] < 0 ? nY + 2 * stencil.sy : 0) : 0;
+      range1.sz = code[2] < 1 ? (code[2] < 0 ? nZ + 2 * stencil.sz : 0) : 0;
+      range1.ex = code[0] < 1 ? nX : 2 * (stencil.ex - 1);
+      range1.ey = code[1] < 1 ? nY : 2 * (stencil.ey - 1);
+      range1.ez = code[2] < 1 ? nZ : 2 * (stencil.ez - 1);
+      sLength[3 * (icode + 27) + 0] = (range1.ex - range1.sx) / 2;
+      sLength[3 * (icode + 27) + 1] = (range1.ey - range1.sy) / 2;
+#if DIMENSION == 3
+      sLength[3 * (icode + 27) + 2] = (range1.ez - range1.sz) / 2;
+#else
+      sLength[3 * (icode + 27) + 2] = 1;
+#endif
+
+      // Coarse sender, fine receiver
+      // Coarse sender just needs to send "half" the stencil plus extra cells
+      // for coarse-fine interpolation
+      MyRange &range2 = AllStencils[icode + 2 * 27];
+      range2.sx = code[0] < 1 ? (code[0] < 0 ? nX / 2 + sC[0] : 0) : 0;
+      range2.sy = code[1] < 1 ? (code[1] < 0 ? nY / 2 + sC[1] : 0) : 0;
+      range2.ex = code[0] < 1 ? nX / 2 : eC[0] - 1;
+      range2.ey = code[1] < 1 ? nY / 2 : eC[1] - 1;
+#if DIMENSION == 3
+      range2.sz = code[2] < 1 ? (code[2] < 0 ? nZ / 2 + sC[2] : 0) : 0;
+      range2.ez = code[2] < 1 ? nZ / 2 : eC[2] - 1;
+#else
+      range2.sz = 0;
+      range2.ez = 1;
+#endif
+      sLength[3 * (icode + 2 * 27) + 0] = range2.ex - range2.sx;
+      sLength[3 * (icode + 2 * 27) + 1] = range2.ey - range2.sy;
+      sLength[3 * (icode + 2 * 27) + 2] = range2.ez - range2.sz;
+    }
+  }
+
+  /// Return stencil XxYxZ dimensions for Cstencil, based on integer icode
+  void CoarseStencilLength(const int icode, int *L) const {
+    L[0] = sLength[3 * (icode + 2 * 27) + 0];
+    L[1] = sLength[3 * (icode + 2 * 27) + 1];
+    L[2] = sLength[3 * (icode + 2 * 27) + 2];
+  }
+
+  /// Return stencil XxYxZ dimensions for Cstencil, based on integer icode and
+  /// refinement level of sender/receiver
+  void DetermineStencilLength(const int level_sender, const int level_receiver,
+                              const int icode, int *L) {
+    if (level_sender == level_receiver) {
+      L[0] = sLength[3 * icode + 0];
+      L[1] = sLength[3 * icode + 1];
+      L[2] = sLength[3 * icode + 2];
+    } else if (level_sender > level_receiver) {
+      L[0] = sLength[3 * (icode + 27) + 0];
+      L[1] = sLength[3 * (icode + 27) + 1];
+      L[2] = sLength[3 * (icode + 27) + 2];
+    } else {
+      L[0] = sLength[3 * (icode + 2 * 27) + 0];
+      L[1] = sLength[3 * (icode + 2 * 27) + 1];
+      L[2] = sLength[3 * (icode + 2 * 27) + 2];
+    }
+  }
+
+  /// Determine which stencil to send, based on interface type of two blocks
+  MyRange &DetermineStencil(const Interface &f, bool CoarseVersion = false) {
+    if (CoarseVersion) {
+      AllStencils[f.icode[1] + 2 * 27].needed = true;
+      return AllStencils[f.icode[1] + 2 * 27];
+    } else {
+      if (f.infos[0]->level == f.infos[1]->level) {
+        AllStencils[f.icode[1]].needed = true;
+        return AllStencils[f.icode[1]];
+      } else if (f.infos[0]->level > f.infos[1]->level) {
+        AllStencils[f.icode[1] + 27].needed = true;
+        return AllStencils[f.icode[1] + 27];
+      } else {
+        Coarse_Range.needed = true;
+        const int code[3] = {f.icode[1] % 3 - 1, (f.icode[1] / 3) % 3 - 1,
+                             (f.icode[1] / 9) % 3 - 1};
+
+        const int s[3] = {
+            code[0] < 1
+                ? (code[0] < 0 ? ((stencil.sx - 1) / 2 + Cstencil.sx) : 0)
+                : nX / 2,
+            code[1] < 1
+                ? (code[1] < 0 ? ((stencil.sy - 1) / 2 + Cstencil.sy) : 0)
+                : nY / 2,
+            code[2] < 1
+                ? (code[2] < 0 ? ((stencil.sz - 1) / 2 + Cstencil.sz) : 0)
+                : nZ / 2};
+
+        const int e[3] = {
+            code[0] < 1 ? (code[0] < 0 ? 0 : nX / 2)
+                        : nX / 2 + stencil.ex / 2 + Cstencil.ex - 1,
+            code[1] < 1 ? (code[1] < 0 ? 0 : nY / 2)
+                        : nY / 2 + stencil.ey / 2 + Cstencil.ey - 1,
+            code[2] < 1 ? (code[2] < 0 ? 0 : nZ / 2)
+                        : nZ / 2 + stencil.ez / 2 + Cstencil.ez - 1};
+
+        const int base[3] = {(f.infos[1]->index[0] + code[0]) % 2,
+                             (f.infos[1]->index[1] + code[1]) % 2,
+                             (f.infos[1]->index[2] + code[2]) % 2};
+
+        int Cindex_true[3];
+        for (int d = 0; d < 3; d++)
+          Cindex_true[d] = f.infos[1]->index[d] + code[d];
+
+        int CoarseEdge[3];
+
+        CoarseEdge[0] = (code[0] == 0)
+                            ? 0
+                            : (((f.infos[1]->index[0] % 2 == 0) &&
+                                (Cindex_true[0] > f.infos[1]->index[0])) ||
+                               ((f.infos[1]->index[0] % 2 == 1) &&
+                                (Cindex_true[0] < f.infos[1]->index[0])))
+                                  ? 1
+                                  : 0;
+        CoarseEdge[1] = (code[1] == 0)
+                            ? 0
+                            : (((f.infos[1]->index[1] % 2 == 0) &&
+                                (Cindex_true[1] > f.infos[1]->index[1])) ||
+                               ((f.infos[1]->index[1] % 2 == 1) &&
+                                (Cindex_true[1] < f.infos[1]->index[1])))
+                                  ? 1
+                                  : 0;
+        CoarseEdge[2] = (code[2] == 0)
+                            ? 0
+                            : (((f.infos[1]->index[2] % 2 == 0) &&
+                                (Cindex_true[2] > f.infos[1]->index[2])) ||
+                               ((f.infos[1]->index[2] % 2 == 1) &&
+                                (Cindex_true[2] < f.infos[1]->index[2])))
+                                  ? 1
+                                  : 0;
+
+        Coarse_Range.sx = s[0] + std::max(code[0], 0) * nX / 2 +
+                          (1 - abs(code[0])) * base[0] * nX / 2 - code[0] * nX +
+                          CoarseEdge[0] * code[0] * nX / 2;
+        Coarse_Range.sy = s[1] + std::max(code[1], 0) * nY / 2 +
+                          (1 - abs(code[1])) * base[1] * nY / 2 - code[1] * nY +
+                          CoarseEdge[1] * code[1] * nY / 2;
+#if DIMENSION == 3
+        Coarse_Range.sz = s[2] + std::max(code[2], 0) * nZ / 2 +
+                          (1 - abs(code[2])) * base[2] * nZ / 2 - code[2] * nZ +
+                          CoarseEdge[2] * code[2] * nZ / 2;
+#else
+        Coarse_Range.sz = 0;
+#endif
+
+        Coarse_Range.ex = e[0] + std::max(code[0], 0) * nX / 2 +
+                          (1 - abs(code[0])) * base[0] * nX / 2 - code[0] * nX +
+                          CoarseEdge[0] * code[0] * nX / 2;
+        Coarse_Range.ey = e[1] + std::max(code[1], 0) * nY / 2 +
+                          (1 - abs(code[1])) * base[1] * nY / 2 - code[1] * nY +
+                          CoarseEdge[1] * code[1] * nY / 2;
+#if DIMENSION == 3
+        Coarse_Range.ez = e[2] + std::max(code[2], 0) * nZ / 2 +
+                          (1 - abs(code[2])) * base[2] * nZ / 2 - code[2] * nZ +
+                          CoarseEdge[2] * code[2] * nZ / 2;
+#else
+        Coarse_Range.ez = 1;
+#endif
+
+        return Coarse_Range;
+      }
+    }
+  }
+
+  /// Fix MyRange classes that contain other MyRange classes, in order to avoid
+  /// sending the same data twice
+  void __FixDuplicates(const Interface &f, const Interface &f_dup, int lx,
+                       int ly, int lz, int lx_dup, int ly_dup, int lz_dup,
+                       int &sx, int &sy, int &sz) {
+    const BlockInfo &receiver = *f.infos[1];
+    const BlockInfo &receiver_dup = *f_dup.infos[1];
+    if (receiver.level >= receiver_dup.level) {
+      int icode_dup = f_dup.icode[1];
+      const int code_dup[3] = {icode_dup % 3 - 1, (icode_dup / 3) % 3 - 1,
+                               (icode_dup / 9) % 3 - 1};
+      sx = (lx == lx_dup || code_dup[0] != -1) ? 0 : lx - lx_dup;
+      sy = (ly == ly_dup || code_dup[1] != -1) ? 0 : ly - ly_dup;
+      sz = (lz == lz_dup || code_dup[2] != -1) ? 0 : lz - lz_dup;
+    } else {
+      MyRange &range = DetermineStencil(f);
+      MyRange &range_dup = DetermineStencil(f_dup);
+      sx = range_dup.sx - range.sx;
+      sy = range_dup.sy - range.sy;
+      sz = range_dup.sz - range.sz;
+    }
+  }
+
+  /// Fix MyRange classes that contain other MyRange classes, in order to avoid
+  /// sending the same data twice
+  void __FixDuplicates2(const Interface &f, const Interface &f_dup, int &sx,
+                        int &sy, int &sz) {
+    if (f.infos[0]->level != f.infos[1]->level ||
+        f_dup.infos[0]->level != f_dup.infos[1]->level)
+      return;
+    MyRange &range = DetermineStencil(f, true);
+    MyRange &range_dup = DetermineStencil(f_dup, true);
+    sx = range_dup.sx - range.sx;
+    sy = range_dup.sy - range.sy;
+    sz = range_dup.sz - range.sz;
+  }
+};
+
+/** Auxiliary struct for SynchronizerMPI_AMR; stored a number of halo blocks
+ * that received their halo cells from a particular set of ranks.
+ */
+struct HaloBlockGroup {
+  std::vector<BlockInfo *> myblocks; ///< Halo blocks for this group.
+  std::set<int> myranks;             ///< MPI ranks for this group.
+  bool ready =
+      false; ///< Check whether communication for this group has completed.
+};
+
+/**
+ *  @brief Class responsible for halo cell exchange between different MPI
+ * processes. This class works together with BlockLabMPI to fill the halo cells
+ * needed for each GridBlock. To overlap communication and computation, it
+ * distinguishes between 'inner' blocks and 'halo' blocks. Inner blocks do not
+ * need halo cells from other MPI processes, so they can be immediately filled;
+ * halo blocks are at the boundary of a rank and require cells owned by other
+ * ranks. This class will initiate communication for halo blocks and will
+ * provide an array with pointers to inner blocks. While waiting for
+ * communication to complete, the user can operate on inner blocks, which allows
+ * for communication-computation overlap.
+ *
+ *  An instance of this class is constructed by providing the StencilInfo (aka
+ * the stencil) for a particular computation, in the class constructor. Then,
+ * for a fixed mesh configuration, one call to '_Setup()' is required. This
+ * identifies the boundaries of each rank, its neighbors and the types of
+ * interfaces (faces/edges/corners) shared by two blocks that belong to two
+ * different ranks. '_Setup()' will then have to be called again only when the
+ * mesh changes (this call is done by the MeshAdaptation class).
+ *
+ *  To use this class and send/receive halo cells, the 'sync()' function needs
+ * to be called. This initiates communication and MPI 'sends' and 'receives'.
+ * Once called, the inner and halo blocks (with their halo cells) can be
+ * accessed through 'avail_inner' and 'avail_halo'. Note that calling
+ * 'avail_halo' will result in waiting time, for the communication of halo cells
+ * to complete. Therefore, 'avail_inner' should be called first, while
+ * communication is performed in the background. Once the inner blocks are
+ * processed, 'avail_halo' should be used to process the outer/halo blocks.
+ *
+ *  @tparam Real: type of data to be sent/received (double/float etc.)
+ *  @tparam TGrid: type of grid to operate on (should be GridMPI)
+ */
+template <typename Real, typename TGrid> class SynchronizerMPI_AMR {
+  MPI_Comm comm; ///< MPI communicator, same as the communicator from 'grid'
+  int rank;      ///< MPI process ID, same as the ID from 'grid'
+  int size;      ///< total number of processes, same as number from 'grid'
+  StencilInfo
+      stencil; ///< stencil associated with kernel (advection,diffusion etc.)
+  StencilInfo Cstencil; ///< stencil required to do coarse-fine interpolation
+  TGrid *grid;          ///< grid which owns blocks that need ghost cells
+  int nX;               ///< size of each block in x-direction
+  int nY;               ///< size of each block in y-direction
+  int nZ;               ///< size of each block in z-direction
+  MPI_Datatype MPIREAL; ///< MPI datatype matching template parameter 'Real'
+
+  std::vector<BlockInfo *>
+      inner_blocks; ///< will contain inner blocks with loaded ghost cells
+  std::vector<BlockInfo *>
+      halo_blocks; ///< will contain outer blocks with loaded ghost cells
+
+  std::vector<GrowingVector<Real>>
+      send_buffer; ///< send_buffer[i] contains data to send to rank i
+  std::vector<GrowingVector<Real>>
+      recv_buffer; ///< recv_buffer[i] will receive data from rank i
+
+  std::vector<MPI_Request>
+      requests; ///< requests for non-blocking sends/receives
+
+  std::vector<int> send_buffer_size; ///< sizes of send_buffer (communicated
+                                     ///< before actual data)
+  std::vector<int> recv_buffer_size; ///< sizes of recv_buffer (communicated
+                                     ///< before actual data)
+
+  std::set<int> Neighbors; ///< IDs of neighboring MPI processes
+
+  GrowingVector<GrowingVector<UnPackInfo>>
+      myunpacks; ///< vector of vectors of UnPackInfos; unpacks[i] contains all
+                 ///< UnPackInfos needed for a block with halo_blockID=i
+
+  StencilManager SM;
+
+  const unsigned int
+      gptfloats; ///< number of Reals (doubles/float) each Element from Grid has
+  const int NC;  ///< number of components from each Element to send/receive
+
+  /// meta-data for the parts of a particular block that will be sent to another
+  /// rank
+  struct PackInfo {
+    Real *block; ///< Pointer to the first element of the block whose data will
+                 ///< be sent
+    Real *pack;  ///< Pointer to the buffer where the block's elements will be
+                 ///< copied
+    int sx; ///< Start of the block's subset that will be sent (in x-direction)
+    int sy; ///< Start of the block's subset that will be sent (in y-direction)
+    int sz; ///< Start of the block's subset that will be sent (in z-direction)
+    int ex; ///< End of the block's subset that will be sent (in x-direction)
+    int ey; ///< End of the block's subset that will be sent (in y-direction)
+    int ez; ///< End of the block's subset that will be sent (in z-direction)
+  };
+  std::vector<GrowingVector<PackInfo>>
+      send_packinfos; ///< vector of vectors of PackInfos; send_packinfos[i]
+                      ///< contains all the PackInfos to send to rank i
+
+  std::vector<GrowingVector<Interface>>
+      send_interfaces; ///< vector of vectors of Interfaces; send_interfaces[i]
+                       ///< contains all the Interfaces this rank will send to
+                       ///< rank i
+  std::vector<GrowingVector<Interface>>
+      recv_interfaces; ///< vector of vectors of Interfaces; recv_interfaces[i]
+                       ///< contains all the Interfaces this rank will receive
+                       ///< from rank i
+
+  std::vector<std::vector<int>>
+      ToBeAveragedDown; ///< vector of vectors of Interfaces that need to be
+                        ///< averaged down when sent
+
+  bool use_averages; ///< if true, fine blocks average down their cells to
+                     ///< provide halo cells for coarse blocks (2nd order
+                     ///< accurate). If false, they perform a 3rd-order accurate
+                     ///< interpolation instead (which is the accuracy needed to
+                     ///< compute 2nd derivatives).
+
+  std::unordered_map<std::string, HaloBlockGroup>
+      mapofHaloBlockGroups; ///< Maps groups of ranks (encoded to strings) to
+                            ///< groups of halo blocks for communication.
+
+  std::unordered_map<int, MPI_Request *>
+      mapofrequests; ///< Maps each request for communication to an integer
+
+  /// Auxiliary struct used to avoid sending the same data twice
+  struct DuplicatesManager {
+    /// Auxiliary struct to detect and remove duplicate Interfaces
+    struct cube // could be more efficient
+    {
+      GrowingVector<MyRange>
+          compass[27]; ///< All possible MyRange stencil that will be exchanged
+
+      void clear() {
+        for (int i = 0; i < 27; i++)
+          compass[i].clear();
+      }
+
+      cube() {}
+
+      /// Returns the MyRange objects that will be kept
+      std::vector<MyRange *> keepEl() {
+        std::vector<MyRange *> retval;
+        for (int i = 0; i < 27; i++)
+          for (size_t j = 0; j < compass[i].size(); j++)
+            if (compass[i][j].needed)
+              retval.push_back(&compass[i][j]);
+
+        return retval;
+      }
+
+      /// Will return the indices of the removed MyRange objects (in v)
+      void __needed(std::vector<int> &v) {
+        static constexpr std::array<int, 3> faces_and_edges[18] = {
+            {0, 1, 1}, {2, 1, 1}, {1, 0, 1}, {1, 2, 1}, {1, 1, 0}, {1, 1, 2},
+
+            {0, 0, 1}, {0, 2, 1}, {2, 0, 1}, {2, 2, 1}, {1, 0, 0}, {1, 0, 2},
+            {1, 2, 0}, {1, 2, 2}, {0, 1, 0}, {0, 1, 2}, {2, 1, 0}, {2, 1, 2}};
+
+        for (auto &f : faces_and_edges)
+          if (compass[f[0] + f[1] * 3 + f[2] * 9].size() != 0) {
+            bool needme = false;
+            auto &me = compass[f[0] + f[1] * 3 + f[2] * 9];
+
+            for (size_t j1 = 0; j1 < me.size(); j1++)
+              if (me[j1].needed) {
+                needme = true;
+                for (size_t j2 = 0; j2 < me.size(); j2++)
+                  if (me[j2].needed && me[j2].contains(me[j1])) {
+                    me[j1].needed = false;
+                    me[j2].removedIndices.push_back(me[j1].index);
+                    me[j2].Remove(me[j1]);
+                    v.push_back(me[j1].index);
+                    break;
+                  }
+              }
+
+            if (!needme)
+              continue;
+
+            const int imax = (f[0] == 1) ? 2 : f[0];
+            const int imin = (f[0] == 1) ? 0 : f[0];
+            const int jmax = (f[1] == 1) ? 2 : f[1];
+            const int jmin = (f[1] == 1) ? 0 : f[1];
+            const int kmax = (f[2] == 1) ? 2 : f[2];
+            const int kmin = (f[2] == 1) ? 0 : f[2];
+
+            for (int k = kmin; k <= kmax; k++)
+              for (int j = jmin; j <= jmax; j++)
+                for (int i = imin; i <= imax; i++) {
+                  if (i == f[0] && j == f[1] && k == f[2])
+                    continue;
+                  auto &other = compass[i + j * 3 + k * 9];
+
+                  for (size_t j1 = 0; j1 < other.size(); j1++) {
+                    auto &o = other[j1];
+                    if (o.needed)
+                      for (size_t k1 = 0; k1 < me.size(); k1++) {
+                        auto &m = me[k1];
+                        if (m.needed && m.contains(o)) {
+                          o.needed = false;
+                          m.removedIndices.push_back(o.index);
+                          m.Remove(o);
+                          v.push_back(o.index);
+                          break;
+                        }
+                      }
+                  }
+                }
+          }
+      }
+    };
+    cube C;
+
+    std::vector<int> offsets; ///< As the send buffer for each rank is being
+                              ///< filled, offset[i] is the current offset where
+                              ///< sent data is located in the send buffer.
+    std::vector<int>
+        offsets_recv; ///< As the send buffer for each rank is being filled,
+                      ///< offset[i] is the current offset where sent data is
+                      ///< located in the send buffer.
+    SynchronizerMPI_AMR *Synch_ptr; ///< pointer to the SynchronizerMPI_AMR for
+                                    ///< which to remove duplicate data
+    std::vector<int> positions;
+    std::vector<size_t> sizes;
+
+    DuplicatesManager(SynchronizerMPI_AMR &Synch) {
+      positions.resize(Synch.size);
+      sizes.resize(Synch.size);
+      offsets.resize(Synch.size, 0);
+      offsets_recv.resize(Synch.size, 0);
+      Synch_ptr = &Synch;
+    }
+
+    /// Adds an element to 'positions[r]'
+    void Add(const int r, const int index) {
+      if (sizes[r] == 0)
+        positions[r] = index;
+      sizes[r]++;
+    }
+
+    /**Remove duplicate data that will be sent to one rank.
+     * @param r: the rank where the data will be sent
+     * @param f: all the Interfaces between rank r and this rank
+     * @param total_size: eventual size of the send buffer to rank r, after
+     * duplicate Interfaces are removed.
+     */
+    void RemoveDuplicates(const int r, std::vector<Interface> &f,
+                          int &total_size) {
+      if (sizes[r] == 0)
+        return;
+
+      bool skip_needed = false;
+      const int nc = Synch_ptr->getstencil().selcomponents.size();
+
+      std::sort(f.begin() + positions[r], f.begin() + sizes[r] + positions[r]);
+
+      C.clear();
+      for (size_t i = 0; i < sizes[r]; i++) {
+        C.compass[f[i + positions[r]].icode[0]].push_back(
+            Synch_ptr->SM.DetermineStencil(f[i + positions[r]]));
+        C.compass[f[i + positions[r]].icode[0]].back().index = i + positions[r];
+        C.compass[f[i + positions[r]].icode[0]].back().avg_down =
+            (f[i + positions[r]].infos[0]->level >
+             f[i + positions[r]].infos[1]->level);
+        if (skip_needed == false)
+          skip_needed = f[i + positions[r]].CoarseStencil;
+      }
+
+      if (skip_needed == false) {
+        std::vector<int> remEl;
+        C.__needed(remEl);
+        for (size_t k = 0; k < remEl.size(); k++)
+          f[remEl[k]].ToBeKept = false;
+      }
+
+      int L[3] = {0, 0, 0};
+      int Lc[3] = {0, 0, 0};
+      for (auto &i : C.keepEl()) {
+        const int k = i->index;
+        Synch_ptr->SM.DetermineStencilLength(
+            f[k].infos[0]->level, f[k].infos[1]->level, f[k].icode[1], L);
+        const int V = L[0] * L[1] * L[2];
+        total_size += V;
+        f[k].dis = offsets[r];
+        if (f[k].CoarseStencil) {
+          Synch_ptr->SM.CoarseStencilLength(f[k].icode[1], Lc);
+          const int Vc = Lc[0] * Lc[1] * Lc[2];
+          total_size += Vc;
+          offsets[r] += Vc * nc;
+        }
+        offsets[r] += V * nc;
+        for (size_t kk = 0; kk < (*i).removedIndices.size(); kk++)
+          f[i->removedIndices[kk]].dis = f[k].dis;
+      }
+    }
+
+    void RemoveDuplicates_recv(std::vector<Interface> &f, int &total_size,
+                               const int otherrank, const size_t start,
+                               const size_t finish) {
+      bool skip_needed = false;
+      const int nc = Synch_ptr->getstencil().selcomponents.size();
+
+      C.clear();
+      for (size_t i = start; i < finish; i++) {
+        C.compass[f[i].icode[0]].push_back(
+            Synch_ptr->SM.DetermineStencil(f[i]));
+        C.compass[f[i].icode[0]].back().index = i;
+        C.compass[f[i].icode[0]].back().avg_down =
+            (f[i].infos[0]->level > f[i].infos[1]->level);
+        if (skip_needed == false)
+          skip_needed = f[i].CoarseStencil;
+      }
+
+      if (skip_needed == false) {
+        std::vector<int> remEl;
+        C.__needed(remEl);
+        for (size_t k = 0; k < remEl.size(); k++)
+          f[remEl[k]].ToBeKept = false;
+      }
+
+      for (auto &i : C.keepEl()) {
+        const int k = i->index;
+        int L[3] = {0, 0, 0};
+        int Lc[3] = {0, 0, 0};
+        Synch_ptr->SM.DetermineStencilLength(
+            f[k].infos[0]->level, f[k].infos[1]->level, f[k].icode[1], L);
+        const int V = L[0] * L[1] * L[2];
+        int Vc = 0;
+        total_size += V;
+        f[k].dis = offsets_recv[otherrank];
+        UnPackInfo info = {f[k].dis,
+                           L[0],
+                           L[1],
+                           L[2],
+                           0,
+                           0,
+                           0,
+                           L[0],
+                           L[1],
+                           -1,
+                           0,
+                           0,
+                           0,
+                           0,
+                           0,
+                           f[k].infos[0]->level,
+                           f[k].icode[1],
+                           otherrank,
+                           f[k].infos[0]->index[0],
+                           f[k].infos[0]->index[1],
+                           f[k].infos[0]->index[2],
+                           f[k].infos[1]->blockID_2};
+        if (f[k].CoarseStencil) {
+          Synch_ptr->SM.CoarseStencilLength(f[k].icode[1], Lc);
+          Vc = Lc[0] * Lc[1] * Lc[2];
+          total_size += Vc;
+          offsets_recv[otherrank] += Vc * nc;
+          info.CoarseVersionOffset = V * nc;
+          info.CoarseVersionLX = Lc[0];
+          info.CoarseVersionLY = Lc[1];
+        }
+
+        offsets_recv[otherrank] += V * nc;
+
+        Synch_ptr->myunpacks[f[k].infos[1]->halo_block_id].push_back(info);
+
+        for (size_t kk = 0; kk < (*i).removedIndices.size(); kk++) {
+          const int remEl1 = i->removedIndices[kk];
+          Synch_ptr->SM.DetermineStencilLength(f[remEl1].infos[0]->level,
+                                               f[remEl1].infos[1]->level,
+                                               f[remEl1].icode[1], &L[0]);
+          int srcx, srcy, srcz;
+          Synch_ptr->SM.__FixDuplicates(f[k], f[remEl1], info.lx, info.ly,
+                                        info.lz, L[0], L[1], L[2], srcx, srcy,
+                                        srcz);
+          int Csrcx = 0;
+          int Csrcy = 0;
+          int Csrcz = 0;
+          if (f[k].CoarseStencil)
+            Synch_ptr->SM.__FixDuplicates2(f[k], f[remEl1], Csrcx, Csrcy,
+                                           Csrcz);
+
+          Synch_ptr->myunpacks[f[remEl1].infos[1]->halo_block_id].push_back(
+              {info.offset,
+               L[0],
+               L[1],
+               L[2],
+               srcx,
+               srcy,
+               srcz,
+               info.LX,
+               info.LY,
+               info.CoarseVersionOffset,
+               info.CoarseVersionLX,
+               info.CoarseVersionLY,
+               Csrcx,
+               Csrcy,
+               Csrcz,
+               f[remEl1].infos[0]->level,
+               f[remEl1].icode[1],
+               otherrank,
+               f[remEl1].infos[0]->index[0],
+               f[remEl1].infos[0]->index[1],
+               f[remEl1].infos[0]->index[2],
+               f[remEl1].infos[1]->blockID_2});
+
+          f[remEl1].dis = info.offset;
+        }
+      }
+    }
+  };
+
+  /// Check if blocks on the same refinement level need to exchange averaged
+  /// down cells that will be used for coarse-fine interpolation.
+  bool UseCoarseStencil(const Interface &f) {
+    BlockInfo &a = *f.infos[0];
+    BlockInfo &b = *f.infos[1];
+    if (a.level == 0 || (!use_averages))
+      return false;
+    int imin[3];
+    int imax[3];
+    const int aux = 1 << a.level;
+    const bool periodic[3] = {grid->xperiodic, grid->yperiodic,
+                              grid->zperiodic};
+    const int blocks[3] = {grid->getMaxBlocks()[0] * aux - 1,
+                           grid->getMaxBlocks()[1] * aux - 1,
+                           grid->getMaxBlocks()[2] * aux - 1};
+    for (int d = 0; d < 3; d++) {
+      imin[d] = (a.index[d] < b.index[d]) ? 0 : -1;
+      imax[d] = (a.index[d] > b.index[d]) ? 0 : +1;
+      if (periodic[d]) {
+        if (a.index[d] == 0 && b.index[d] == blocks[d])
+          imin[d] = -1;
+        if (b.index[d] == 0 && a.index[d] == blocks[d])
+          imax[d] = +1;
+      } else {
+        if (a.index[d] == 0 && b.index[d] == 0)
+          imin[d] = 0;
+        if (a.index[d] == blocks[d] && b.index[d] == blocks[d])
+          imax[d] = 0;
+      }
+    }
+
+    bool retval = false;
+    for (int i2 = imin[2]; i2 <= imax[2]; i2++)
+      for (int i1 = imin[1]; i1 <= imax[1]; i1++)
+        for (int i0 = imin[0]; i0 <= imax[0]; i0++) {
+          if ((grid->Tree(a.level, a.Znei_(i0, i1, i2))).CheckCoarser()) {
+            retval = true;
+            break;
+          }
+        }
+    return retval;
+  }
+
+  /// Auxiliary function to average down data
+  void AverageDownAndFill(Real *__restrict__ dst, const BlockInfo *const info,
+                          const int code[3]) {
+    const int s[3] = {code[0] < 1 ? (code[0] < 0 ? stencil.sx : 0) : nX,
+                      code[1] < 1 ? (code[1] < 0 ? stencil.sy : 0) : nY,
+                      code[2] < 1 ? (code[2] < 0 ? stencil.sz : 0) : nZ};
+    const int e[3] = {
+        code[0] < 1 ? (code[0] < 0 ? 0 : nX) : nX + stencil.ex - 1,
+        code[1] < 1 ? (code[1] < 0 ? 0 : nY) : nY + stencil.ey - 1,
+        code[2] < 1 ? (code[2] < 0 ? 0 : nZ) : nZ + stencil.ez - 1};
+#if DIMENSION == 3
+    int pos = 0;
+    const Real *src = (const Real *)(*info).ptrBlock;
+    const int xStep = (code[0] == 0) ? 2 : 1;
+    const int yStep = (code[1] == 0) ? 2 : 1;
+    const int zStep = (code[2] == 0) ? 2 : 1;
+    if (gptfloats == 1) {
+      for (int iz = s[2]; iz < e[2]; iz += zStep) {
+        const int ZZ = (abs(code[2]) == 1)
+                           ? 2 * (iz - code[2] * nZ) + std::min(0, code[2]) * nZ
+                           : iz;
+        for (int iy = s[1]; iy < e[1]; iy += yStep) {
+          const int YY = (abs(code[1]) == 1) ? 2 * (iy - code[1] * nY) +
+                                                   std::min(0, code[1]) * nY
+                                             : iy;
+          for (int ix = s[0]; ix < e[0]; ix += xStep) {
+            const int XX = (abs(code[0]) == 1) ? 2 * (ix - code[0] * nX) +
+                                                     std::min(0, code[0]) * nX
+                                               : ix;
+#ifdef PRESERVE_SYMMETRY
+            dst[pos] =
+                ConsistentAverage(src[XX + (YY + (ZZ)*nY) * nX],
+                                  src[XX + (YY + (ZZ + 1) * nY) * nX],
+                                  src[XX + (YY + 1 + (ZZ)*nY) * nX],
+                                  src[XX + (YY + 1 + (ZZ + 1) * nY) * nX],
+                                  src[XX + 1 + (YY + (ZZ)*nY) * nX],
+                                  src[XX + 1 + (YY + (ZZ + 1) * nY) * nX],
+                                  src[XX + 1 + (YY + 1 + (ZZ)*nY) * nX],
+                                  src[XX + 1 + (YY + 1 + (ZZ + 1) * nY) * nX]);
+#else
+            dst[pos] = 0.125 * (src[XX + (YY + (ZZ)*nY) * nX] +
+                                src[XX + (YY + (ZZ + 1) * nY) * nX] +
+                                src[XX + (YY + 1 + (ZZ)*nY) * nX] +
+                                src[XX + (YY + 1 + (ZZ + 1) * nY) * nX] +
+                                src[XX + 1 + (YY + (ZZ)*nY) * nX] +
+                                src[XX + 1 + (YY + (ZZ + 1) * nY) * nX] +
+                                src[XX + 1 + (YY + 1 + (ZZ)*nY) * nX] +
+                                src[XX + 1 + (YY + 1 + (ZZ + 1) * nY) * nX]);
+#endif
+            pos++;
+          }
+        }
+      }
+    } else {
+      for (int iz = s[2]; iz < e[2]; iz += zStep) {
+        const int ZZ = (abs(code[2]) == 1)
+                           ? 2 * (iz - code[2] * nZ) + std::min(0, code[2]) * nZ
+                           : iz;
+        for (int iy = s[1]; iy < e[1]; iy += yStep) {
+          const int YY = (abs(code[1]) == 1) ? 2 * (iy - code[1] * nY) +
+                                                   std::min(0, code[1]) * nY
+                                             : iy;
+          for (int ix = s[0]; ix < e[0]; ix += xStep) {
+            const int XX = (abs(code[0]) == 1) ? 2 * (ix - code[0] * nX) +
+                                                     std::min(0, code[0]) * nX
+                                               : ix;
+            for (int c = 0; c < NC; c++) {
+              int comp = stencil.selcomponents[c];
+#ifdef PRESERVE_SYMMETRY
+              dst[pos] = ConsistentAverage(
+                  (*(src + gptfloats * ((XX) + ((YY) + (ZZ)*nY) * nX) + comp)),
+                  (*(src + gptfloats * ((XX) + ((YY) + (ZZ + 1) * nY) * nX) +
+                     comp)),
+                  (*(src + gptfloats * ((XX) + ((YY + 1) + (ZZ)*nY) * nX) +
+                     comp)),
+                  (*(src +
+                     gptfloats * ((XX) + ((YY + 1) + (ZZ + 1) * nY) * nX) +
+                     comp)),
+                  (*(src + gptfloats * ((XX + 1) + ((YY) + (ZZ)*nY) * nX) +
+                     comp)),
+                  (*(src +
+                     gptfloats * ((XX + 1) + ((YY) + (ZZ + 1) * nY) * nX) +
+                     comp)),
+                  (*(src + gptfloats * ((XX + 1) + ((YY + 1) + (ZZ)*nY) * nX) +
+                     comp)),
+                  (*(src +
+                     gptfloats * ((XX + 1) + ((YY + 1) + (ZZ + 1) * nY) * nX) +
+                     comp)));
+#else
+              dst[pos] =
+                  0.125 *
+                  ((*(src + gptfloats * ((XX) + ((YY) + (ZZ)*nY) * nX) +
+                      comp)) +
+                   (*(src + gptfloats * ((XX) + ((YY) + (ZZ + 1) * nY) * nX) +
+                      comp)) +
+                   (*(src + gptfloats * ((XX) + ((YY + 1) + (ZZ)*nY) * nX) +
+                      comp)) +
+                   (*(src +
+                      gptfloats * ((XX) + ((YY + 1) + (ZZ + 1) * nY) * nX) +
+                      comp)) +
+                   (*(src + gptfloats * ((XX + 1) + ((YY) + (ZZ)*nY) * nX) +
+                      comp)) +
+                   (*(src +
+                      gptfloats * ((XX + 1) + ((YY) + (ZZ + 1) * nY) * nX) +
+                      comp)) +
+                   (*(src + gptfloats * ((XX + 1) + ((YY + 1) + (ZZ)*nY) * nX) +
+                      comp)) +
+                   (*(src +
+                      gptfloats * ((XX + 1) + ((YY + 1) + (ZZ + 1) * nY) * nX) +
+                      comp)));
+#endif
+              pos++;
+            }
+          }
+        }
+      }
+    }
+#endif
+#if DIMENSION == 2
+    Real *src = (Real *)(*info).ptrBlock;
+    const int xStep = (code[0] == 0) ? 2 : 1;
+    const int yStep = (code[1] == 0) ? 2 : 1;
+    int pos = 0;
+    for (int iy = s[1]; iy < e[1]; iy += yStep) {
+      const int YY = (abs(code[1]) == 1)
+                         ? 2 * (iy - code[1] * nY) + std::min(0, code[1]) * nY
+                         : iy;
+      for (int ix = s[0]; ix < e[0]; ix += xStep) {
+        const int XX = (abs(code[0]) == 1)
+                           ? 2 * (ix - code[0] * nX) + std::min(0, code[0]) * nX
+                           : ix;
+        for (int c = 0; c < NC; c++) {
+          int comp = stencil.selcomponents[c];
+          dst[pos] =
+              0.25 * (((*(src + gptfloats * (XX + (YY)*nX) + comp)) +
+                       (*(src + gptfloats * (XX + 1 + (YY + 1) * nX) + comp))) +
+                      ((*(src + gptfloats * (XX + (YY + 1) * nX) + comp)) +
+                       (*(src + gptfloats * (XX + 1 + (YY)*nX) + comp))));
+          pos++;
+        }
+      }
+    }
+#endif
+  }
+
+  /// Auxiliary function to average down data
+  void AverageDownAndFill2(Real *dst, const BlockInfo *const info,
+                           const int code[3]) {
+    const int eC[3] = {(stencil.ex) / 2 + Cstencil.ex,
+                       (stencil.ey) / 2 + Cstencil.ey,
+                       (stencil.ez) / 2 + Cstencil.ez};
+    const int sC[3] = {(stencil.sx - 1) / 2 + Cstencil.sx,
+                       (stencil.sy - 1) / 2 + Cstencil.sy,
+                       (stencil.sz - 1) / 2 + Cstencil.sz};
+
+    const int s[3] = {code[0] < 1 ? (code[0] < 0 ? sC[0] : 0) : nX / 2,
+                      code[1] < 1 ? (code[1] < 0 ? sC[1] : 0) : nY / 2,
+                      code[2] < 1 ? (code[2] < 0 ? sC[2] : 0) : nZ / 2};
+
+    const int e[3] = {
+        code[0] < 1 ? (code[0] < 0 ? 0 : nX / 2) : nX / 2 + eC[0] - 1,
+        code[1] < 1 ? (code[1] < 0 ? 0 : nY / 2) : nY / 2 + eC[1] - 1,
+        code[2] < 1 ? (code[2] < 0 ? 0 : nZ / 2) : nZ / 2 + eC[2] - 1};
+
+    Real *src = (Real *)(*info).ptrBlock;
+
+    int pos = 0;
+
+#if DIMENSION == 3
+    for (int iz = s[2]; iz < e[2]; iz++) {
+      const int ZZ = 2 * (iz - s[2]) + s[2] + std::max(code[2], 0) * nZ / 2 -
+                     code[2] * nZ + std::min(0, code[2]) * (e[2] - s[2]);
+#endif
+      for (int iy = s[1]; iy < e[1]; iy++) {
+        const int YY = 2 * (iy - s[1]) + s[1] + std::max(code[1], 0) * nY / 2 -
+                       code[1] * nY + std::min(0, code[1]) * (e[1] - s[1]);
+        for (int ix = s[0]; ix < e[0]; ix++) {
+          const int XX = 2 * (ix - s[0]) + s[0] +
+                         std::max(code[0], 0) * nX / 2 - code[0] * nX +
+                         std::min(0, code[0]) * (e[0] - s[0]);
+
+          for (int c = 0; c < NC; c++) {
+            int comp = stencil.selcomponents[c];
+#if DIMENSION == 3
+#ifdef PRESERVE_SYMMETRY
+            dst[pos] = ConsistentAverage(
+                (*(src + gptfloats * ((XX) + ((YY) + (ZZ)*nY) * nX) + comp)),
+                (*(src + gptfloats * ((XX) + ((YY) + (ZZ + 1) * nY) * nX) +
+                   comp)),
+                (*(src + gptfloats * ((XX) + ((YY + 1) + (ZZ)*nY) * nX) +
+                   comp)),
+                (*(src + gptfloats * ((XX) + ((YY + 1) + (ZZ + 1) * nY) * nX) +
+                   comp)),
+                (*(src + gptfloats * ((XX + 1) + ((YY) + (ZZ)*nY) * nX) +
+                   comp)),
+                (*(src + gptfloats * ((XX + 1) + ((YY) + (ZZ + 1) * nY) * nX) +
+                   comp)),
+                (*(src + gptfloats * ((XX + 1) + ((YY + 1) + (ZZ)*nY) * nX) +
+                   comp)),
+                (*(src +
+                   gptfloats * ((XX + 1) + ((YY + 1) + (ZZ + 1) * nY) * nX) +
+                   comp)));
+#else
+            dst[pos] =
+                0.125 *
+                ((*(src + gptfloats * ((XX) + ((YY) + (ZZ)*nY) * nX) + comp)) +
+                 (*(src + gptfloats * ((XX) + ((YY) + (ZZ + 1) * nY) * nX) +
+                    comp)) +
+                 (*(src + gptfloats * ((XX) + ((YY + 1) + (ZZ)*nY) * nX) +
+                    comp)) +
+                 (*(src + gptfloats * ((XX) + ((YY + 1) + (ZZ + 1) * nY) * nX) +
+                    comp)) +
+                 (*(src + gptfloats * ((XX + 1) + ((YY) + (ZZ)*nY) * nX) +
+                    comp)) +
+                 (*(src + gptfloats * ((XX + 1) + ((YY) + (ZZ + 1) * nY) * nX) +
+                    comp)) +
+                 (*(src + gptfloats * ((XX + 1) + ((YY + 1) + (ZZ)*nY) * nX) +
+                    comp)) +
+                 (*(src +
+                    gptfloats * ((XX + 1) + ((YY + 1) + (ZZ + 1) * nY) * nX) +
+                    comp)));
+#endif
+#else
+          dst[pos] =
+              0.25 * (((*(src + gptfloats * (XX + (YY)*nX) + comp)) +
+                       (*(src + gptfloats * (XX + 1 + (YY + 1) * nX) + comp))) +
+                      ((*(src + gptfloats * (XX + (YY + 1) * nX) + comp)) +
+                       (*(src + gptfloats * (XX + 1 + (YY)*nX) + comp))));
+#endif
+            pos++;
+          }
+        }
+      }
+#if DIMENSION == 3
+    }
+#endif
+  }
+
+#if 0
+  std::string removeLeadingZeros(const std::string& input)
+  {
+    std::size_t firstNonZero = input.find_first_not_of('0');
+    if (firstNonZero == std::string::npos)
+    {
+      // The input consists only of zeros
+      return "0";
+    }
+    return input.substr(firstNonZero);
+  }
+  std::set<int> DecodeSet(std::string ID)
+  {
+    std::set<int> retval;
+    for (size_t i = 0 ; i < ID.length() ; i += size)
+    {
+      std::string toconvert = removeLeadingZeros( ID.substr(i, size) );
+      int current_rank = std::stoi ( toconvert );
+      retval.insert(current_rank);
+    }
+    return retval;
+  }
+#endif
+
+  /// Maps a set of integers to a string
+  std::string EncodeSet(const std::set<int> &ranks) {
+    std::string retval;
+    for (auto r : ranks) {
+      std::stringstream ss;
+      ss << std::setw(size) << std::setfill('0') << r;
+      std::string s = ss.str();
+      retval += s;
+    }
+    return retval;
+  }
+
+public:
+  /// Needs to be called whenever the grid changes because of
+  /// refinement/compression
+  void _Setup() {
+    Neighbors.clear();
+    inner_blocks.clear();
+    halo_blocks.clear();
+    for (int r = 0; r < size; r++) {
+      send_interfaces[r].clear();
+      recv_interfaces[r].clear();
+      send_buffer_size[r] = 0;
+    }
+
+    for (size_t i = 0; i < myunpacks.size(); i++)
+      myunpacks[i].clear();
+    myunpacks.clear();
+
+    DuplicatesManager DM(*(this));
+
+    for (BlockInfo &info : grid->getBlocksInfo()) {
+      info.halo_block_id = -1;
+      const bool xskin =
+          info.index[0] == 0 ||
+          info.index[0] == ((grid->getMaxBlocks()[0] << info.level) - 1);
+      const bool yskin =
+          info.index[1] == 0 ||
+          info.index[1] == ((grid->getMaxBlocks()[1] << info.level) - 1);
+      const bool zskin =
+          info.index[2] == 0 ||
+          info.index[2] == ((grid->getMaxBlocks()[2] << info.level) - 1);
+      const int xskip = info.index[0] == 0 ? -1 : 1;
+      const int yskip = info.index[1] == 0 ? -1 : 1;
+      const int zskip = info.index[2] == 0 ? -1 : 1;
+
+      bool isInner = true;
+
+      std::vector<int> ToBeChecked;
+      bool Coarsened = false;
+
+      for (int icode = 0; icode < 27; icode++) {
+        if (icode == 1 * 1 + 3 * 1 + 9 * 1)
+          continue;
+        const int code[3] = {icode % 3 - 1, (icode / 3) % 3 - 1,
+                             (icode / 9) % 3 - 1};
+
+#if DIMENSION == 2
+        if (code[2] != 0)
+          continue;
+#endif
+        if (!grid->xperiodic && code[0] == xskip && xskin)
+          continue;
+        if (!grid->yperiodic && code[1] == yskip && yskin)
+          continue;
+        if (!grid->zperiodic && code[2] == zskip && zskin)
+          continue;
+
+        // if (!stencil.tensorial && !Cstencil.tensorial &&
+        // abs(code[0])+abs(code[1])+abs(code[2])>1) continue; if
+        // (!stencil.tensorial && use_averages == false &&
+        // abs(code[0])+abs(code[1])+abs(code[2])>1) continue;
+
+        const TreePosition &infoNeiTree =
+            grid->Tree(info.level, info.Znei_(code[0], code[1], code[2]));
+
+        if (infoNeiTree.Exists() && infoNeiTree.rank() != rank) {
+          isInner = false;
+          Neighbors.insert(infoNeiTree.rank());
+
+          BlockInfo &infoNei = grid->getBlockInfoAll(
+              info.level, info.Znei_(code[0], code[1], code[2]));
+
+          const int icode2 =
+              (-code[0] + 1) + (-code[1] + 1) * 3 + (-code[2] + 1) * 9;
+
+          send_interfaces[infoNeiTree.rank()].push_back(
+              {info, infoNei, icode, icode2});
+          recv_interfaces[infoNeiTree.rank()].push_back(
+              {infoNei, info, icode2, icode});
+
+          ToBeChecked.push_back(infoNeiTree.rank());
+          ToBeChecked.push_back(
+              (int)send_interfaces[infoNeiTree.rank()].size() - 1);
+          ToBeChecked.push_back(
+              (int)recv_interfaces[infoNeiTree.rank()].size() - 1);
+
+          DM.Add(infoNeiTree.rank(),
+                 (int)send_interfaces[infoNeiTree.rank()].size() - 1);
+        } else if (infoNeiTree.CheckCoarser()) {
+          Coarsened = true;
+          BlockInfo &infoNei = grid->getBlockInfoAll(
+              info.level, info.Znei_(code[0], code[1], code[2]));
+          const int infoNeiCoarserrank =
+              grid->Tree(info.level - 1, infoNei.Zparent).rank();
+          if (infoNeiCoarserrank != rank) {
+            isInner = false;
+            Neighbors.insert(infoNeiCoarserrank);
+
+            BlockInfo &infoNeiCoarser =
+                grid->getBlockInfoAll(infoNei.level - 1, infoNei.Zparent);
+
+            const int icode2 =
+                (-code[0] + 1) + (-code[1] + 1) * 3 + (-code[2] + 1) * 9;
+
+            const int Bmax[3] = {grid->getMaxBlocks()[0] << (info.level - 1),
+                                 grid->getMaxBlocks()[1] << (info.level - 1),
+                                 grid->getMaxBlocks()[2] << (info.level - 1)};
+
+            const int test_idx[3] = {
+                (infoNeiCoarser.index[0] - code[0] + Bmax[0]) % Bmax[0],
+                (infoNeiCoarser.index[1] - code[1] + Bmax[1]) % Bmax[1],
+                (infoNeiCoarser.index[2] - code[2] + Bmax[2]) % Bmax[2]};
+
+            if (info.index[0] / 2 == test_idx[0] &&
+                info.index[1] / 2 == test_idx[1] &&
+                info.index[2] / 2 == test_idx[2]) {
+              send_interfaces[infoNeiCoarserrank].push_back(
+                  {info, infoNeiCoarser, icode, icode2});
+              recv_interfaces[infoNeiCoarserrank].push_back(
+                  {infoNeiCoarser, info, icode2, icode});
+
+              DM.Add(infoNeiCoarserrank,
+                     (int)send_interfaces[infoNeiCoarserrank].size() - 1);
+
+              if (abs(code[0]) + abs(code[1]) + abs(code[2]) ==
+                  1) // if filling a face need also two edges and a corner
+              {
+                const int d0 = abs(
+                    code[1] + 2 * code[2]); // =0 if |code[0]|=1, =1 if
+                                            // |code[1]|=1, =2 if |code[2]|=1
+                const int d1 = (d0 + 1) % 3;
+                const int d2 = (d0 + 2) % 3;
+
+                // corner being filled
+                int code3[3];
+                code3[d0] = code[d0];
+                code3[d1] = -2 * (info.index[d1] % 2) + 1;
+                code3[d2] = -2 * (info.index[d2] % 2) + 1;
+                const int icode3 =
+                    (code3[0] + 1) + (code3[1] + 1) * 3 + (code3[2] + 1) * 9;
+
+                // edge in the d1 direction
+                int code4[3];
+                code4[d0] = code[d0];
+                code4[d1] = code3[d1];
+                code4[d2] = 0;
+                const int icode4 =
+                    (code4[0] + 1) + (code4[1] + 1) * 3 + (code4[2] + 1) * 9;
+
+                // edge in the d2 direction
+                int code5[3];
+                code5[d0] = code[d0];
+                code5[d1] = 0;
+                code5[d2] = code3[d2];
+                const int icode5 =
+                    (code5[0] + 1) + (code5[1] + 1) * 3 + (code5[2] + 1) * 9;
+
+#if DIMENSION == 2
+                if (code3[2] == 0)
+                  recv_interfaces[infoNeiCoarserrank].push_back(
+                      {infoNeiCoarser, info, icode2, icode3});
+                if (code4[2] == 0)
+                  recv_interfaces[infoNeiCoarserrank].push_back(
+                      {infoNeiCoarser, info, icode2, icode4});
+                if (code5[2] == 0)
+                  recv_interfaces[infoNeiCoarserrank].push_back(
+                      {infoNeiCoarser, info, icode2, icode5});
+#else
+                recv_interfaces[infoNeiCoarserrank].push_back(
+                    {infoNeiCoarser, info, icode2, icode3});
+                recv_interfaces[infoNeiCoarserrank].push_back(
+                    {infoNeiCoarser, info, icode2, icode4});
+                recv_interfaces[infoNeiCoarserrank].push_back(
+                    {infoNeiCoarser, info, icode2, icode5});
+#endif
+              }
+#if DIMENSION == 3
+              else if (abs(code[0]) + abs(code[1]) + abs(code[2]) ==
+                       2) // if filling an edge need also a corner
+              {
+                const int d0 = (1 - abs(code[1])) + 2 * (1 - abs(code[2]));
+                const int d1 = (d0 + 1) % 3;
+                const int d2 = (d0 + 2) % 3;
+                int code3[3];
+                code3[d0] = -2 * (info.index[d0] % 2) + 1;
+                code3[d1] = code[d1];
+                code3[d2] = code[d2];
+                const int icode3 =
+                    (code3[0] + 1) + (code3[1] + 1) * 3 + (code3[2] + 1) * 9;
+                recv_interfaces[infoNeiCoarserrank].push_back(
+                    {infoNeiCoarser, info, icode2, icode3});
+              }
+#endif
+            }
+          }
+        } else if (infoNeiTree.CheckFiner()) {
+          BlockInfo &infoNei = grid->getBlockInfoAll(
+              info.level, info.Znei_(code[0], code[1], code[2]));
+
+          int Bstep = 1;
+          if ((abs(code[0]) + abs(code[1]) + abs(code[2]) == 2))
+            Bstep = 3; // edge
+          else if ((abs(code[0]) + abs(code[1]) + abs(code[2]) == 3))
+            Bstep = 4; // corner
+
+          for (int B = 0; B <= 3; B += Bstep) // loop over blocks that make up
+                                              // face/edge/corner (4/2/1 blocks)
+          {
+#if DIMENSION == 2
+            if (Bstep == 1 && B >= 2)
+              continue;
+            if (Bstep > 1 && B >= 1)
+              continue;
+#endif
+            const int temp = (abs(code[0]) == 1) ? (B % 2) : (B / 2);
+
+            const long long nFine =
+                infoNei.Zchild[std::max(-code[0], 0) +
+                               (B % 2) * std::max(0, 1 - abs(code[0]))]
+                              [std::max(-code[1], 0) +
+                               temp * std::max(0, 1 - abs(code[1]))]
+                              [std::max(-code[2], 0) +
+                               (B / 2) * std::max(0, 1 - abs(code[2]))];
+
+            const int infoNeiFinerrank =
+                grid->Tree(info.level + 1, nFine).rank();
+
+            if (infoNeiFinerrank != rank) {
+              isInner = false;
+              Neighbors.insert(infoNeiFinerrank);
+
+              BlockInfo &infoNeiFiner =
+                  grid->getBlockInfoAll(info.level + 1, nFine);
+
+              const int icode2 =
+                  (-code[0] + 1) + (-code[1] + 1) * 3 + (-code[2] + 1) * 9;
+
+              send_interfaces[infoNeiFinerrank].push_back(
+                  {info, infoNeiFiner, icode, icode2});
+              recv_interfaces[infoNeiFinerrank].push_back(
+                  {infoNeiFiner, info, icode2, icode});
+
+              DM.Add(infoNeiFinerrank,
+                     (int)send_interfaces[infoNeiFinerrank].size() - 1);
+
+              if (Bstep == 1) // if I'm filling a face then I'm also filling two
+                              // edges and a corner
+              {
+                const int d0 = abs(
+                    code[1] + 2 * code[2]); // =0 if |code[0]|=1, =1 if
+                                            // |code[1]|=1, =2 if |code[2]|=1
+                const int d1 = (d0 + 1) % 3;
+                const int d2 = (d0 + 2) % 3;
+
+                // corner being filled
+                int code3[3];
+                code3[d0] = -code[d0];
+                code3[d1] = -2 * (infoNeiFiner.index[d1] % 2) + 1;
+                code3[d2] = -2 * (infoNeiFiner.index[d2] % 2) + 1;
+                const int icode3 =
+                    (code3[0] + 1) + (code3[1] + 1) * 3 + (code3[2] + 1) * 9;
+
+                // edge in the d1 direction
+                int code4[3];
+                code4[d0] = -code[d0];
+                code4[d1] = code3[d1];
+                code4[d2] = 0;
+                const int icode4 =
+                    (code4[0] + 1) + (code4[1] + 1) * 3 + (code4[2] + 1) * 9;
+
+                // edge in the d2 direction
+                int code5[3];
+                code5[d0] = -code[d0];
+                code5[d1] = 0;
+                code5[d2] = code3[d2];
+                const int icode5 =
+                    (code5[0] + 1) + (code5[1] + 1) * 3 + (code5[2] + 1) * 9;
+
+#if DIMENSION == 2
+                if (code3[2] == 0) {
+                  send_interfaces[infoNeiFinerrank].push_back(
+                      Interface(info, infoNeiFiner, icode, icode3));
+                  DM.Add(infoNeiFinerrank,
+                         (int)send_interfaces[infoNeiFinerrank].size() - 1);
+                }
+                if (code4[2] == 0) {
+                  send_interfaces[infoNeiFinerrank].push_back(
+                      Interface(info, infoNeiFiner, icode, icode4));
+                  DM.Add(infoNeiFinerrank,
+                         (int)send_interfaces[infoNeiFinerrank].size() - 1);
+                }
+                if (code5[2] == 0) {
+                  send_interfaces[infoNeiFinerrank].push_back(
+                      Interface(info, infoNeiFiner, icode, icode5));
+                  DM.Add(infoNeiFinerrank,
+                         (int)send_interfaces[infoNeiFinerrank].size() - 1);
+                }
+#else
+                send_interfaces[infoNeiFinerrank].push_back(
+                    {info, infoNeiFiner, icode, icode3});
+                DM.Add(infoNeiFinerrank,
+                       (int)send_interfaces[infoNeiFinerrank].size() - 1);
+                send_interfaces[infoNeiFinerrank].push_back(
+                    {info, infoNeiFiner, icode, icode4});
+                DM.Add(infoNeiFinerrank,
+                       (int)send_interfaces[infoNeiFinerrank].size() - 1);
+                send_interfaces[infoNeiFinerrank].push_back(
+                    {info, infoNeiFiner, icode, icode5});
+                DM.Add(infoNeiFinerrank,
+                       (int)send_interfaces[infoNeiFinerrank].size() - 1);
+#endif
+              }
+#if DIMENSION == 3
+              else if (Bstep == 3) // if I'm filling an edge then I'm also
+                                   // filling a corner
+              {
+                const int d0 = (1 - abs(code[1])) + 2 * (1 - abs(code[2]));
+                const int d1 = (d0 + 1) % 3;
+                const int d2 = (d0 + 2) % 3;
+                int code3[3];
+                code3[d0] = B == 0 ? 1 : -1;
+                code3[d1] = -code[d1];
+                code3[d2] = -code[d2];
+                const int icode3 =
+                    (code3[0] + 1) + (code3[1] + 1) * 3 + (code3[2] + 1) * 9;
+                send_interfaces[infoNeiFinerrank].push_back(
+                    {info, infoNeiFiner, icode, icode3});
+                DM.Add(infoNeiFinerrank,
+                       (int)send_interfaces[infoNeiFinerrank].size() - 1);
+              }
+#endif
+            }
+          }
+        }
+      } // icode = 0,...,26
+
+      if (isInner) {
+        info.halo_block_id = -1;
+        inner_blocks.push_back(&info);
+      } else {
+        info.halo_block_id = halo_blocks.size();
+        halo_blocks.push_back(&info);
+        if (Coarsened) {
+          for (size_t j = 0; j < ToBeChecked.size(); j += 3) {
+            const int r = ToBeChecked[j];
+            const int send = ToBeChecked[j + 1];
+            const int recv = ToBeChecked[j + 2];
+            const bool tmp = UseCoarseStencil(send_interfaces[r][send]);
+            send_interfaces[r][send].CoarseStencil = tmp;
+            recv_interfaces[r][recv].CoarseStencil = tmp;
+          }
+        }
+
+        for (int r = 0; r < size; r++)
+          if (DM.sizes[r] > 0) {
+            DM.RemoveDuplicates(r, send_interfaces[r].v, send_buffer_size[r]);
+            DM.sizes[r] = 0;
+          }
+      }
+      grid->getBlockInfoAll(info.level, info.Z).halo_block_id =
+          info.halo_block_id;
+    } // i-loop
+
+    myunpacks.resize(halo_blocks.size());
+
+    for (int r = 0; r < size; r++) {
+      recv_buffer_size[r] = 0;
+      std::sort(recv_interfaces[r].begin(), recv_interfaces[r].end());
+
+      size_t counter = 0;
+      while (counter < recv_interfaces[r].size()) {
+        const long long ID = recv_interfaces[r][counter].infos[0]->blockID_2;
+        const size_t start = counter;
+        size_t finish = start + 1;
+        counter++;
+        size_t j;
+        for (j = counter; j < recv_interfaces[r].size(); j++) {
+          if (recv_interfaces[r][j].infos[0]->blockID_2 == ID)
+            finish++;
+          else
+            break;
+        }
+        counter = j;
+
+        DM.RemoveDuplicates_recv(recv_interfaces[r].v, recv_buffer_size[r], r,
+                                 start, finish);
+      }
+
+      send_buffer[r].resize(send_buffer_size[r] * NC);
+      recv_buffer[r].resize(recv_buffer_size[r] * NC);
+      send_packinfos[r].clear();
+      ToBeAveragedDown[r].clear();
+      for (int i = 0; i < (int)send_interfaces[r].size(); i++) {
+        const Interface &f = send_interfaces[r][i];
+
+        if (!f.ToBeKept)
+          continue;
+
+        if (f.infos[0]->level <= f.infos[1]->level) {
+          const MyRange &range = SM.DetermineStencil(f);
+          send_packinfos[r].push_back(
+              {(Real *)f.infos[0]->ptrBlock, &send_buffer[r][f.dis], range.sx,
+               range.sy, range.sz, range.ex, range.ey, range.ez});
+          if (f.CoarseStencil) {
+            const int V = (range.ex - range.sx) * (range.ey - range.sy) *
+                          (range.ez - range.sz);
+            ToBeAveragedDown[r].push_back(i);
+            ToBeAveragedDown[r].push_back(f.dis + V * NC);
+          }
+        } else // receiver is coarser, so sender averages down data first
+        {
+          ToBeAveragedDown[r].push_back(i);
+          ToBeAveragedDown[r].push_back(f.dis);
+        }
+      }
+    }
+
+    mapofHaloBlockGroups.clear();
+    for (auto &info : halo_blocks) {
+      // 1. Find ranks from which 'info' wants to receive
+      const int id = info->halo_block_id;
+      UnPackInfo *unpacks = myunpacks[id].data();
+      std::set<int> ranks;
+      for (size_t jj = 0; jj < myunpacks[id].size(); jj++) {
+        const UnPackInfo &unpack = unpacks[jj];
+        ranks.insert(unpack.rank);
+      }
+      // 2. Encode the set of ranks to one number
+      auto set_ID = EncodeSet(ranks);
+
+      // 3. Find that set and add 'info' to it. If set does not exist, create
+      // it.
+      const auto retval = mapofHaloBlockGroups.find(set_ID);
+      if (retval == mapofHaloBlockGroups.end()) {
+        HaloBlockGroup temporary;
+        temporary.myranks = ranks;
+        temporary.myblocks.push_back(info);
+        mapofHaloBlockGroups[set_ID] = temporary;
+      } else {
+        (retval->second).myblocks.push_back(info);
+      }
+    }
+  }
+
+  // constructor
+  SynchronizerMPI_AMR(StencilInfo a_stencil, StencilInfo a_Cstencil,
+                      TGrid *_grid)
+      : stencil(a_stencil), Cstencil(a_Cstencil),
+        SM(a_stencil, a_Cstencil, TGrid::Block::sizeX, TGrid::Block::sizeY,
+           TGrid::Block::sizeZ),
+        gptfloats(sizeof(typename TGrid::Block::ElementType) / sizeof(Real)),
+        NC(a_stencil.selcomponents.size()) {
+    grid = _grid;
+    use_averages = (grid->FiniteDifferences == false || stencil.tensorial ||
+                    stencil.sx < -2 || stencil.sy < -2 || stencil.sz < -2 ||
+                    stencil.ex > 3 || stencil.ey > 3 || stencil.ez > 3);
+    comm = grid->getWorldComm();
+    MPI_Comm_rank(comm, &rank);
+    MPI_Comm_size(comm, &size);
+    nX = TGrid::Block::sizeX;
+    nY = TGrid::Block::sizeY;
+    nZ = TGrid::Block::sizeZ;
+    send_interfaces.resize(size);
+    recv_interfaces.resize(size);
+    send_packinfos.resize(size);
+    send_buffer_size.resize(size);
+    recv_buffer_size.resize(size);
+    send_buffer.resize(size);
+    recv_buffer.resize(size);
+    ToBeAveragedDown.resize(size);
+    std::sort(stencil.selcomponents.begin(), stencil.selcomponents.end());
+    if (sizeof(Real) == sizeof(double)) {
+      MPIREAL = MPI_DOUBLE;
+    } else if (sizeof(Real) == sizeof(long double)) {
+      MPIREAL = MPI_LONG_DOUBLE;
+    } else {
+      MPIREAL = MPI_FLOAT;
+      assert(sizeof(Real) == sizeof(float));
+    }
+  }
+
+  /// Returns vector of pointers to inner blocks.
+  std::vector<BlockInfo *> &avail_inner() { return inner_blocks; }
+
+  /// Returns vector of pointers to halo blocks.
+  std::vector<BlockInfo *> &avail_halo() {
+    MPI_Waitall(requests.size(), requests.data(), MPI_STATUSES_IGNORE);
+    return halo_blocks;
+  }
+
+  /// Returns vector of pointers to halo blocks without calling MPI_Wait
+  std::vector<BlockInfo *> &avail_halo_nowait() { return halo_blocks; }
+
+  /// Empty vector that avail_next() returns if no halo block groups are
+  /// available
+  std::vector<BlockInfo *> dummy_vector;
+
+  /// Returns the next available (in terms of completed communication) group of
+  /// halo blocks
+  std::vector<BlockInfo *> &avail_next() {
+    bool done = false;
+    auto it = mapofHaloBlockGroups.begin();
+    while (done == false) {
+      done = true;
+      it = mapofHaloBlockGroups.begin();
+      while (it != mapofHaloBlockGroups.end()) {
+        if ((it->second).ready == false) {
+          std::set<int> ranks = (it->second).myranks;
+          int flag = 0;
+          for (auto r : ranks) {
+            const auto retval = mapofrequests.find(r);
+            MPI_Test(retval->second, &flag, MPI_STATUS_IGNORE);
+            if (flag == false)
+              break;
+          }
+          if (flag == 1) {
+            (it->second).ready = true;
+            return (it->second).myblocks;
+          }
+        }
+        done = done && (it->second).ready;
+        it++;
+      }
+    }
+    return dummy_vector;
+  }
+
+  /// Needs to be called to initiate communication and halo cells exchange.
+  void sync() {
+    auto it = mapofHaloBlockGroups.begin();
+    while (it != mapofHaloBlockGroups.end()) {
+      (it->second).ready = false;
+      it++;
+    }
+
+    const int timestamp = grid->getTimeStamp();
+    mapofrequests.clear();
+    requests.clear();
+    requests.reserve(2 * size);
+
+    // Post receive requests first
+    for (auto r : Neighbors)
+      if (recv_buffer_size[r] > 0) {
+        requests.resize(requests.size() + 1);
+        mapofrequests[r] = &requests.back();
+        MPI_Irecv(&recv_buffer[r][0], recv_buffer_size[r] * NC, MPIREAL, r,
+                  timestamp, comm, &requests.back());
+      }
+
+    // Pack data
+    for (int r = 0; r < size; r++)
+      if (send_buffer_size[r] != 0) {
+#pragma omp parallel
+        {
+#pragma omp for
+          for (size_t j = 0; j < ToBeAveragedDown[r].size(); j += 2) {
+            const int i = ToBeAveragedDown[r][j];
+            const int d = ToBeAveragedDown[r][j + 1];
+            const Interface &f = send_interfaces[r][i];
+            const int code[3] = {-(f.icode[0] % 3 - 1),
+                                 -((f.icode[0] / 3) % 3 - 1),
+                                 -((f.icode[0] / 9) % 3 - 1)};
+            if (f.CoarseStencil)
+              AverageDownAndFill2(send_buffer[r].data() + d, f.infos[0], code);
+            else
+              AverageDownAndFill(send_buffer[r].data() + d, f.infos[0], code);
+          }
+#pragma omp for
+          for (size_t i = 0; i < send_packinfos[r].size(); i++) {
+            const PackInfo &info = send_packinfos[r][i];
+            pack(info.block, info.pack, gptfloats,
+                 &stencil.selcomponents.front(), NC, info.sx, info.sy, info.sz,
+                 info.ex, info.ey, info.ez, nX, nY);
+          }
+        }
+      }
+
+    // Do the sends
+    for (auto r : Neighbors)
+      if (send_buffer_size[r] > 0) {
+        requests.resize(requests.size() + 1);
+        MPI_Isend(&send_buffer[r][0], send_buffer_size[r] * NC, MPIREAL, r,
+                  timestamp, comm, &requests.back());
+      }
+  }
+
+  /// Get the StencilInfo of this Synchronizer
+  const StencilInfo &getstencil() const { return stencil; }
+
+  /// Check whether communication for a particular block has compelted
+  bool isready(const BlockInfo &info) {
+    const int id = info.halo_block_id;
+    if (id < 0)
+      return true;
+    UnPackInfo *unpacks = myunpacks[id].data();
+    for (size_t jj = 0; jj < myunpacks[id].size(); jj++) {
+      const UnPackInfo &unpack = unpacks[jj];
+      const int otherrank = unpack.rank;
+      int flag = 0;
+      const auto retval = mapofrequests.find(otherrank);
+      MPI_Test(retval->second, &flag, MPI_STATUS_IGNORE);
+      if (flag == 0)
+        return false;
+    }
+    return true;
+  }
+
+  /// Used by BlockLabMPI, to get the data from the receive buffers owned by the
+  /// Synchronizer and put them in its working copy of a GridBlock plus its halo
+  /// cells.
+  void fetch(const BlockInfo &info, const unsigned int Length[3],
+             const unsigned int CLength[3], Real *cacheBlock,
+             Real *coarseBlock) {
+    // fetch received data for blocks that are neighbors with 'info' but are
+    // owned by another rank
+    const int id = info.halo_block_id;
+    if (id < 0)
+      return;
+
+    // loop over all unpacks that correspond to block with this halo_block_id
+    UnPackInfo *unpacks = myunpacks[id].data();
+    for (size_t jj = 0; jj < myunpacks[id].size(); jj++) {
+      const UnPackInfo &unpack = unpacks[jj];
+      const int code[3] = {unpack.icode % 3 - 1, (unpack.icode / 3) % 3 - 1,
+                           (unpack.icode / 9) % 3 - 1};
+      const int otherrank = unpack.rank;
+
+      // Based on the current unpack's icode, regions starting from 's' and
+      // ending to 'e' of the current block will be filled with ghost cells.
+      const int s[3] = {code[0] < 1 ? (code[0] < 0 ? stencil.sx : 0) : nX,
+                        code[1] < 1 ? (code[1] < 0 ? stencil.sy : 0) : nY,
+                        code[2] < 1 ? (code[2] < 0 ? stencil.sz : 0) : nZ};
+      const int e[3] = {
+          code[0] < 1 ? (code[0] < 0 ? 0 : nX) : nX + stencil.ex - 1,
+          code[1] < 1 ? (code[1] < 0 ? 0 : nY) : nY + stencil.ey - 1,
+          code[2] < 1 ? (code[2] < 0 ? 0 : nZ) : nZ + stencil.ez - 1};
+
+      if (unpack.level == info.level) // same level neighbors
+      {
+        Real *dst =
+            cacheBlock + ((s[2] - stencil.sz) * Length[0] * Length[1] +
+                          (s[1] - stencil.sy) * Length[0] + s[0] - stencil.sx) *
+                             gptfloats;
+
+        unpack_subregion(&recv_buffer[otherrank][unpack.offset], &dst[0],
+                         gptfloats, &stencil.selcomponents[0],
+                         stencil.selcomponents.size(), unpack.srcxstart,
+                         unpack.srcystart, unpack.srczstart, unpack.LX,
+                         unpack.LY, 0, 0, 0, unpack.lx, unpack.ly, unpack.lz,
+                         Length[0], Length[1], Length[2]);
+
+        if (unpack.CoarseVersionOffset >=
+            0) // same level neighbors exchange averaged down ghosts
+        {
+          const int offset[3] = {(stencil.sx - 1) / 2 + Cstencil.sx,
+                                 (stencil.sy - 1) / 2 + Cstencil.sy,
+                                 (stencil.sz - 1) / 2 + Cstencil.sz};
+          const int sC[3] = {
+              code[0] < 1 ? (code[0] < 0 ? offset[0] : 0) : nX / 2,
+              code[1] < 1 ? (code[1] < 0 ? offset[1] : 0) : nY / 2,
+              code[2] < 1 ? (code[2] < 0 ? offset[2] : 0) : nZ / 2};
+          Real *dst1 = coarseBlock +
+                       ((sC[2] - offset[2]) * CLength[0] * CLength[1] +
+                        (sC[1] - offset[1]) * CLength[0] + sC[0] - offset[0]) *
+                           gptfloats;
+
+          int L[3];
+          SM.CoarseStencilLength(
+              (-code[0] + 1) + 3 * (-code[1] + 1) + 9 * (-code[2] + 1), L);
+
+          unpack_subregion(
+              &recv_buffer[otherrank]
+                          [unpack.offset + unpack.CoarseVersionOffset],
+              &dst1[0], gptfloats, &stencil.selcomponents[0],
+              stencil.selcomponents.size(), unpack.CoarseVersionsrcxstart,
+              unpack.CoarseVersionsrcystart, unpack.CoarseVersionsrczstart,
+              unpack.CoarseVersionLX, unpack.CoarseVersionLY, 0, 0, 0, L[0],
+              L[1], L[2], CLength[0], CLength[1], CLength[2]);
+        }
+      } else if (unpack.level < info.level) {
+        const int offset[3] = {(stencil.sx - 1) / 2 + Cstencil.sx,
+                               (stencil.sy - 1) / 2 + Cstencil.sy,
+                               (stencil.sz - 1) / 2 + Cstencil.sz};
+        const int sC[3] = {code[0] < 1 ? (code[0] < 0 ? offset[0] : 0) : nX / 2,
+                           code[1] < 1 ? (code[1] < 0 ? offset[1] : 0) : nY / 2,
+                           code[2] < 1 ? (code[2] < 0 ? offset[2] : 0)
+                                       : nZ / 2};
+        Real *dst = coarseBlock +
+                    ((sC[2] - offset[2]) * CLength[0] * CLength[1] + sC[0] -
+                     offset[0] + (sC[1] - offset[1]) * CLength[0]) *
+                        gptfloats;
+        unpack_subregion(&recv_buffer[otherrank][unpack.offset], &dst[0],
+                         gptfloats, &stencil.selcomponents[0],
+                         stencil.selcomponents.size(), unpack.srcxstart,
+                         unpack.srcystart, unpack.srczstart, unpack.LX,
+                         unpack.LY, 0, 0, 0, unpack.lx, unpack.ly, unpack.lz,
+                         CLength[0], CLength[1], CLength[2]);
+      } else {
+        int B;
+        if ((abs(code[0]) + abs(code[1]) + abs(code[2]) == 3))
+          B = 0;                                                    // corner
+        else if ((abs(code[0]) + abs(code[1]) + abs(code[2]) == 2)) // edge
+        {
+          int t;
+          if (code[0] == 0)
+            t = unpack.index_0 - 2 * info.index[0];
+          else if (code[1] == 0)
+            t = unpack.index_1 - 2 * info.index[1];
+          else
+            t = unpack.index_2 - 2 * info.index[2];
+          assert(t == 0 || t == 1);
+          B = (t == 1) ? 3 : 0;
+        } else {
+          int Bmod, Bdiv;
+          if (abs(code[0]) == 1) {
+            Bmod = unpack.index_1 - 2 * info.index[1];
+            Bdiv = unpack.index_2 - 2 * info.index[2];
+          } else if (abs(code[1]) == 1) {
+            Bmod = unpack.index_0 - 2 * info.index[0];
+            Bdiv = unpack.index_2 - 2 * info.index[2];
+          } else {
+            Bmod = unpack.index_0 - 2 * info.index[0];
+            Bdiv = unpack.index_1 - 2 * info.index[1];
+          }
+          B = 2 * Bdiv + Bmod;
+        }
+        const int aux1 = (abs(code[0]) == 1) ? (B % 2) : (B / 2);
+        Real *dst =
+            cacheBlock +
+            ((abs(code[2]) * (s[2] - stencil.sz) +
+              (1 - abs(code[2])) *
+                  (-stencil.sz + (B / 2) * (e[2] - s[2]) / 2)) *
+                 Length[0] * Length[1] +
+             (abs(code[1]) * (s[1] - stencil.sy) +
+              (1 - abs(code[1])) * (-stencil.sy + aux1 * (e[1] - s[1]) / 2)) *
+                 Length[0] +
+             abs(code[0]) * (s[0] - stencil.sx) +
+             (1 - abs(code[0])) * (-stencil.sx + (B % 2) * (e[0] - s[0]) / 2)) *
+                gptfloats;
+        unpack_subregion(&recv_buffer[otherrank][unpack.offset], &dst[0],
+                         gptfloats, &stencil.selcomponents[0],
+                         stencil.selcomponents.size(), unpack.srcxstart,
+                         unpack.srcystart, unpack.srczstart, unpack.LX,
+                         unpack.LY, 0, 0, 0, unpack.lx, unpack.ly, unpack.lz,
+                         Length[0], Length[1], Length[2]);
+      }
+    }
+  }
+};
+
+} // namespace cubism
+
+
+namespace cubism {
+
+/**
+ * @brief Performs flux corrections at coarse-fine block interfaces, with
+ * multiple MPI processes.
+ *
+ * This class can replace the coarse fluxes stored at BlockCases with the sum of
+ * the fine fluxes (also stored at BlockCases). This ensures conservation of the
+ * quantity whose flux we compute.
+ * @tparam TFluxCorrection The single-node version from which this class
+ * inherits
+ */
+
+template <typename TFluxCorrection>
+class FluxCorrectionMPI : public TFluxCorrection {
+public:
+  using TGrid = typename TFluxCorrection::GridType;
+  typedef typename TFluxCorrection::ElementType ElementType;
+  typedef typename TFluxCorrection::Real Real;
+  typedef typename TFluxCorrection::BlockType BlockType;
+  typedef BlockCase<BlockType> Case;
+  int size;
+
+protected:
+  /// Auxiliary struct to keep track of coarse-fine interfaces between two
+  /// different MPI processes
+  struct face {
+    BlockInfo *infos[2]; ///< the two BlockInfos of the interface
+    int icode[2]; ///< encodes what face (+x,-x,+y,-y,+z,-z) is shared by the
+                  ///< two Blocks
+    int offset;   ///< offset in the send/recv buffers where the data for this
+                  ///< face will be put
+    // infos[0] : Fine block
+    // infos[1] : Coarse block
+    face(BlockInfo &i0, BlockInfo &i1, int a_icode0, int a_icode1) {
+      infos[0] = &i0;
+      infos[1] = &i1;
+      icode[0] = a_icode0;
+      icode[1] = a_icode1;
+    }
+    bool operator<(const face &other) const {
+      if (infos[0]->blockID_2 == other.infos[0]->blockID_2) {
+        return (icode[0] < other.icode[0]);
+      } else {
+        return (infos[0]->blockID_2 < other.infos[0]->blockID_2);
+      }
+    }
+  };
+
+  std::vector<std::vector<Real>>
+      send_buffer; ///< multiple buffers to send to other ranks
+  std::vector<std::vector<Real>>
+      recv_buffer; ///< multiple buffers to receive from other ranks
+  std::vector<std::vector<face>>
+      send_faces; ///< buffers with 'faces' meta-data to send
+  std::vector<std::vector<face>>
+      recv_faces; ///< buffers with 'faces' meta-data to receive
+
+  /// Perform flux correction for face 'F'
+  void FillCase(face &F) {
+    BlockInfo &info = *F.infos[1];
+    const int icode = F.icode[1];
+    const int code[3] = {icode % 3 - 1, (icode / 3) % 3 - 1,
+                         (icode / 9) % 3 - 1};
+
+    const int myFace = abs(code[0]) * std::max(0, code[0]) +
+                       abs(code[1]) * (std::max(0, code[1]) + 2) +
+                       abs(code[2]) * (std::max(0, code[2]) + 4);
+    std::array<long long, 2> temp = {(long long)info.level, info.Z};
+    auto search = TFluxCorrection::MapOfCases.find(temp);
+    assert(search != TFluxCorrection::MapOfCases.end());
+    Case &CoarseCase = (*search->second);
+    std::vector<ElementType> &CoarseFace = CoarseCase.m_pData[myFace];
+#if DIMENSION == 3
+    for (int B = 0; B <= 3;
+         B++) // loop over fine blocks that make up coarse face
+#else
+    for (int B = 0; B <= 1;
+         B++) // loop over fine blocks that make up coarse face
+#endif
+    {
+      const int aux = (abs(code[0]) == 1) ? (B % 2) : (B / 2);
+
+#if DIMENSION == 3
+      const long long Z =
+          (*TFluxCorrection::grid)
+              .getZforward(info.level + 1,
+                           2 * info.index[0] + std::max(code[0], 0) + code[0] +
+                               (B % 2) * std::max(0, 1 - abs(code[0])),
+                           2 * info.index[1] + std::max(code[1], 0) + code[1] +
+                               aux * std::max(0, 1 - abs(code[1])),
+                           2 * info.index[2] + std::max(code[2], 0) + code[2] +
+                               (B / 2) * std::max(0, 1 - abs(code[2])));
+#else
+      const long long Z =
+          (*TFluxCorrection::grid)
+              .getZforward(info.level + 1,
+                           2 * info.index[0] + std::max(code[0], 0) + code[0] +
+                               (B % 2) * std::max(0, 1 - abs(code[0])),
+                           2 * info.index[1] + std::max(code[1], 0) + code[1] +
+                               aux * std::max(0, 1 - abs(code[1])));
+#endif
+      if (Z != F.infos[0]->Z)
+        continue;
+
+      const int d = myFace / 2;
+      const int d1 = std::max((d + 1) % 3, (d + 2) % 3);
+      const int d2 = std::min((d + 1) % 3, (d + 2) % 3);
+      const int N1 = CoarseCase.m_vSize[d1];
+      const int N2 = CoarseCase.m_vSize[d2];
+
+      int base = 0; //(B%2)*(N1/2)+ (B/2)*(N2/2)*N1;
+      if (B == 1)
+        base = (N2 / 2) + (0) * N2;
+      else if (B == 2)
+        base = (0) + (N1 / 2) * N2;
+      else if (B == 3)
+        base = (N2 / 2) + (N1 / 2) * N2;
+
+      int r = (*TFluxCorrection::grid)
+                  .Tree(F.infos[0]->level, F.infos[0]->Z)
+                  .rank();
+      int dis = 0;
+
+#if DIMENSION == 3
+      for (int i1 = 0; i1 < N1; i1 += 2)
+        for (int i2 = 0; i2 < N2; i2 += 2) {
+          for (int j = 0; j < ElementType::DIM; j++)
+            CoarseFace[base + (i2 / 2) + (i1 / 2) * N2].member(j) +=
+                recv_buffer[r][F.offset + dis + j];
+          dis += ElementType::DIM;
+        }
+#else
+      for (int i2 = 0; i2 < N2; i2 += 2) {
+        for (int j = 0; j < ElementType::DIM; j++)
+          CoarseFace[base + (i2 / 2)].member(j) +=
+              recv_buffer[r][F.offset + dis + j];
+        dis += ElementType::DIM;
+      }
+#endif
+    }
+  }
+
+  /// Perform flux correction for face 'F' and direction encoded by 'code*' (for
+  /// data received from other processes)
+  void FillCase_2(face &F, int codex, int codey, int codez) {
+    BlockInfo &info = *F.infos[1];
+    const int icode = F.icode[1];
+    const int code[3] = {icode % 3 - 1, (icode / 3) % 3 - 1,
+                         (icode / 9) % 3 - 1};
+
+    if (abs(code[0]) != codex)
+      return;
+    if (abs(code[1]) != codey)
+      return;
+    if (abs(code[2]) != codez)
+      return;
+
+    const int myFace = abs(code[0]) * std::max(0, code[0]) +
+                       abs(code[1]) * (std::max(0, code[1]) + 2) +
+                       abs(code[2]) * (std::max(0, code[2]) + 4);
+    std::array<long long, 2> temp = {(long long)info.level, info.Z};
+    auto search = TFluxCorrection::MapOfCases.find(temp);
+    assert(search != TFluxCorrection::MapOfCases.end());
+    Case &CoarseCase = (*search->second);
+    std::vector<ElementType> &CoarseFace = CoarseCase.m_pData[myFace];
+
+    const int d = myFace / 2;
+    const int d2 = std::min((d + 1) % 3, (d + 2) % 3);
+    const int N2 = CoarseCase.m_vSize[d2];
+    BlockType &block = *(BlockType *)info.ptrBlock;
+#if DIMENSION == 3
+    const int d1 = std::max((d + 1) % 3, (d + 2) % 3);
+    const int N1 = CoarseCase.m_vSize[d1];
+    if (d == 0) {
+      const int j = (myFace % 2 == 0) ? 0 : BlockType::sizeX - 1;
+      for (int i1 = 0; i1 < N1; i1++)
+        for (int i2 = 0; i2 < N2; i2++) {
+          block(j, i2, i1) += CoarseFace[i2 + i1 * N2];
+          CoarseFace[i2 + i1 * N2].clear();
+        }
+    } else if (d == 1) {
+      const int j = (myFace % 2 == 0) ? 0 : BlockType::sizeY - 1;
+      for (int i1 = 0; i1 < N1; i1++)
+        for (int i2 = 0; i2 < N2; i2++) {
+          block(i2, j, i1) += CoarseFace[i2 + i1 * N2];
+          CoarseFace[i2 + i1 * N2].clear();
+        }
+    } else {
+      const int j = (myFace % 2 == 0) ? 0 : BlockType::sizeZ - 1;
+      for (int i1 = 0; i1 < N1; i1++)
+        for (int i2 = 0; i2 < N2; i2++) {
+          block(i2, i1, j) += CoarseFace[i2 + i1 * N2];
+          CoarseFace[i2 + i1 * N2].clear();
+        }
+    }
+#else
+    assert(d != 2);
+    if (d == 0) {
+      const int j = (myFace % 2 == 0) ? 0 : BlockType::sizeX - 1;
+      for (int i2 = 0; i2 < N2; i2++) {
+        block(j, i2) += CoarseFace[i2];
+        CoarseFace[i2].clear();
+      }
+    } else // if (d == 1)
+    {
+      const int j = (myFace % 2 == 0) ? 0 : BlockType::sizeY - 1;
+      for (int i2 = 0; i2 < N2; i2++) {
+        block(i2, j) += CoarseFace[i2];
+        CoarseFace[i2].clear();
+      }
+    }
+#endif
+  }
+
+public:
+  /// Prepare the FluxCorrection class for a given 'grid' by allocating
+  /// BlockCases at each coarse-fine interface
+  virtual void prepare(TGrid &_grid) override {
+    if (_grid.UpdateFluxCorrection == false)
+      return;
+    _grid.UpdateFluxCorrection = false;
+
+    int temprank;
+    MPI_Comm_size(_grid.getWorldComm(), &size);
+    MPI_Comm_rank(_grid.getWorldComm(), &temprank);
+    TFluxCorrection::rank = temprank;
+
+    send_buffer.resize(size);
+    recv_buffer.resize(size);
+    send_faces.resize(size);
+    recv_faces.resize(size);
+
+    for (int r = 0; r < size; r++) {
+      send_faces[r].clear();
+      recv_faces[r].clear();
+    }
+
+    std::vector<int> send_buffer_size(size, 0);
+    std::vector<int> recv_buffer_size(size, 0);
+
+    const int NC = ElementType::DIM;
+
+    int blocksize[3];
+    blocksize[0] = BlockType::sizeX;
+    blocksize[1] = BlockType::sizeY;
+    blocksize[2] = BlockType::sizeZ;
+
+    TFluxCorrection::Cases.clear();
+    TFluxCorrection::MapOfCases.clear();
+
+    TFluxCorrection::grid = &_grid;
+    std::vector<BlockInfo> &BB = (*TFluxCorrection::grid).getBlocksInfo();
+
+    std::array<int, 3> blocksPerDim = _grid.getMaxBlocks();
+
+    std::array<int, 6> icode = {1 * 2 + 3 * 1 + 9 * 1, 1 * 0 + 3 * 1 + 9 * 1,
+                                1 * 1 + 3 * 2 + 9 * 1, 1 * 1 + 3 * 0 + 9 * 1,
+                                1 * 1 + 3 * 1 + 9 * 2, 1 * 1 + 3 * 1 + 9 * 0};
+
+    for (auto &info : BB) {
+      (*TFluxCorrection::grid).getBlockInfoAll(info.level, info.Z).auxiliary =
+          nullptr;
+      info.auxiliary = nullptr;
+
+      const int aux = 1 << info.level;
+
+      const bool xskin =
+          info.index[0] == 0 || info.index[0] == blocksPerDim[0] * aux - 1;
+      const bool yskin =
+          info.index[1] == 0 || info.index[1] == blocksPerDim[1] * aux - 1;
+      const bool zskin =
+          info.index[2] == 0 || info.index[2] == blocksPerDim[2] * aux - 1;
+
+      const int xskip = info.index[0] == 0 ? -1 : 1;
+      const int yskip = info.index[1] == 0 ? -1 : 1;
+      const int zskip = info.index[2] == 0 ? -1 : 1;
+
+      bool storeFace[6] = {false, false, false, false, false, false};
+      bool stored = false;
+
+      for (int f = 0; f < 6; f++) {
+        const int code[3] = {icode[f] % 3 - 1, (icode[f] / 3) % 3 - 1,
+                             (icode[f] / 9) % 3 - 1};
+
+        if (!_grid.xperiodic && code[0] == xskip && xskin)
+          continue;
+        if (!_grid.yperiodic && code[1] == yskip && yskin)
+          continue;
+        if (!_grid.zperiodic && code[2] == zskip && zskin)
+          continue;
+#if DIMENSION == 2
+        if (code[2] != 0)
+          continue;
+#endif
+
+        if (!(*TFluxCorrection::grid)
+                 .Tree(info.level, info.Znei_(code[0], code[1], code[2]))
+                 .Exists()) {
+          storeFace[abs(code[0]) * std::max(0, code[0]) +
+                    abs(code[1]) * (std::max(0, code[1]) + 2) +
+                    abs(code[2]) * (std::max(0, code[2]) + 4)] = true;
+          stored = true;
+        }
+
+        int L[3];
+        L[0] = (code[0] == 0) ? blocksize[0] / 2 : 1;
+        L[1] = (code[1] == 0) ? blocksize[1] / 2 : 1;
+#if DIMENSION == 3
+        L[2] = (code[2] == 0) ? blocksize[2] / 2 : 1;
+#else
+        L[2] = 1;
+#endif
+        int V = L[0] * L[1] * L[2];
+
+        if ((*TFluxCorrection::grid)
+                .Tree(info.level, info.Znei_(code[0], code[1], code[2]))
+                .CheckCoarser()) {
+          BlockInfo &infoNei =
+              (*TFluxCorrection::grid)
+                  .getBlockInfoAll(info.level,
+                                   info.Znei_(code[0], code[1], code[2]));
+          const long long nCoarse = infoNei.Zparent;
+          BlockInfo &infoNeiCoarser =
+              (*TFluxCorrection::grid).getBlockInfoAll(info.level - 1, nCoarse);
+          const int infoNeiCoarserrank =
+              (*TFluxCorrection::grid).Tree(info.level - 1, nCoarse).rank();
+          {
+            int code2[3] = {-code[0], -code[1], -code[2]};
+            int icode2 =
+                (code2[0] + 1) + (code2[1] + 1) * 3 + (code2[2] + 1) * 9;
+            send_faces[infoNeiCoarserrank].push_back(
+                face(info, infoNeiCoarser, icode[f], icode2));
+            send_buffer_size[infoNeiCoarserrank] += V;
+          }
+        } else if ((*TFluxCorrection::grid)
+                       .Tree(info.level, info.Znei_(code[0], code[1], code[2]))
+                       .CheckFiner()) {
+          BlockInfo &infoNei =
+              (*TFluxCorrection::grid)
+                  .getBlockInfoAll(info.level,
+                                   info.Znei_(code[0], code[1], code[2]));
+          int Bstep = 1; // face
+#if DIMENSION == 3
+          for (int B = 0; B <= 3;
+               B += Bstep) // loop over blocks that make up face
+#else
+          for (int B = 0; B <= 1;
+               B += Bstep) // loop over blocks that make up face
+#endif
+          {
+            const int temp = (abs(code[0]) == 1) ? (B % 2) : (B / 2);
+            const long long nFine =
+                infoNei.Zchild[std::max(-code[0], 0) +
+                               (B % 2) * std::max(0, 1 - abs(code[0]))]
+                              [std::max(-code[1], 0) +
+                               temp * std::max(0, 1 - abs(code[1]))]
+                              [std::max(-code[2], 0) +
+                               (B / 2) * std::max(0, 1 - abs(code[2]))];
+            const int infoNeiFinerrank =
+                (*TFluxCorrection::grid).Tree(infoNei.level + 1, nFine).rank();
+            {
+              BlockInfo &infoNeiFiner =
+                  (*TFluxCorrection::grid)
+                      .getBlockInfoAll(infoNei.level + 1, nFine);
+              int icode2 =
+                  (-code[0] + 1) + (-code[1] + 1) * 3 + (-code[2] + 1) * 9;
+              recv_faces[infoNeiFinerrank].push_back(
+                  face(infoNeiFiner, info, icode2, icode[f]));
+              recv_buffer_size[infoNeiFinerrank] += V;
+            }
+          }
+        }
+      } // icode = 0,...,26
+
+      if (stored) {
+        TFluxCorrection::Cases.push_back(
+            Case(storeFace, BlockType::sizeX, BlockType::sizeY,
+                 BlockType::sizeZ, info.level, info.Z));
+      }
+    }
+
+    size_t Cases_index = 0;
+    if (TFluxCorrection::Cases.size() > 0)
+      for (auto &info : BB) {
+        if (Cases_index == TFluxCorrection::Cases.size())
+          break;
+        if (TFluxCorrection::Cases[Cases_index].level == info.level &&
+            TFluxCorrection::Cases[Cases_index].Z == info.Z) {
+          TFluxCorrection::MapOfCases.insert(
+              std::pair<std::array<long long, 2>, Case *>(
+                  {TFluxCorrection::Cases[Cases_index].level,
+                   TFluxCorrection::Cases[Cases_index].Z},
+                  &TFluxCorrection::Cases[Cases_index]));
+          TFluxCorrection::grid
+              ->getBlockInfoAll(TFluxCorrection::Cases[Cases_index].level,
+                                TFluxCorrection::Cases[Cases_index].Z)
+              .auxiliary = &TFluxCorrection::Cases[Cases_index];
+          info.auxiliary = &TFluxCorrection::Cases[Cases_index];
+          Cases_index++;
+        }
+      }
+
+    // 2.Sort faces
+    for (int r = 0; r < size; r++) {
+      std::sort(send_faces[r].begin(), send_faces[r].end());
+      std::sort(recv_faces[r].begin(), recv_faces[r].end());
+    }
+
+    // 3.Define map
+    for (int r = 0; r < size; r++) {
+      send_buffer[r].resize(send_buffer_size[r] * NC);
+      recv_buffer[r].resize(recv_buffer_size[r] * NC);
+
+      int offset = 0;
+      for (int k = 0; k < (int)recv_faces[r].size(); k++) {
+        face &f = recv_faces[r][k];
+
+        const int code[3] = {f.icode[1] % 3 - 1, (f.icode[1] / 3) % 3 - 1,
+                             (f.icode[1] / 9) % 3 - 1};
+
+        int L[3];
+        L[0] = (code[0] == 0) ? blocksize[0] / 2 : 1;
+        L[1] = (code[1] == 0) ? blocksize[1] / 2 : 1;
+#if DIMENSION == 3
+        L[2] = (code[2] == 0) ? blocksize[2] / 2 : 1;
+#else
+        L[2] = 1;
+#endif
+        int V = L[0] * L[1] * L[2];
+
+        f.offset = offset;
+
+        offset += V * NC;
+      }
+    }
+  }
+
+  /// Go over each coarse-fine interface and perform the flux corrections,
+  /// assuming the associated BlockCases have been filled with the fluxes by the
+  /// user
+  virtual void FillBlockCases() override {
+    auto MPI_real =
+        (sizeof(Real) == sizeof(float))
+            ? MPI_FLOAT
+            : ((sizeof(Real) == sizeof(double)) ? MPI_DOUBLE : MPI_LONG_DOUBLE);
+
+    // This assumes that the BlockCases have been filled by the user somehow...
+
+    // 1.Pack send data
+    for (int r = 0; r < size; r++) {
+
+      int displacement = 0;
+      for (int k = 0; k < (int)send_faces[r].size(); k++) {
+        face &f = send_faces[r][k];
+
+        BlockInfo &info = *(f.infos[0]);
+
+        auto search =
+            TFluxCorrection::MapOfCases.find({(long long)info.level, info.Z});
+        assert(search != TFluxCorrection::MapOfCases.end());
+
+        Case &FineCase = (*search->second);
+
+        int icode = f.icode[0];
+        const int code[3] = {icode % 3 - 1, (icode / 3) % 3 - 1,
+                             (icode / 9) % 3 - 1};
+        const int myFace = abs(code[0]) * std::max(0, code[0]) +
+                           abs(code[1]) * (std::max(0, code[1]) + 2) +
+                           abs(code[2]) * (std::max(0, code[2]) + 4);
+        std::vector<ElementType> &FineFace = FineCase.m_pData[myFace];
+
+        const int d = myFace / 2;
+        const int d2 = std::min((d + 1) % 3, (d + 2) % 3);
+        const int N2 = FineCase.m_vSize[d2];
+#if DIMENSION == 3
+        const int d1 = std::max((d + 1) % 3, (d + 2) % 3);
+        const int N1 = FineCase.m_vSize[d1];
+        for (int i1 = 0; i1 < N1; i1 += 2)
+          for (int i2 = 0; i2 < N2; i2 += 2) {
+            ElementType avg =
+                ((FineFace[i2 + i1 * N2] + FineFace[i2 + 1 + i1 * N2]) +
+                 (FineFace[i2 + (i1 + 1) * N2] +
+                  FineFace[i2 + 1 + (i1 + 1) * N2]));
+            for (int j = 0; j < ElementType::DIM; j++)
+              send_buffer[r][displacement + j] = avg.member(j);
+            displacement += ElementType::DIM;
+            FineFace[i2 + i1 * N2].clear();
+            FineFace[i2 + 1 + i1 * N2].clear();
+            FineFace[i2 + (i1 + 1) * N2].clear();
+            FineFace[i2 + 1 + (i1 + 1) * N2].clear();
+          }
+#else
+        for (int i2 = 0; i2 < N2; i2 += 2) {
+          ElementType avg = FineFace[i2] + FineFace[i2 + 1];
+          for (int j = 0; j < ElementType::DIM; j++)
+            send_buffer[r][displacement + j] = avg.member(j);
+          displacement += ElementType::DIM;
+          FineFace[i2].clear();
+          FineFace[i2 + 1].clear();
+        }
+#endif
+      }
+    }
+
+    std::vector<MPI_Request> send_requests;
+    std::vector<MPI_Request> recv_requests;
+
+    const int me = TFluxCorrection::rank;
+    for (int r = 0; r < size; r++)
+      if (r != me) {
+        if (recv_buffer[r].size() != 0) {
+          MPI_Request req{};
+          recv_requests.push_back(req);
+          MPI_Irecv(&recv_buffer[r][0], recv_buffer[r].size(), MPI_real, r,
+                    123456, (*TFluxCorrection::grid).getWorldComm(),
+                    &recv_requests.back());
+        }
+        if (send_buffer[r].size() != 0) {
+          MPI_Request req{};
+          send_requests.push_back(req);
+          MPI_Isend(&send_buffer[r][0], send_buffer[r].size(), MPI_real, r,
+                    123456, (*TFluxCorrection::grid).getWorldComm(),
+                    &send_requests.back());
+        }
+      }
+
+    MPI_Request me_send_request;
+    MPI_Request me_recv_request;
+    if (recv_buffer[me].size() != 0) {
+      MPI_Irecv(&recv_buffer[me][0], recv_buffer[me].size(), MPI_real, me,
+                123456, (*TFluxCorrection::grid).getWorldComm(),
+                &me_recv_request);
+    }
+    if (send_buffer[me].size() != 0) {
+      MPI_Isend(&send_buffer[me][0], send_buffer[me].size(), MPI_real, me,
+                123456, (*TFluxCorrection::grid).getWorldComm(),
+                &me_send_request);
+    }
+
+    if (recv_buffer[me].size() > 0)
+      MPI_Waitall(1, &me_recv_request, MPI_STATUSES_IGNORE);
+    if (send_buffer[me].size() > 0)
+      MPI_Waitall(1, &me_send_request, MPI_STATUSES_IGNORE);
+
+    for (int index = 0; index < (int)recv_faces[me].size(); index++)
+      FillCase(recv_faces[me][index]);
+
+    if (recv_requests.size() > 0)
+      MPI_Waitall(recv_requests.size(), &recv_requests[0], MPI_STATUSES_IGNORE);
+
+    for (int r = 0; r < size; r++)
+      if (r != me)
+        for (int index = 0; index < (int)recv_faces[r].size(); index++)
+          FillCase(recv_faces[r][index]);
+
+    // first do x, then y then z. It is done like this to preserve symmetry and
+    // not favor any direction
+    for (int r = 0; r < size; r++) // if (r!=me)
+      for (int index = 0; index < (int)recv_faces[r].size(); index++)
+        FillCase_2(recv_faces[r][index], 1, 0, 0);
+    for (int r = 0; r < size; r++) // if (r!=me)
+      for (int index = 0; index < (int)recv_faces[r].size(); index++)
+        FillCase_2(recv_faces[r][index], 0, 1, 0);
+#if DIMENSION == 3
+    for (int r = 0; r < size; r++) // if (r!=me)
+      for (int index = 0; index < (int)recv_faces[r].size(); index++)
+        FillCase_2(recv_faces[r][index], 0, 0, 1);
+#endif
+
+    if (send_requests.size() > 0)
+      MPI_Waitall(send_requests.size(), &send_requests[0], MPI_STATUSES_IGNORE);
+  }
+};
+
+} // namespace cubism
+
+
+namespace cubism {
+
+/** Similar to Grid, but with functionalities for multiple MPI processes.
+ */
+template <typename TGrid> class GridMPI : public TGrid {
+public:
+  typedef typename TGrid::Real Real;
+  typedef typename TGrid::BlockType Block;
+  typedef typename TGrid::BlockType BlockType;
+  typedef SynchronizerMPI_AMR<Real, GridMPI<TGrid>> SynchronizerMPIType;
+
+  // MPI related variables
+  size_t timestamp;   ///< used as message tag during communication
+  MPI_Comm worldcomm; ///< MPI communicator
+  int myrank;         ///< MPI process ID
+  int world_size;     ///< total number of MPI processes
+
+  std::map<StencilInfo, SynchronizerMPIType *>
+      SynchronizerMPIs; ///< map of Syncronizers need for halo cell exchange
+  FluxCorrectionMPI<FluxCorrection<GridMPI<TGrid>>> Corrector;
+  std::vector<BlockInfo *> boundary; ///< BlockInfos of adjacent ranks
+
+  /// Constructor, same as the one from Grid.
+  GridMPI(const int nX, const int nY = 1, const int nZ = 1,
+          const double a_maxextent = 1, const int a_levelStart = 0,
+          const int a_levelMax = 1, const MPI_Comm comm = MPI_COMM_WORLD,
+          const bool a_xperiodic = true, const bool a_yperiodic = true,
+          const bool a_zperiodic = true)
+      : TGrid(nX, nY, nZ, a_maxextent, a_levelStart, a_levelMax, false,
+              a_xperiodic, a_yperiodic, a_zperiodic),
+        timestamp(0), worldcomm(comm) {
+    MPI_Comm_size(worldcomm, &world_size);
+    MPI_Comm_rank(worldcomm, &myrank);
+
+    const long long total_blocks =
+        nX * nY * nZ * pow(pow(2, a_levelStart), DIMENSION);
+    long long my_blocks = total_blocks / world_size;
+    if ((long long)myrank < total_blocks % world_size)
+      my_blocks++;
+    long long n_start = myrank * (total_blocks / world_size);
+    if (total_blocks % world_size > 0) {
+      if ((long long)myrank < total_blocks % world_size)
+        n_start += myrank;
+      else
+        n_start += total_blocks % world_size;
+    }
+
+    std::vector<short int> levels(my_blocks, a_levelStart);
+    std::vector<long long> Zs(my_blocks);
+    for (long long n = n_start; n < n_start + my_blocks; n++)
+      Zs[n - n_start] = n;
+    initialize_blocks(Zs, levels);
+
+    if (myrank == 0) {
+      std::cout << "Total blocks = " << total_blocks << ", each rank gets "
+                << my_blocks << std::endl;
+    }
+    MPI_Barrier(worldcomm);
+  }
+
+  /// Destructor.
+  virtual ~GridMPI() override {
+    for (auto it = SynchronizerMPIs.begin(); it != SynchronizerMPIs.end(); ++it)
+      delete it->second;
+
+    SynchronizerMPIs.clear();
+
+    MPI_Barrier(worldcomm);
+  }
+
+  /// Return pointer to block at level 'm' with Z-index 'n' or nullptr if this
+  /// block is not owned by this rank.
+  virtual Block *avail(const int m, const long long n) override {
+    return (TGrid::Tree(m, n).rank() == myrank)
+               ? (Block *)TGrid::getBlockInfoAll(m, n).ptrBlock
+               : nullptr;
+  }
+
+  /// Communicate the state (refine/compress/leave) of all blocks in the
+  /// boundaries of this rank; Used when the mesh is refined, to make sure we
+  /// all adjacent blocks do not differ by more than one refinement level.
+  virtual void UpdateBoundary(bool clean = false) override {
+    const auto blocksPerDim = TGrid::getMaxBlocks();
+
+    int rank, size;
+    MPI_Comm_rank(worldcomm, &rank);
+    MPI_Comm_size(worldcomm, &size);
+
+    std::vector<std::vector<long long>> send_buffer(size);
+
+    std::vector<BlockInfo *> &bbb = boundary;
+    std::set<int> Neighbors;
+    for (size_t jjj = 0; jjj < bbb.size(); jjj++) {
+      BlockInfo &info = *bbb[jjj];
+
+      std::set<int> receivers;
+
+      const int aux = 1 << info.level;
+      const bool xskin =
+          info.index[0] == 0 || info.index[0] == blocksPerDim[0] * aux - 1;
+      const bool yskin =
+          info.index[1] == 0 || info.index[1] == blocksPerDim[1] * aux - 1;
+      const bool zskin =
+          info.index[2] == 0 || info.index[2] == blocksPerDim[2] * aux - 1;
+      const int xskip = info.index[0] == 0 ? -1 : 1;
+      const int yskip = info.index[1] == 0 ? -1 : 1;
+      const int zskip = info.index[2] == 0 ? -1 : 1;
+      for (int icode = 0; icode < 27; icode++) {
+        if (icode == 1 * 1 + 3 * 1 + 9 * 1)
+          continue;
+
+        const int code[3] = {icode % 3 - 1, (icode / 3) % 3 - 1,
+                             (icode / 9) % 3 - 1};
+
+        if (!TGrid::xperiodic && code[0] == xskip && xskin)
+          continue;
+        if (!TGrid::yperiodic && code[1] == yskip && yskin)
+          continue;
+        if (!TGrid::zperiodic && code[2] == zskip && zskin)
+          continue;
+#if DIMENSION == 2
+        if (code[2] != 0)
+          continue;
+#endif
+
+        BlockInfo &infoNei = TGrid::getBlockInfoAll(
+            info.level, info.Znei_(code[0], code[1], code[2]));
+
+        const TreePosition &infoNeiTree = TGrid::Tree(infoNei.level, infoNei.Z);
+        if (infoNeiTree.Exists() && infoNeiTree.rank() != rank) {
+          if (infoNei.state != Refine || clean)
+            infoNei.state = Leave;
+          receivers.insert(infoNeiTree.rank());
+          Neighbors.insert(infoNeiTree.rank());
+        } else if (infoNeiTree.CheckCoarser()) {
+          const long long nCoarse = infoNei.Zparent;
+          BlockInfo &infoNeiCoarser =
+              TGrid::getBlockInfoAll(infoNei.level - 1, nCoarse);
+          const int infoNeiCoarserrank =
+              TGrid::Tree(infoNei.level - 1, nCoarse).rank();
+          if (infoNeiCoarserrank != rank) {
+            assert(infoNeiCoarserrank >= 0);
+            if (infoNeiCoarser.state != Refine || clean)
+              infoNeiCoarser.state = Leave;
+            receivers.insert(infoNeiCoarserrank);
+            Neighbors.insert(infoNeiCoarserrank);
+          }
+        } else if (infoNeiTree.CheckFiner()) {
+          int Bstep = 1; // face
+          if ((abs(code[0]) + abs(code[1]) + abs(code[2]) == 2))
+            Bstep = 3; // edge
+          else if ((abs(code[0]) + abs(code[1]) + abs(code[2]) == 3))
+            Bstep = 4; // corner
+
+#if DIMENSION == 3
+          for (int B = 0; B <= 3;
+               B += Bstep) // loop over blocks that make up face/edge/corner
+                           // (respectively 4,2 or 1 blocks)
+#else
+          for (int B = 0; B <= 1; B += Bstep)
+#endif
+          {
+            const int temp = (abs(code[0]) == 1) ? (B % 2) : (B / 2);
+            const long long nFine =
+                infoNei.Zchild[std::max(-code[0], 0) +
+                               (B % 2) * std::max(0, 1 - abs(code[0]))]
+                              [std::max(-code[1], 0) +
+                               temp * std::max(0, 1 - abs(code[1]))]
+                              [std::max(-code[2], 0) +
+                               (B / 2) * std::max(0, 1 - abs(code[2]))];
+
+            BlockInfo &infoNeiFiner =
+                TGrid::getBlockInfoAll(infoNei.level + 1, nFine);
+            const int infoNeiFinerrank =
+                TGrid::Tree(infoNei.level + 1, nFine).rank();
+            if (infoNeiFinerrank != rank) {
+              if (infoNeiFiner.state != Refine || clean)
+                infoNeiFiner.state = Leave;
+              receivers.insert(infoNeiFinerrank);
+              Neighbors.insert(infoNeiFinerrank);
+            }
+          }
+        }
+      } // icode = 0,...,26
+
+      if (info.changed2 && info.state != Leave) {
+        if (info.state == Refine)
+          info.changed2 = false;
+
+        std::set<int>::iterator it = receivers.begin();
+        while (it != receivers.end()) {
+          int temp = (info.state == Compress) ? 1 : 2;
+          send_buffer[*it].push_back(info.level);
+          send_buffer[*it].push_back(info.Z);
+          send_buffer[*it].push_back(temp);
+          it++;
+        }
+      }
+    }
+
+    std::vector<MPI_Request> requests;
+
+    long long dummy = 0;
+    for (int r : Neighbors)
+      if (r != rank) {
+        requests.resize(requests.size() + 1);
+        if (send_buffer[r].size() != 0)
+          MPI_Isend(&send_buffer[r][0], send_buffer[r].size(), MPI_LONG_LONG, r,
+                    123, worldcomm, &requests[requests.size() - 1]);
+        else {
+          MPI_Isend(&dummy, 1, MPI_LONG_LONG, r, 123, worldcomm,
+                    &requests[requests.size() - 1]);
+        }
+      }
+
+    std::vector<std::vector<long long>> recv_buffer(size);
+    for (int r : Neighbors)
+      if (r != rank) {
+        int recv_size;
+        MPI_Status status;
+        MPI_Probe(r, 123, worldcomm, &status);
+        MPI_Get_count(&status, MPI_LONG_LONG, &recv_size);
+        if (recv_size > 0) {
+          recv_buffer[r].resize(recv_size);
+          requests.resize(requests.size() + 1);
+          MPI_Irecv(&recv_buffer[r][0], recv_buffer[r].size(), MPI_LONG_LONG, r,
+                    123, worldcomm, &requests[requests.size() - 1]);
+        }
+      }
+
+    MPI_Waitall(requests.size(), requests.data(), MPI_STATUSES_IGNORE);
+
+    for (int r = 0; r < size; r++)
+      if (recv_buffer[r].size() > 1)
+        for (int index = 0; index < (int)recv_buffer[r].size(); index += 3) {
+          int level = recv_buffer[r][index];
+          long long Z = recv_buffer[r][index + 1];
+          TGrid::getBlockInfoAll(level, Z).state =
+              (recv_buffer[r][index + 2] == 1) ? Compress : Refine;
+        }
+  };
+
+  /// Called after grid refinement/compression, to update the Octree with the
+  /// new block states and rank ownership.
+  void UpdateBlockInfoAll_States(bool UpdateIDs = false) {
+    std::vector<int> myNeighbors = FindMyNeighbors();
+
+    const auto blocksPerDim = TGrid::getMaxBlocks();
+    std::vector<long long> myData;
+    for (auto &info : TGrid::m_vInfo) {
+      bool myflag = false;
+
+      const int aux = 1 << info.level;
+      const bool xskin =
+          info.index[0] == 0 || info.index[0] == blocksPerDim[0] * aux - 1;
+      const bool yskin =
+          info.index[1] == 0 || info.index[1] == blocksPerDim[1] * aux - 1;
+      const bool zskin =
+          info.index[2] == 0 || info.index[2] == blocksPerDim[2] * aux - 1;
+      const int xskip = info.index[0] == 0 ? -1 : 1;
+      const int yskip = info.index[1] == 0 ? -1 : 1;
+      const int zskip = info.index[2] == 0 ? -1 : 1;
+      for (int icode = 0; icode < 27; icode++) {
+        if (icode == 1 * 1 + 3 * 1 + 9 * 1)
+          continue;
+
+        const int code[3] = {icode % 3 - 1, (icode / 3) % 3 - 1,
+                             (icode / 9) % 3 - 1};
+
+        if (!TGrid::xperiodic && code[0] == xskip && xskin)
+          continue;
+        if (!TGrid::yperiodic && code[1] == yskip && yskin)
+          continue;
+        if (!TGrid::zperiodic && code[2] == zskip && zskin)
+          continue;
+#if DIMENSION == 2
+        if (code[2] != 0)
+          continue;
+#endif
+
+        BlockInfo &infoNei = TGrid::getBlockInfoAll(
+            info.level, info.Znei_(code[0], code[1], code[2]));
+
+        const TreePosition &infoNeiTree = TGrid::Tree(infoNei.level, infoNei.Z);
+        if (infoNeiTree.Exists() && infoNeiTree.rank() != myrank) {
+          myflag = true;
+          break;
+        } else if (infoNeiTree.CheckCoarser()) {
+          long long nCoarse = infoNei.Zparent;
+          const int infoNeiCoarserrank =
+              TGrid::Tree(infoNei.level - 1, nCoarse).rank();
+          if (infoNeiCoarserrank != myrank) {
+            myflag = true;
+            break;
+          }
+        } else if (infoNeiTree.CheckFiner()) {
+          int Bstep = 1; // face
+          if ((abs(code[0]) + abs(code[1]) + abs(code[2]) == 2))
+            Bstep = 3; // edge
+          else if ((abs(code[0]) + abs(code[1]) + abs(code[2]) == 3))
+            Bstep = 4; // corner
+
+          for (int B = 0; B <= 3;
+               B += Bstep) // loop over blocks that make up face/edge/corner
+                           // (respectively 4,2 or 1 blocks)
+          {
+            const int temp = (abs(code[0]) == 1) ? (B % 2) : (B / 2);
+            const long long nFine =
+                infoNei.Zchild[std::max(-code[0], 0) +
+                               (B % 2) * std::max(0, 1 - abs(code[0]))]
+                              [std::max(-code[1], 0) +
+                               temp * std::max(0, 1 - abs(code[1]))]
+                              [std::max(-code[2], 0) +
+                               (B / 2) * std::max(0, 1 - abs(code[2]))];
+            const int infoNeiFinerrank =
+                TGrid::Tree(infoNei.level + 1, nFine).rank();
+            if (infoNeiFinerrank != myrank) {
+              myflag = true;
+              break;
+            }
+          }
+        } else if (infoNeiTree.rank() < 0) {
+          myflag = true;
+          break;
+        }
+      } // icode = 0,...,26
+
+      if (myflag) {
+        myData.push_back(info.level);
+        myData.push_back(info.Z);
+        if (UpdateIDs)
+          myData.push_back(info.blockID);
+      }
+    }
+
+    std::vector<std::vector<long long>> recv_buffer(myNeighbors.size());
+    std::vector<std::vector<long long>> send_buffer(myNeighbors.size());
+    std::vector<int> recv_size(myNeighbors.size());
+
+    std::vector<MPI_Request> size_requests(2 * myNeighbors.size());
+
+    int mysize = (int)myData.size();
+    int kk = 0;
+    for (auto r : myNeighbors) {
+      MPI_Irecv(&recv_size[kk], 1, MPI_INT, r, timestamp, worldcomm,
+                &size_requests[2 * kk]);
+      MPI_Isend(&mysize, 1, MPI_INT, r, timestamp, worldcomm,
+                &size_requests[2 * kk + 1]);
+      kk++;
+    }
+    kk = 0;
+    for (size_t j = 0; j < myNeighbors.size(); j++) {
+      send_buffer[kk].resize(myData.size());
+      for (size_t i = 0; i < myData.size(); i++)
+        send_buffer[kk][i] = myData[i];
+      kk++;
+    }
+
+    MPI_Waitall(size_requests.size(), size_requests.data(),
+                MPI_STATUSES_IGNORE);
+    std::vector<MPI_Request> requests(2 * myNeighbors.size());
+    kk = 0;
+    for (auto r : myNeighbors) {
+      recv_buffer[kk].resize(recv_size[kk]);
+      MPI_Irecv(recv_buffer[kk].data(), recv_buffer[kk].size(), MPI_LONG_LONG,
+                r, timestamp, worldcomm, &requests[2 * kk]);
+      MPI_Isend(send_buffer[kk].data(), send_buffer[kk].size(), MPI_LONG_LONG,
+                r, timestamp, worldcomm, &requests[2 * kk + 1]);
+      kk++;
+    }
+    MPI_Waitall(requests.size(), requests.data(), MPI_STATUSES_IGNORE);
+
+    kk = -1;
+    const int increment = UpdateIDs ? 3 : 2;
+    for (auto r : myNeighbors) {
+      kk++;
+      for (size_t index__ = 0; index__ < recv_buffer[kk].size();
+           index__ += increment) {
+        const int level = (int)recv_buffer[kk][index__];
+        const long long Z = recv_buffer[kk][index__ + 1];
+        TGrid::Tree(level, Z).setrank(r);
+        if (UpdateIDs)
+          TGrid::getBlockInfoAll(level, Z).blockID =
+              recv_buffer[kk][index__ + 2];
+#if DIMENSION == 3
+        int p[3];
+        BlockInfo::inverse(Z, level, p[0], p[1], p[2]);
+
+        if (level < TGrid::levelMax - 1)
+          for (int k = 0; k < 2; k++)
+            for (int j = 0; j < 2; j++)
+              for (int i = 0; i < 2; i++) {
+                const long long nc = TGrid::getZforward(
+                    level + 1, 2 * p[0] + i, 2 * p[1] + j, 2 * p[2] + k);
+                TGrid::Tree(level + 1, nc).setCheckCoarser();
+              }
+        if (level > 0) {
+          const long long nf =
+              TGrid::getZforward(level - 1, p[0] / 2, p[1] / 2, p[2] / 2);
+          TGrid::Tree(level - 1, nf).setCheckFiner();
+        }
+#else
+        int p[2];
+        BlockInfo::inverse(Z, level, p[0], p[1]);
+        if (level < TGrid::levelMax - 1)
+          for (int j = 0; j < 2; j++)
+            for (int i = 0; i < 2; i++) {
+              const long long nc =
+                  TGrid::getZforward(level + 1, 2 * p[0] + i, 2 * p[1] + j);
+              TGrid::Tree(level + 1, nc).setCheckCoarser();
+            }
+        if (level > 0) {
+          const long long nf =
+              TGrid::getZforward(level - 1, p[0] / 2, p[1] / 2);
+          TGrid::Tree(level - 1, nf).setCheckFiner();
+        }
+#endif
+      }
+    }
+  }
+
+  /// Returns a vector with the process IDs (ranks) or neighboring GridMPIs.
+  std::vector<int> FindMyNeighbors() {
+    std::vector<int> myNeighbors;
+    double low[3] = {+1e20, +1e20, +1e20};
+    double high[3] = {-1e20, -1e20, -1e20};
+    double p_low[3];
+    double p_high[3];
+    for (auto &info : TGrid::m_vInfo) {
+#if DIMENSION == 3
+      const double h = 2 * info.h;
+      info.pos(p_low, 0, 0, 0);
+      info.pos(p_high, Block::sizeX - 1, Block::sizeY - 1, Block::sizeZ - 1);
+      p_low[0] -= h;
+      p_low[1] -= h;
+      p_low[2] -= h;
+      p_high[0] += h;
+      p_high[1] += h;
+      p_high[2] += h;
+      low[0] = std::min(low[0], p_low[0]);
+      low[1] = std::min(low[1], p_low[1]);
+      low[2] = std::min(low[2], p_low[2]);
+      high[0] = std::max(high[0], p_high[0]);
+      high[1] = std::max(high[1], p_high[1]);
+      high[2] = std::max(high[2], p_high[2]);
+#else
+      const double h = 2 * info.h;
+      info.pos(p_low, 0, 0);
+      info.pos(p_high, Block::sizeX - 1, Block::sizeY - 1);
+      p_low[0] -= h;
+      p_low[1] -= h;
+      p_low[2] = 0;
+      p_high[0] += h;
+      p_high[1] += h;
+      p_high[2] = 0;
+      low[0] = std::min(low[0], p_low[0]);
+      low[1] = std::min(low[1], p_low[1]);
+      low[2] = 0;
+      high[0] = std::max(high[0], p_high[0]);
+      high[1] = std::max(high[1], p_high[1]);
+      high[2] = 0;
+#endif
+    }
+    std::vector<double> all_boxes(world_size * 6);
+    double my_box[6] = {low[0], low[1], low[2], high[0], high[1], high[2]};
+    MPI_Allgather(my_box, 6, MPI_DOUBLE, all_boxes.data(), 6, MPI_DOUBLE,
+                  worldcomm);
+    for (int i = 0; i < world_size; i++) {
+      if (i == myrank)
+        continue;
+      if (Intersect(low, high, &all_boxes[i * 6], &all_boxes[i * 6 + 3]))
+        myNeighbors.push_back(i);
+    }
+    return myNeighbors;
+  }
+
+  /// Check if a rectangle with bottom left point l1 and top right point h1
+  /// intersects with a rectangle with bottom left point l2 and top right point
+  /// h2; used when determining neighboring processes.
+  bool Intersect(double *l1, double *h1, double *l2, double *h2) {
+    const double h0 =
+        (TGrid::maxextent / std::max(TGrid::NX * Block::sizeX,
+                                     std::max(TGrid::NY * Block::sizeY,
+                                              TGrid::NZ * Block::sizeZ)));
+    const double extent[3] = {TGrid::NX * Block::sizeX * h0,
+                              TGrid::NY * Block::sizeY * h0,
+                              TGrid::NZ * Block::sizeZ * h0};
+
+    const Real intersect[3][2] = {
+        {std::max(l1[0], l2[0]), std::min(h1[0], h2[0])},
+        {std::max(l1[1], l2[1]), std::min(h1[1], h2[1])},
+        {std::max(l1[2], l2[2]), std::min(h1[2], h2[2])}};
+
+    bool intersection[3];
+    intersection[0] = intersect[0][1] - intersect[0][0] > 0.0;
+    intersection[1] = intersect[1][1] - intersect[1][0] > 0.0;
+    intersection[2] =
+        DIMENSION == 3 ? (intersect[2][1] - intersect[2][0] > 0.0) : true;
+    const bool isperiodic[3] = {TGrid::xperiodic, TGrid::yperiodic,
+                                TGrid::zperiodic};
+    for (int d = 0; d < DIMENSION; d++) {
+      if (isperiodic[d]) {
+        if (h2[d] > extent[d])
+          intersection[d] = std::min(h1[d], h2[d] - extent[d]) -
+                            std::max(l1[d], l2[d] - extent[d]);
+        else if (h1[d] > extent[d])
+          intersection[d] = std::min(h2[d], h1[d] - extent[d]) -
+                            std::max(l2[d], l1[d] - extent[d]);
+      }
+      if (!intersection[d])
+        return false;
+    }
+    return true;
+  }
+
+  /** Returns a SynchronizerMPI_AMR for a given stencil of points.
+   *  Each stencil needed in the simulation has its own SynchronizerMPI_AMR. All
+   * Synchronizers are owned by GridMPI in a map between the stencils and them.
+   */
+  SynchronizerMPIType *sync(const StencilInfo &stencil) {
+    assert(stencil.isvalid());
+
+    // Hardcoded stencil for coarse-fine interpolation: +-1 points.
+    StencilInfo Cstencil(-1, -1, DIMENSION == 3 ? -1 : 0, 2, 2,
+                         DIMENSION == 3 ? 2 : 1, true, stencil.selcomponents);
+
+    SynchronizerMPIType *queryresult = nullptr;
+
+    typename std::map<StencilInfo, SynchronizerMPIType *>::iterator
+        itSynchronizerMPI = SynchronizerMPIs.find(stencil);
+
+    if (itSynchronizerMPI == SynchronizerMPIs.end()) {
+      queryresult = new SynchronizerMPIType(stencil, Cstencil, this);
+      queryresult->_Setup();
+      SynchronizerMPIs[stencil] = queryresult;
+    } else {
+      queryresult = itSynchronizerMPI->second;
+    }
+
+    queryresult->sync();
+
+    timestamp = (timestamp + 1) % 32768;
+    return queryresult;
+  }
+
+  /// same as Grid::initialize_blocks, with additional initialization for
+  /// Synchronizers needed for halo cell exchange between different processes.
+  virtual void
+  initialize_blocks(const std::vector<long long> &blocksZ,
+                    const std::vector<short int> &blockslevel) override {
+    TGrid::initialize_blocks(blocksZ, blockslevel);
+    UpdateBlockInfoAll_States(false);
+    for (auto it = SynchronizerMPIs.begin(); it != SynchronizerMPIs.end(); ++it)
+      (*it->second)._Setup();
+  }
+
+  /// Return the ID of this MPI process.
+  virtual int rank() const override { return myrank; }
+
+  /// Returns a tag value that is used when sending/receiving data with MPI.
+  size_t getTimeStamp() const { return timestamp; }
+
+  /// Return the MPI communicator of the simulation.
+  MPI_Comm getWorldComm() const { return worldcomm; }
+
+  /// Return the total number of MPI processes.
+  virtual int get_world_size() const override { return world_size; }
+};
+
+} // namespace cubism
+
+
+#ifndef CUBISM_ALIGNMENT
+#define CUBISM_ALIGNMENT 32
+#endif
+
+namespace cubism {
+
+/**
+ * A wrapper class for a 3D array of data.
+ * @tparam DataType: the kind of data the 3D array is for
+ * @tparam allocator: object responsible for allocating the data
+ */
+template <class DataType, template <typename T> class allocator>
+class Matrix3D {
+private:
+  DataType *m_pData{nullptr}; ///< pointer to data
+  unsigned int m_vSize[3]{
+      0, 0, 0}; ///< three dimensions (X,Y,Z) (sizes) of array of data
+  unsigned int m_nElements{0}; ///< total number of elements saved (XxYxZ)
+  unsigned int m_nElementsPerSlice{0}; ///< shorthand for XxY
+
+public:
+  /// Deallocate existing data.
+  void _Release() {
+    if (m_pData != nullptr) {
+      free(m_pData);
+      m_pData = nullptr;
+    }
+  }
+
+  /// Deallocate existing data and reallocate memory for a nSizeX x nSizeY x
+  /// nSizeZ array.
+  void _Setup(unsigned int nSizeX, unsigned int nSizeY, unsigned int nSizeZ) {
+    _Release();
+
+    m_vSize[0] = nSizeX;
+    m_vSize[1] = nSizeY;
+    m_vSize[2] = nSizeZ;
+
+    m_nElementsPerSlice = nSizeX * nSizeY;
+
+    m_nElements = nSizeX * nSizeY * nSizeZ;
+
+    posix_memalign((void **)&m_pData, std::max(8, CUBISM_ALIGNMENT),
+                   sizeof(DataType) * m_nElements);
+    assert(m_pData != nullptr);
+  }
+
+  /// Destructor.
+  ~Matrix3D() { _Release(); }
+
+  /// Constructor, calls _Setup()
+  Matrix3D(unsigned int nSizeX, unsigned int nSizeY, unsigned int nSizeZ)
+      : m_pData(nullptr), m_nElements(0), m_nElementsPerSlice(0) {
+    _Setup(nSizeX, nSizeY, nSizeZ);
+  }
+
+  /// Constructor, does not allocate memory.
+  Matrix3D() : m_pData(nullptr), m_nElements(-1), m_nElementsPerSlice(-1) {}
+
+  Matrix3D(const Matrix3D &m) = delete;
+
+  /// Copy constructor.
+  Matrix3D(Matrix3D &&m)
+      : m_pData{m.m_pData}, m_vSize{m.m_vSize[0], m.m_vSize[1], m.m_vSize[2]},
+        m_nElements{m.m_nElements}, m_nElementsPerSlice{m.m_nElementsPerSlice} {
+    m.m_pData = nullptr;
+  }
+
+  /// Copy another matrix3D to this one
+  inline Matrix3D &operator=(const Matrix3D &m) {
+#ifndef NDEBUG
+    assert(m_vSize[0] == m.m_vSize[0]);
+    assert(m_vSize[1] == m.m_vSize[1]);
+    assert(m_vSize[2] == m.m_vSize[2]);
+#endif
+    for (unsigned int i = 0; i < m_nElements; i++)
+      m_pData[i] = m.m_pData[i];
+    return *this;
+  }
+
+  /// Set all elements to a given element of the same datatype
+  inline Matrix3D &operator=(DataType d) {
+    for (unsigned int i = 0; i < m_nElements; i++)
+      m_pData[i] = d;
+
+    return *this;
+  }
+
+  /// Set all elements to a number, applicable only is data is doubles/floats
+  inline Matrix3D &operator=(const double a) {
+    for (unsigned int i = 0; i < m_nElements; i++)
+      m_pData[i].set(a);
+    return *this;
+  }
+
+  /// Access an element.
+  inline DataType &Access(unsigned int ix, unsigned int iy,
+                          unsigned int iz) const {
+#ifndef NDEBUG
+    assert(ix < m_vSize[0]);
+    assert(iy < m_vSize[1]);
+    assert(iz < m_vSize[2]);
+#endif
+    return m_pData[iz * m_nElementsPerSlice + iy * m_vSize[0] + ix];
+  }
+
+  /// Read an element withoud changing it.
+  inline const DataType &Read(unsigned int ix, unsigned int iy,
+                              unsigned int iz) const {
+#ifndef NDEBUG
+    assert(ix < m_vSize[0]);
+    assert(iy < m_vSize[1]);
+    assert(iz < m_vSize[2]);
+#endif
+    return m_pData[iz * m_nElementsPerSlice + iy * m_vSize[0] + ix];
+  }
+
+  /// Access elements of the array in sequential order, useful for pointwise
+  /// operations
+  inline DataType &LinAccess(unsigned int i) const {
+#ifndef NDEBUG
+    assert(i < m_nElements);
+#endif
+    return m_pData[i];
+  }
+
+  /// Get total number of elements of the array
+  inline unsigned int getNumberOfElements() const { return m_nElements; }
+
+  /// Get elements on each XY slice/plane of the array
+  inline unsigned int getNumberOfElementsPerSlice() const {
+    return m_nElementsPerSlice;
+  }
+
+  /// Get array of sizes for data
+  inline unsigned int *getSize() const { return (unsigned int *)m_vSize; }
+
+  /// Get array of size in the 'dim' direction
+  inline unsigned int getSize(int dim) const { return m_vSize[dim]; }
+};
+
+} // namespace cubism
+
+namespace cubism {
+#define memcpy2(a, b, c) memcpy((a), (b), (c))
+
+// default coarse-fine interpolation stencil
+#if DIMENSION == 3
+constexpr int default_start[3] = {-1, -1, -1};
+constexpr int default_end[3] = {2, 2, 2};
+#else
+constexpr int default_start[3] = {-1, -1, 0};
+constexpr int default_end[3] = {2, 2, 1};
+#endif
+
+/** \brief Copy of a Gridblock plus halo cells.*/
+/** This class provides the user a copy of a Gridblock that is extended by a
+ * layer of halo cells. To define one instance of it, the user needs to provide
+ * a 'TGrid' type in the template parameters. From this, the BlockType and
+ * ElementType and inferred, which are the GridBlock class and Element type
+ * stored at each gridpoint of the mesh. To use a BlockLab, the user first needs
+ * to call 'prepare', which will provide the BlockLab with the stencil of points
+ * needed for a particular computation. To get an array of a particular
+ *  GridBlock (+halo cells), the user should call 'load' and provide it with the
+ * BlockInfo that is associated with the GridBlock of interest. Once this is
+ * done, gridpoints in the GridBlock and halo cells can be accessed with the
+ * (x,y,z) operator. For example, (-1,0,0) would access a halo cell in the -x
+ * direction.
+ *  @tparam TGrid: the kind of Grid/GridMPI halo cells are needed for
+ *  @tparam allocator: a class responsible for allocation of memory for this
+ * BlockLab
+ */
+template <typename TGrid,
+          template <typename X> class allocator = std::allocator>
+class BlockLab {
+public:
+  using GridType = TGrid; ///< should be a 'Grid', 'GridMPI' or derived class
+  using BlockType =
+      typename GridType::BlockType; ///< GridBlock type used by TGrid
+  using ElementType =
+      typename BlockType::ElementType; ///< Element type used by GridBlock type
+  using Real = typename ElementType::RealType; ///< Number type used by Element
+                                               ///< (double/float etc.)
+
+protected:
+  Matrix3D<ElementType, allocator>
+      *m_cacheBlock;     ///< working array of GridBlock + halo cells.
+  int m_stencilStart[3]; ///< starts of stencil for halo cells
+  int m_stencilEnd[3];   ///< ends of stencil fom halo cells
+  bool istensorial;      ///< whether the stencil is tensorial or not (see also
+                         ///< StencilInfo struct)
+  bool use_averages;     ///< if true, fine blocks average down their cells to
+                         ///< provide halo cells for coarse blocks (2nd order
+  ///< accurate). If false, they perform a 3rd-order accurate
+  ///< interpolation instead (which is the accuracy needed to
+  ///< compute 2nd derivatives).
+  GridType *m_refGrid; ///< Point to TGrid instance
+  int NX;              ///< GridBlock size in the x-direction.
+  int NY;              ///< GridBlock size in the y-direction.
+  int NZ;              ///< GridBlock size in the z-direction.
+  std::array<BlockType *, 27>
+      myblocks; ///< Pointers to neighboring blocks of a GridBlock
+  std::array<int, 27> coarsened_nei_codes; ///< If a neighbor is at a coarser
+                                           ///< level, store it here
+  int coarsened_nei_codes_size;            ///< Number of coarser neighbors
+  int offset[3]; ///< like m_stencilStart but used when a coarse block sends
+                 ///< cells to a finer block
+  Matrix3D<ElementType, allocator>
+      *m_CoarsenedBlock;       ///< coarsened version of given block
+  int m_InterpStencilStart[3]; ///< stencil starts used for refinement (assumed
+                               ///< tensorial)
+  int m_InterpStencilEnd[3];   ///< stencil ends used for refinement (assumed
+                               ///< tensorial)
+  bool coarsened;         ///< true if block has at least one coarser neighbor
+  int CoarseBlockSize[3]; ///< size of coarsened block (NX/2,NY/2,NZ/2)
+
+  /// Coefficients used with upwind/central stencil of points with 3rd order
+  /// interpolation of halo cells from fine to coarse blocks
+  const double d_coef_plus[9] = {
+      -0.09375, 0.4375,  0.15625,  // starting point (+2,+1,0)
+      0.15625,  -0.5625, 0.90625,  // last point     (-2,-1,0)
+      -0.09375, 0.4375,  0.15625}; // central point  (-1,0,+1)
+  /// Coefficients used with upwind/central stencil of points with 3rd order
+  /// interpolation of halo cells from fine to coarse blocks
+  const double d_coef_minus[9] = {
+      0.15625,  -0.5625, 0.90625,   // starting point (+2,+1,0)
+      -0.09375, 0.4375,  0.15625,   // last point     (-2,-1,0)
+      0.15625,  0.4375,  -0.09375}; // central point  (-1,0,+1)
+
+public:
+  /// Constructor.
+  BlockLab()
+      : m_cacheBlock(nullptr), m_refGrid(nullptr), m_CoarsenedBlock(nullptr) {
+    m_stencilStart[0] = m_stencilStart[1] = m_stencilStart[2] = 0;
+    m_stencilEnd[0] = m_stencilEnd[1] = m_stencilEnd[2] = 0;
+    m_InterpStencilStart[0] = m_InterpStencilStart[1] =
+        m_InterpStencilStart[2] = 0;
+    m_InterpStencilEnd[0] = m_InterpStencilEnd[1] = m_InterpStencilEnd[2] = 0;
+
+    CoarseBlockSize[0] = (int)BlockType::sizeX / 2;
+    CoarseBlockSize[1] = (int)BlockType::sizeY / 2;
+    CoarseBlockSize[2] = (int)BlockType::sizeZ / 2;
+    if (CoarseBlockSize[0] == 0)
+      CoarseBlockSize[0] = 1;
+    if (CoarseBlockSize[1] == 0)
+      CoarseBlockSize[1] = 1;
+    if (CoarseBlockSize[2] == 0)
+      CoarseBlockSize[2] = 1;
+  }
+
+  /// Return a name for this BlockLab. Useful for derived instances with custom
+  /// boundary conditions.
+  virtual std::string name() const { return "BlockLab"; }
+
+  /// true if boundary conditions are periodic in x-direction
+  virtual bool is_xperiodic() { return true; }
+
+  /// true if boundary conditions are periodic in y-direction
+  virtual bool is_yperiodic() { return true; }
+
+  /// true if boundary conditions are periodic in z-direction
+  virtual bool is_zperiodic() { return true; }
+
+  /// Destructor.
+  ~BlockLab() {
+    _release(m_cacheBlock);
+    _release(m_CoarsenedBlock);
+  }
+
+  /**
+   * Get a single element from the block.
+   * stencil_start and stencil_end refer to the values passed in
+   * BlockLab::prepare().
+   * @param ix: Index in x-direction (stencil_start[0] <= ix < BlockType::sizeX
+   * + stencil_end[0] - 1).
+   * @param iy: Index in y-direction (stencil_start[1] <= iy < BlockType::sizeY
+   * + stencil_end[1] - 1).
+   * @param iz: Index in z-direction (stencil_start[2] <= iz < BlockType::sizeZ
+   * + stencil_end[2] - 1).
+   */
+  ElementType &operator()(int ix, int iy = 0, int iz = 0) {
+    assert(ix - m_stencilStart[0] >= 0 &&
+           ix - m_stencilStart[0] < (int)m_cacheBlock->getSize()[0]);
+    assert(iy - m_stencilStart[1] >= 0 &&
+           iy - m_stencilStart[1] < (int)m_cacheBlock->getSize()[1]);
+    assert(iz - m_stencilStart[2] >= 0 &&
+           iz - m_stencilStart[2] < (int)m_cacheBlock->getSize()[2]);
+    return m_cacheBlock->Access(ix - m_stencilStart[0], iy - m_stencilStart[1],
+                                iz - m_stencilStart[2]);
+  }
+
+  /// Just as BlockLab::operator() but const.
+  const ElementType &operator()(int ix, int iy = 0, int iz = 0) const {
+    assert(ix - m_stencilStart[0] >= 0 &&
+           ix - m_stencilStart[0] < (int)m_cacheBlock->getSize()[0]);
+    assert(iy - m_stencilStart[1] >= 0 &&
+           iy - m_stencilStart[1] < (int)m_cacheBlock->getSize()[1]);
+    assert(iz - m_stencilStart[2] >= 0 &&
+           iz - m_stencilStart[2] < (int)m_cacheBlock->getSize()[2]);
+    return m_cacheBlock->Access(ix - m_stencilStart[0], iy - m_stencilStart[1],
+                                iz - m_stencilStart[2]);
+  }
+
+  /// Just as BlockLab::operator() but returning a const.
+  const ElementType &read(int ix, int iy = 0, int iz = 0) const {
+    assert(ix - m_stencilStart[0] >= 0 &&
+           ix - m_stencilStart[0] < (int)m_cacheBlock->getSize()[0]);
+    assert(iy - m_stencilStart[1] >= 0 &&
+           iy - m_stencilStart[1] < (int)m_cacheBlock->getSize()[1]);
+    assert(iz - m_stencilStart[2] >= 0 &&
+           iz - m_stencilStart[2] < (int)m_cacheBlock->getSize()[2]);
+    return m_cacheBlock->Access(ix - m_stencilStart[0], iy - m_stencilStart[1],
+                                iz - m_stencilStart[2]);
+  }
+
+  /// Deallocate memory (used in destructor).
+  void release() {
+    _release(m_cacheBlock);
+    _release(m_CoarsenedBlock);
+  }
+
+  /** Prepares the BlockLab for a given 'grid' and stencil of points.
+   *  Allocates memory (if not already allocated) for the arrays that will hold
+   * the copy of a GridBlock plus its halo cells.
+   * @param grid: the Grid/GridMPI with all the GridBlocks that will need halo
+   * cells
+   * @param stencil: the StencilInfo for the halo cells
+   * @param  Istencil_start: the starts of the stencil used for coarse-fine
+   * interpolation of halo cells, set to -1 for the default interpolation.
+   * @param  Istencil_end: the ends of the stencil used for coarse-fine
+   * interpolation of halo cells, set to +2 for the default interpolation.
+   */
+  virtual void prepare(GridType &grid, const StencilInfo &stencil,
+                       const int Istencil_start[3] = default_start,
+                       const int Istencil_end[3] = default_end) {
+    istensorial = stencil.tensorial;
+    coarsened = false;
+    m_stencilStart[0] = stencil.sx;
+    m_stencilStart[1] = stencil.sy;
+    m_stencilStart[2] = stencil.sz;
+    m_stencilEnd[0] = stencil.ex;
+    m_stencilEnd[1] = stencil.ey;
+    m_stencilEnd[2] = stencil.ez;
+
+    m_InterpStencilStart[0] = Istencil_start[0];
+    m_InterpStencilStart[1] = Istencil_start[1];
+    m_InterpStencilStart[2] = Istencil_start[2];
+    m_InterpStencilEnd[0] = Istencil_end[0];
+    m_InterpStencilEnd[1] = Istencil_end[1];
+    m_InterpStencilEnd[2] = Istencil_end[2];
+
+    assert(m_InterpStencilStart[0] <= m_InterpStencilEnd[0]);
+    assert(m_InterpStencilStart[1] <= m_InterpStencilEnd[1]);
+    assert(m_InterpStencilStart[2] <= m_InterpStencilEnd[2]);
+    assert(stencil.sx <= stencil.ex);
+    assert(stencil.sy <= stencil.ey);
+    assert(stencil.sz <= stencil.ez);
+    assert(stencil.sx >= -BlockType::sizeX);
+    assert(stencil.sy >= -BlockType::sizeY);
+    assert(stencil.sz >= -BlockType::sizeZ);
+    assert(stencil.ex < 2 * BlockType::sizeX);
+    assert(stencil.ey < 2 * BlockType::sizeY);
+    assert(stencil.ez < 2 * BlockType::sizeZ);
+
+    m_refGrid = &grid;
+
+    if (m_cacheBlock == NULL ||
+        (int)m_cacheBlock->getSize()[0] !=
+            (int)BlockType::sizeX + m_stencilEnd[0] - m_stencilStart[0] - 1 ||
+        (int)m_cacheBlock->getSize()[1] !=
+            (int)BlockType::sizeY + m_stencilEnd[1] - m_stencilStart[1] - 1 ||
+        (int)m_cacheBlock->getSize()[2] !=
+            (int)BlockType::sizeZ + m_stencilEnd[2] - m_stencilStart[2] - 1) {
+      if (m_cacheBlock != NULL)
+        _release(m_cacheBlock);
+
+      m_cacheBlock = allocator<Matrix3D<ElementType, allocator>>().allocate(1);
+
+      allocator<Matrix3D<ElementType, allocator>>().construct(m_cacheBlock);
+
+      m_cacheBlock->_Setup(
+          BlockType::sizeX + m_stencilEnd[0] - m_stencilStart[0] - 1,
+          BlockType::sizeY + m_stencilEnd[1] - m_stencilStart[1] - 1,
+          BlockType::sizeZ + m_stencilEnd[2] - m_stencilStart[2] - 1);
+    }
+
+    offset[0] = (m_stencilStart[0] - 1) / 2 + m_InterpStencilStart[0];
+    offset[1] = (m_stencilStart[1] - 1) / 2 + m_InterpStencilStart[1];
+    offset[2] = (m_stencilStart[2] - 1) / 2 + m_InterpStencilStart[2];
+
+    const int e[3] = {(m_stencilEnd[0]) / 2 + 1 + m_InterpStencilEnd[0] - 1,
+                      (m_stencilEnd[1]) / 2 + 1 + m_InterpStencilEnd[1] - 1,
+                      (m_stencilEnd[2]) / 2 + 1 + m_InterpStencilEnd[2] - 1};
+
+    if (m_CoarsenedBlock == NULL ||
+        (int)m_CoarsenedBlock->getSize()[0] !=
+            CoarseBlockSize[0] + e[0] - offset[0] - 1 ||
+        (int)m_CoarsenedBlock->getSize()[1] !=
+            CoarseBlockSize[1] + e[1] - offset[1] - 1 ||
+        (int)m_CoarsenedBlock->getSize()[2] !=
+            CoarseBlockSize[2] + e[2] - offset[2] - 1) {
+      if (m_CoarsenedBlock != NULL)
+        _release(m_CoarsenedBlock);
+
+      m_CoarsenedBlock =
+          allocator<Matrix3D<ElementType, allocator>>().allocate(1);
+
+      allocator<Matrix3D<ElementType, allocator>>().construct(m_CoarsenedBlock);
+
+      m_CoarsenedBlock->_Setup(CoarseBlockSize[0] + e[0] - offset[0] - 1,
+                               CoarseBlockSize[1] + e[1] - offset[1] - 1,
+                               CoarseBlockSize[2] + e[2] - offset[2] - 1);
+    }
+
+#if DIMENSION == 3
+    use_averages = (m_refGrid->FiniteDifferences == false || istensorial ||
+                    m_stencilStart[0] < -2 || m_stencilStart[1] < -2 ||
+                    m_stencilStart[2] < -2 || m_stencilEnd[0] > 3 ||
+                    m_stencilEnd[1] > 3 || m_stencilEnd[2] > 3);
+#else
+    use_averages = (m_refGrid->FiniteDifferences == false || istensorial ||
+                    m_stencilStart[0] < -2 || m_stencilStart[1] < -2 ||
+                    m_stencilEnd[0] > 3 || m_stencilEnd[1] > 3);
+#endif
+  }
+
+  /** Provide a prepared BlockLab (working copy of gridpoints+halo cells).
+   *  Once called, the user can use the () operators to access the halo cells.
+   * For derived instances of BlockLab, the time 't' can also be provided, in
+   * order to enforce time-dependent boundary conditions.
+   * @param info: the BlockInfo for the GridBlock that needs halo cells.
+   * @param t: (optional) current time, for time-dependent boundary conditions
+   * @param applybc: (optional, default is true) apply boundary conditions or
+   * not (assume periodic if not)
+   */
+  virtual void load(const BlockInfo &info, const Real t = 0,
+                    const bool applybc = true) {
+    const int nX = BlockType::sizeX;
+    const int nY = BlockType::sizeY;
+    const int nZ = BlockType::sizeZ;
+    const bool xperiodic = is_xperiodic();
+    const bool yperiodic = is_yperiodic();
+    const bool zperiodic = is_zperiodic();
+
+    std::array<int, 3> blocksPerDim = m_refGrid->getMaxBlocks();
+
+    const int aux = 1 << info.level;
+    NX = blocksPerDim[0] * aux; // needed for apply_bc
+    NY = blocksPerDim[1] * aux; // needed for apply_bc
+    NZ = blocksPerDim[2] * aux; // needed for apply_bc
+
+    assert(m_cacheBlock != NULL);
+
+    // 1.load the block into the cache
+    {
+      BlockType &block = *(BlockType *)info.ptrBlock;
+      ElementType *ptrSource = &block(0);
+
+#if 0 // original
+            for(int iz=0; iz<nZ; iz++)
+            for(int iy=0; iy<nY; iy++)
+            {
+              ElementType * ptrDestination = &m_cacheBlock->Access(0-m_stencilStart[0], iy-m_stencilStart[1], iz-m_stencilStart[2]);
+              memcpy2((char *)ptrDestination, (char *)ptrSource, sizeof(ElementType)*nX);
+              ptrSource+= nX;
+            }
+#else
+      const int nbytes = sizeof(ElementType) * nX;
+      const int _iz0 = -m_stencilStart[2];
+      const int _iz1 = _iz0 + nZ;
+      const int _iy0 = -m_stencilStart[1];
+      const int _iy1 = _iy0 + nY;
+      const int m_vSize0 = m_cacheBlock->getSize(0);
+      const int m_nElemsPerSlice = m_cacheBlock->getNumberOfElementsPerSlice();
+      const int my_ix = -m_stencilStart[0];
+#pragma GCC ivdep
+      for (int iz = _iz0; iz < _iz1; iz++) {
+        const int my_izx = iz * m_nElemsPerSlice + my_ix;
+#pragma GCC ivdep
+        for (int iy = _iy0; iy < _iy1; iy += 4) {
+          ElementType *__restrict__ ptrDestination0 =
+              &m_cacheBlock->LinAccess(my_izx + (iy)*m_vSize0);
+          ElementType *__restrict__ ptrDestination1 =
+              &m_cacheBlock->LinAccess(my_izx + (iy + 1) * m_vSize0);
+          ElementType *__restrict__ ptrDestination2 =
+              &m_cacheBlock->LinAccess(my_izx + (iy + 2) * m_vSize0);
+          ElementType *__restrict__ ptrDestination3 =
+              &m_cacheBlock->LinAccess(my_izx + (iy + 3) * m_vSize0);
+          memcpy2(ptrDestination0, (ptrSource), nbytes);
+          memcpy2(ptrDestination1, (ptrSource + nX), nbytes);
+          memcpy2(ptrDestination2, (ptrSource + 2 * nX), nbytes);
+          memcpy2(ptrDestination3, (ptrSource + 3 * nX), nbytes);
+          ptrSource += 4 * nX;
+        }
+      }
+#endif
+    }
+
+    // 2. put the ghosts into the cache
+    {
+      coarsened = false;
+
+      const bool xskin = info.index[0] == 0 || info.index[0] == NX - 1;
+      const bool yskin = info.index[1] == 0 || info.index[1] == NY - 1;
+      const bool zskin = info.index[2] == 0 || info.index[2] == NZ - 1;
+      const int xskip = info.index[0] == 0 ? -1 : 1;
+      const int yskip = info.index[1] == 0 ? -1 : 1;
+      const int zskip = info.index[2] == 0 ? -1 : 1;
+
+      int icodes[DIMENSION == 2 ? 8 : 26]; // Could be uint8_t?
+      int k = 0;
+      coarsened_nei_codes_size = 0;
+
+      for (int icode = (DIMENSION == 2 ? 9 : 0);
+           icode < (DIMENSION == 2 ? 18 : 27); icode++) {
+        myblocks[icode] = nullptr;
+        if (icode == 1 * 1 + 3 * 1 + 9 * 1)
+          continue;
+        const int code[3] = {icode % 3 - 1, (icode / 3) % 3 - 1, icode / 9 - 1};
+
+        if (!xperiodic && code[0] == xskip && xskin)
+          continue;
+        if (!yperiodic && code[1] == yskip && yskin)
+          continue;
+        if (!zperiodic && code[2] == zskip && zskin)
+          continue;
+
+        const auto &TreeNei =
+            m_refGrid->Tree(info.level, info.Znei_(code[0], code[1], code[2]));
+        if (TreeNei.Exists()) {
+          icodes[k++] = icode;
+        } else if (TreeNei.CheckCoarser()) {
+          coarsened_nei_codes[coarsened_nei_codes_size++] = icode;
+          CoarseFineExchange(info, code);
+        }
+
+        if (!istensorial && !use_averages &&
+            abs(code[0]) + abs(code[1]) + abs(code[2]) > 1)
+          continue;
+
+        // s and e correspond to start and end of this lab's cells that are
+        // filled by neighbors
+        const int s[3] = {
+            code[0] < 1 ? (code[0] < 0 ? m_stencilStart[0] : 0) : nX,
+            code[1] < 1 ? (code[1] < 0 ? m_stencilStart[1] : 0) : nY,
+            code[2] < 1 ? (code[2] < 0 ? m_stencilStart[2] : 0) : nZ};
+
+        const int e[3] = {
+            code[0] < 1 ? (code[0] < 0 ? 0 : nX) : nX + m_stencilEnd[0] - 1,
+            code[1] < 1 ? (code[1] < 0 ? 0 : nY) : nY + m_stencilEnd[1] - 1,
+            code[2] < 1 ? (code[2] < 0 ? 0 : nZ) : nZ + m_stencilEnd[2] - 1};
+
+        if (TreeNei.Exists())
+          SameLevelExchange(info, code, s, e);
+        else if (TreeNei.CheckFiner())
+          FineToCoarseExchange(info, code, s, e);
+      } // icode = 0,...,26 (3D) or 9,...,17 (2D)
+      if (coarsened_nei_codes_size > 0)
+        for (int i = 0; i < k; ++i) {
+          const int icode = icodes[i];
+          const int code[3] = {icode % 3 - 1, (icode / 3) % 3 - 1,
+                               icode / 9 - 1};
+          const int infoNei_index[3] = {(info.index[0] + code[0] + NX) % NX,
+                                        (info.index[1] + code[1] + NY) % NY,
+                                        (info.index[2] + code[2] + NZ) % NZ};
+          if (UseCoarseStencil(info, infoNei_index)) {
+            FillCoarseVersion(info, code);
+            coarsened = true;
+          }
+        }
+
+      if (m_refGrid->get_world_size() == 1) {
+        post_load(info, t, applybc);
+      }
+    }
+  }
+
+protected:
+  /** Called from 'load', to enforce boundary conditions and coarse-fine
+   * interpolation. To interpolate halo cells from neighboring coarser blocks,
+   * the BlockLab first fills a coarsened version of the GridBlock that requires
+   * the halo cells. This coarsened version is filled with grid points from the
+   * coarse neighbors and with averaged down values of this GridBlock's
+   * gridpoints. Averaging down happens in this function, followed by the
+   *  interpolation. Boundary conditions from derived versions of this class are
+   * also enforced. Default boundary conditions are periodic.
+   * @param info: the BlockInfo for the GridBlock that needs halo cells.
+   * @param t: (optional) current time, for time-dependent boundary conditions
+   * @param applybc: (optional, default is true) apply boundary conditions or
+   * not (assume periodic if not)
+   */
+  void post_load(const BlockInfo &info, const Real t = 0, bool applybc = true) {
+    const int nX = BlockType::sizeX;
+    const int nY = BlockType::sizeY;
+#if DIMENSION == 3
+    const int nZ = BlockType::sizeZ;
+    if (coarsened) {
+#pragma GCC ivdep
+      for (int k = 0; k < nZ / 2; k++) {
+#pragma GCC ivdep
+        for (int j = 0; j < nY / 2; j++) {
+#pragma GCC ivdep
+          for (int i = 0; i < nX / 2; i++) {
+            if (i > -m_InterpStencilStart[0] &&
+                i < nX / 2 - m_InterpStencilEnd[0] &&
+                j > -m_InterpStencilStart[1] &&
+                j < nY / 2 - m_InterpStencilEnd[1] &&
+                k > -m_InterpStencilStart[2] &&
+                k < nZ / 2 - m_InterpStencilEnd[2])
+              continue;
+            const int ix = 2 * i - m_stencilStart[0];
+            const int iy = 2 * j - m_stencilStart[1];
+            const int iz = 2 * k - m_stencilStart[2];
+            ElementType &coarseElement = m_CoarsenedBlock->Access(
+                i - offset[0], j - offset[1], k - offset[2]);
+            coarseElement =
+                AverageDown(m_cacheBlock->Read(ix, iy, iz),
+                            m_cacheBlock->Read(ix + 1, iy, iz),
+                            m_cacheBlock->Read(ix, iy + 1, iz),
+                            m_cacheBlock->Read(ix + 1, iy + 1, iz),
+                            m_cacheBlock->Read(ix, iy, iz + 1),
+                            m_cacheBlock->Read(ix + 1, iy, iz + 1),
+                            m_cacheBlock->Read(ix, iy + 1, iz + 1),
+                            m_cacheBlock->Read(ix + 1, iy + 1, iz + 1));
+          }
+        }
+      }
+    }
+#else
+    if (coarsened) {
+#pragma GCC ivdep
+      for (int j = 0; j < nY / 2; j++) {
+#pragma GCC ivdep
+        for (int i = 0; i < nX / 2; i++) {
+          if (i > -m_InterpStencilStart[0] &&
+              i < nX / 2 - m_InterpStencilEnd[0] &&
+              j > -m_InterpStencilStart[1] &&
+              j < nY / 2 - m_InterpStencilEnd[1])
+            continue;
+          const int ix = 2 * i - m_stencilStart[0];
+          const int iy = 2 * j - m_stencilStart[1];
+          ElementType &coarseElement =
+              m_CoarsenedBlock->Access(i - offset[0], j - offset[1], 0);
+          coarseElement = AverageDown(m_cacheBlock->Read(ix, iy, 0),
+                                      m_cacheBlock->Read(ix + 1, iy, 0),
+                                      m_cacheBlock->Read(ix, iy + 1, 0),
+                                      m_cacheBlock->Read(ix + 1, iy + 1, 0));
+        }
+      }
+    }
+#endif
+    if (applybc)
+      _apply_bc(info, t, true); // apply BC to coarse block
+    CoarseFineInterpolation(info);
+    if (applybc)
+      _apply_bc(info, t);
+  }
+
+  /** Check if blocks on the same refinement level need to exchange averaged
+   * down cells. To perform coarse-fine interpolation, the BlockLab creates a
+   * coarsened version of the GridBlock that needs halo cells. Filling this
+   * coarsened version can require averaged down values from GridBlocks of the
+   * same resolution, which would create a large enough stencil of coarse values
+   * to perform the interpolation. Whether or not this is needed is determined
+   *  by this function.
+   * @param info: the BlockInfo for the GridBlock that needs halo cells.
+   * @param b_index: the (i,j,k) index coordinates of the block that is adjacent
+   * to 'info'.
+   */
+  bool UseCoarseStencil(const BlockInfo &a, const int *b_index) {
+    if (a.level == 0 || (!use_averages))
+      return false;
+
+    std::array<int, 3> blocksPerDim = m_refGrid->getMaxBlocks();
+
+    int imin[3];
+    int imax[3];
+    const int aux = 1 << a.level;
+    const bool periodic[3] = {is_xperiodic(), is_yperiodic(), is_zperiodic()};
+    const int blocks[3] = {blocksPerDim[0] * aux - 1, blocksPerDim[1] * aux - 1,
+                           blocksPerDim[2] * aux - 1};
+    for (int d = 0; d < 3; d++) {
+      imin[d] = (a.index[d] < b_index[d]) ? 0 : -1;
+      imax[d] = (a.index[d] > b_index[d]) ? 0 : +1;
+      if (periodic[d]) {
+        if (a.index[d] == 0 && b_index[d] == blocks[d])
+          imin[d] = -1;
+        if (b_index[d] == 0 && a.index[d] == blocks[d])
+          imax[d] = +1;
+      } else {
+        if (a.index[d] == 0 && b_index[d] == 0)
+          imin[d] = 0;
+        if (a.index[d] == blocks[d] && b_index[d] == blocks[d])
+          imax[d] = 0;
+      }
+    }
+
+    for (int itest = 0; itest < coarsened_nei_codes_size; itest++)
+      for (int i2 = imin[2]; i2 <= imax[2]; i2++)
+        for (int i1 = imin[1]; i1 <= imax[1]; i1++)
+          for (int i0 = imin[0]; i0 <= imax[0]; i0++) {
+            const int icode_test = (i0 + 1) + 3 * (i1 + 1) + 9 * (i2 + 1);
+            if (coarsened_nei_codes[itest] == icode_test)
+              return true;
+          }
+    return false;
+  }
+
+  /** Exchange halo cells for blocks on the same refinement level.
+   * @param info: the BlockInfo for the GridBlock that needs halo cells.
+   * @param code: pointer to three integers, one for each spatial direction.
+   * Possible values of each integer are -1,0,+1, based on the relative position
+   * of the neighboring block and 'info'
+   * @param s: the starts of the part of 'info' that will be filled
+   * @param e: the ends of the part of 'info' that will be filled
+   */
+  void SameLevelExchange(const BlockInfo &info, const int *const code,
+                         const int *const s, const int *const e) {
+    const int bytes = (e[0] - s[0]) * sizeof(ElementType);
+    if (!bytes)
+      return;
+
+    const int icode = (code[0] + 1) + 3 * (code[1] + 1) + 9 * (code[2] + 1);
+    myblocks[icode] =
+        m_refGrid->avail(info.level, info.Znei_(code[0], code[1], code[2]));
+    if (myblocks[icode] == nullptr)
+      return;
+    const BlockType &b = *myblocks[icode];
+
+    const int nX = BlockType::sizeX;
+    const int nY = BlockType::sizeY;
+    const int nZ = BlockType::sizeZ;
+    const int m_vSize0 = m_cacheBlock->getSize(0);
+    const int m_nElemsPerSlice = m_cacheBlock->getNumberOfElementsPerSlice();
+    const int my_ix = s[0] - m_stencilStart[0];
+    const int mod = (e[1] - s[1]) % 4;
+
+#pragma GCC ivdep
+    for (int iz = s[2]; iz < e[2]; iz++) {
+      const int my_izx = (iz - m_stencilStart[2]) * m_nElemsPerSlice + my_ix;
+#pragma GCC ivdep
+      for (int iy = s[1]; iy < e[1] - mod; iy += 4) {
+        ElementType *__restrict__ ptrDest0 = &m_cacheBlock->LinAccess(
+            my_izx + (iy - m_stencilStart[1]) * m_vSize0);
+        ElementType *__restrict__ ptrDest1 = &m_cacheBlock->LinAccess(
+            my_izx + (iy + 1 - m_stencilStart[1]) * m_vSize0);
+        ElementType *__restrict__ ptrDest2 = &m_cacheBlock->LinAccess(
+            my_izx + (iy + 2 - m_stencilStart[1]) * m_vSize0);
+        ElementType *__restrict__ ptrDest3 = &m_cacheBlock->LinAccess(
+            my_izx + (iy + 3 - m_stencilStart[1]) * m_vSize0);
+        const ElementType *ptrSrc0 =
+            &b(s[0] - code[0] * nX, iy - code[1] * nY, iz - code[2] * nZ);
+        const ElementType *ptrSrc1 =
+            &b(s[0] - code[0] * nX, iy + 1 - code[1] * nY, iz - code[2] * nZ);
+        const ElementType *ptrSrc2 =
+            &b(s[0] - code[0] * nX, iy + 2 - code[1] * nY, iz - code[2] * nZ);
+        const ElementType *ptrSrc3 =
+            &b(s[0] - code[0] * nX, iy + 3 - code[1] * nY, iz - code[2] * nZ);
+        memcpy2(ptrDest0, ptrSrc0, bytes);
+        memcpy2(ptrDest1, ptrSrc1, bytes);
+        memcpy2(ptrDest2, ptrSrc2, bytes);
+        memcpy2(ptrDest3, ptrSrc3, bytes);
+      }
+#pragma GCC ivdep
+      for (int iy = e[1] - mod; iy < e[1]; iy++) {
+        ElementType *__restrict__ ptrDest = &m_cacheBlock->LinAccess(
+            my_izx + (iy - m_stencilStart[1]) * m_vSize0);
+        const ElementType *ptrSrc =
+            &b(s[0] - code[0] * nX, iy - code[1] * nY, iz - code[2] * nZ);
+        memcpy2(ptrDest, ptrSrc, bytes);
+      }
+    }
+  }
+
+#if DIMENSION == 3
+  /// Average down eight elements (3D)
+  ElementType AverageDown(const ElementType &e0, const ElementType &e1,
+                          const ElementType &e2, const ElementType &e3,
+                          const ElementType &e4, const ElementType &e5,
+                          const ElementType &e6, const ElementType &e7) {
+#ifdef PRESERVE_SYMMETRY
+    return ConsistentAverage<ElementType>(e0, e1, e2, e3, e4, e5, e6, e7);
+#else
+    return 0.125 * (e0 + e1 + e2 + e3 + e4 + e5 + e6 + e7);
+#endif
+  }
+
+  /** Coarse-fine interpolation function, based on interpolation stencil of +-1
+   * point. This function evaluates a third-order Taylor expansion by using a
+   * stencil of +-1 points around the coarse grid point that will be replaced by
+   * eight finer ones. This function can be overwritten by derived versions of
+   * BlockLab, to enable a custom interpolation. The +-1 points used here come
+   * from the 'interpolation stencil' passed to BlockLab.
+   *  @param C: pointer to the +-1 points around the coarse point (27 values in
+   * total)
+   *  @param R: pointer to the eight refined points around the coarse point
+   *  @param x: deprecated parameter, used only in the 2D version of this
+   * function
+   *  @param y: deprecated parameter, used only in the 2D version of this
+   * function
+   *  @param z: deprecated parameter, used only in the 2D version of this
+   * function
+   */
+  virtual void TestInterp(ElementType *C[3][3][3], ElementType *R, int x, int y,
+                          int z) {
+#ifdef PRESERVE_SYMMETRY
+    const ElementType dudx = 0.125 * ((*C[2][1][1]) - (*C[0][1][1]));
+    const ElementType dudy = 0.125 * ((*C[1][2][1]) - (*C[1][0][1]));
+    const ElementType dudz = 0.125 * ((*C[1][1][2]) - (*C[1][1][0]));
+    const ElementType dudxdy = 0.015625 * (((*C[0][0][1]) + (*C[2][2][1])) -
+                                           ((*C[2][0][1]) + (*C[0][2][1])));
+    const ElementType dudxdz = 0.015625 * (((*C[0][1][0]) + (*C[2][1][2])) -
+                                           ((*C[2][1][0]) + (*C[0][1][2])));
+    const ElementType dudydz = 0.015625 * (((*C[1][0][0]) + (*C[1][2][2])) -
+                                           ((*C[1][2][0]) + (*C[1][0][2])));
+    const ElementType lap =
+        *C[1][1][1] + 0.03125 * (ConsistentSum((*C[0][1][1]) + (*C[2][1][1]),
+                                               (*C[1][0][1]) + (*C[1][2][1]),
+                                               (*C[1][1][0]) + (*C[1][1][2])) -
+                                 6.0 * (*C[1][1][1]));
+    R[0] = lap + (ConsistentSum((-1.0) * dudx, (-1.0) * dudy, (-1.0) * dudz) +
+                  ConsistentSum(dudxdy, dudxdz, dudydz));
+    R[1] = lap + (ConsistentSum(dudx, (-1.0) * dudy, (-1.0) * dudz) +
+                  ConsistentSum((-1.0) * dudxdy, (-1.0) * dudxdz, dudydz));
+    R[2] = lap + (ConsistentSum((-1.0) * dudx, dudy, (-1.0) * dudz) +
+                  ConsistentSum((-1.0) * dudxdy, dudxdz, (-1.0) * dudydz));
+    R[3] = lap + (ConsistentSum(dudx, dudy, (-1.0) * dudz) +
+                  ConsistentSum(dudxdy, (-1.0) * dudxdz, (-1.0) * dudydz));
+    R[4] = lap + (ConsistentSum((-1.0) * dudx, (-1.0) * dudy, dudz) +
+                  ConsistentSum(dudxdy, (-1.0) * dudxdz, (-1.0) * dudydz));
+    R[5] = lap + (ConsistentSum(dudx, (-1.0) * dudy, dudz) +
+                  ConsistentSum((-1.0) * dudxdy, dudxdz, (-1.0) * dudydz));
+    R[6] = lap + (ConsistentSum((-1.0) * dudx, dudy, dudz) +
+                  ConsistentSum((-1.0) * dudxdy, (-1.0) * dudxdz, dudydz));
+    R[7] = lap + (ConsistentSum(dudx, dudy, dudz) +
+                  ConsistentSum(dudxdy, dudxdz, dudydz));
+#else
+    const ElementType dudx = 0.125 * ((*C[2][1][1]) - (*C[0][1][1]));
+    const ElementType dudy = 0.125 * ((*C[1][2][1]) - (*C[1][0][1]));
+    const ElementType dudz = 0.125 * ((*C[1][1][2]) - (*C[1][1][0]));
+    const ElementType dudxdy = 0.015625 * ((*C[0][0][1]) + (*C[2][2][1]) -
+                                           (*C[2][0][1]) - (*C[0][2][1]));
+    const ElementType dudxdz = 0.015625 * ((*C[0][1][0]) + (*C[2][1][2]) -
+                                           (*C[2][1][0]) - (*C[0][1][2]));
+    const ElementType dudydz = 0.015625 * ((*C[1][0][0]) + (*C[1][2][2]) -
+                                           (*C[1][2][0]) - (*C[1][0][2]));
+    const ElementType lap =
+        *C[1][1][1] + 0.03125 * ((*C[0][1][1]) + (*C[2][1][1]) + (*C[1][0][1]) +
+                                 (*C[1][2][1]) + (*C[1][1][0]) + (*C[1][1][2]) +
+                                 (-6.0) * (*C[1][1][1]));
+    R[0] = lap - dudx - dudy - dudz + dudxdy + dudxdz + dudydz;
+    R[1] = lap + dudx - dudy - dudz - dudxdy - dudxdz + dudydz;
+    R[2] = lap - dudx + dudy - dudz - dudxdy + dudxdz - dudydz;
+    R[3] = lap + dudx + dudy - dudz + dudxdy - dudxdz - dudydz;
+    R[4] = lap - dudx - dudy + dudz + dudxdy - dudxdz - dudydz;
+    R[5] = lap + dudx - dudy + dudz - dudxdy + dudxdz - dudydz;
+    R[6] = lap - dudx + dudy + dudz - dudxdy - dudxdz + dudydz;
+    R[7] = lap + dudx + dudy + dudz + dudxdy + dudxdz + dudydz;
+#endif
+  }
+#else
+  /// Average down four elements (2D)
+  ElementType AverageDown(const ElementType &e0, const ElementType &e1,
+                          const ElementType &e2, const ElementType &e3) {
+    return 0.25 * ((e0 + e3) + (e1 + e2));
+  }
+
+  /// Auxiliary function for 3rd order coarse-fine interpolation
+  void LI(ElementType &a, ElementType b, ElementType c) {
+    auto kappa = ((4.0 / 15.0) * a + (6.0 / 15.0) * c) + (-10.0 / 15.0) * b;
+    auto lambda = (b - c) - kappa;
+    a = (4.0 * kappa + 2.0 * lambda) + c;
+  }
+
+  /// Auxiliary function for 3rd order coarse-fine interpolation
+  void LE(ElementType &a, ElementType b, ElementType c) {
+    auto kappa = ((4.0 / 15.0) * a + (6.0 / 15.0) * c) + (-10.0 / 15.0) * b;
+    auto lambda = (b - c) - kappa;
+    a = (9.0 * kappa + 3.0 * lambda) + c;
+  }
+
+  /** Coarse-fine interpolation function, based on interpolation stencil of +-1
+   * point. This function evaluates a third-order Taylor expansion by using a
+   * stencil of +-1 points around the coarse grid point that will be replaced by
+   * eight finer ones. This function can be overwritten by derived versions of
+   * BlockLab, to enable a custom interpolation. The +-1 points used here come
+   * from the 'interpolation stencil' passed to BlockLab.
+   *  @param C: pointer to the +-1 points around the coarse point (9 values in
+   * total)
+   *  @param R: pointer to the one refined points around the coarse point
+   *  @param x: delta x of the point to be interpolated (+1 or -1).
+   *  @param y: delta y of the point to be interpolated (+1 or -1).
+   */
+  virtual void TestInterp(ElementType *C[3][3], ElementType &R, int x, int y) {
+    const double dx = 0.25 * (2 * x - 1);
+    const double dy = 0.25 * (2 * y - 1);
+    ElementType dudx = 0.5 * ((*C[2][1]) - (*C[0][1]));
+    ElementType dudy = 0.5 * ((*C[1][2]) - (*C[1][0]));
+    ElementType dudxdy =
+        0.25 * (((*C[0][0]) + (*C[2][2])) - ((*C[2][0]) + (*C[0][2])));
+    ElementType dudx2 = ((*C[0][1]) + (*C[2][1])) - 2.0 * (*C[1][1]);
+    ElementType dudy2 = ((*C[1][0]) + (*C[1][2])) - 2.0 * (*C[1][1]);
+    R = (*C[1][1] + (dx * dudx + dy * dudy)) +
+        (((0.5 * dx * dx) * dudx2 + (0.5 * dy * dy) * dudy2) +
+         (dx * dy) * dudxdy);
+  }
+#endif
+
+  /** Exchange halo cells from fine to coarse blocks.
+   * @param info: the BlockInfo for the GridBlock that needs halo cells.
+   * @param code: pointer to three integers, one for each spatial direction.
+   * Possible values of each integer are -1,0,+1, based on the relative position
+   * of the neighboring block and 'info'
+   * @param s: the starts of the part of 'info' that will be filled
+   * @param e: the ends of the part of 'info' that will be filled
+   */
+  void FineToCoarseExchange(const BlockInfo &info, const int *const code,
+                            const int *const s, const int *const e) {
+    const int bytes = (abs(code[0]) * (e[0] - s[0]) +
+                       (1 - abs(code[0])) * ((e[0] - s[0]) / 2)) *
+                      sizeof(ElementType);
+    if (!bytes)
+      return;
+
+    const int nX = BlockType::sizeX;
+    const int nY = BlockType::sizeY;
+    const int nZ = BlockType::sizeZ;
+    const int m_vSize0 = m_cacheBlock->getSize(0);
+    const int m_nElemsPerSlice = m_cacheBlock->getNumberOfElementsPerSlice();
+    const int yStep = (code[1] == 0) ? 2 : 1;
+    const int zStep = (code[2] == 0) ? 2 : 1;
+    const int mod = ((e[1] - s[1]) / yStep) % 4;
+
+    int Bstep = 1; // face
+    if ((abs(code[0]) + abs(code[1]) + abs(code[2]) == 2))
+      Bstep = 3; // edge
+    else if ((abs(code[0]) + abs(code[1]) + abs(code[2]) == 3))
+      Bstep = 4; // corner
+
+    /*
+      A corner has one finer block.
+      An edge has two finer blocks, corresponding to B=0 and B=3. The block B=0
+      is the one closer to the origin (0,0,0). A face has four finer blocks.
+      They are numbered as follows, depending on whether the face lies on the
+      xy- , yz- or xz- plane
+
+      y                                  z                                  z
+      ^                                  ^                                  ^
+      |                                  |                                  |
+      |                                  |                                  |
+      |_________________                 |_________________ |_________________
+      |        |        |                |        |        |                | |
+      | |    2   |   3    |                |    2   |   3    |                |
+      2   |   3    |
+      |________|________|                |________|________| |________|________|
+      |        |        |                |        |        |                | |
+      | |    0   |    1   |                |    0   |    1   |                |
+      0   |    1   |
+      |________|________|------------->x |________|________|------------->x
+      |________|________|------------->y
+
+    */
+    // loop over blocks that make up face/edge/corner (respectively 4,2 or 1
+    // blocks)
+    for (int B = 0; B <= 3; B += Bstep) {
+      const int aux = (abs(code[0]) == 1) ? (B % 2) : (B / 2);
+
+#if DIMENSION == 3
+      BlockType *b_ptr =
+          m_refGrid->avail1(2 * info.index[0] + std::max(code[0], 0) + code[0] +
+                                (B % 2) * std::max(0, 1 - abs(code[0])),
+                            2 * info.index[1] + std::max(code[1], 0) + code[1] +
+                                aux * std::max(0, 1 - abs(code[1])),
+                            2 * info.index[2] + std::max(code[2], 0) + code[2] +
+                                (B / 2) * std::max(0, 1 - abs(code[2])),
+                            info.level + 1);
+#else
+      BlockType *b_ptr =
+          m_refGrid->avail1(2 * info.index[0] + std::max(code[0], 0) + code[0] +
+                                (B % 2) * std::max(0, 1 - abs(code[0])),
+                            2 * info.index[1] + std::max(code[1], 0) + code[1] +
+                                aux * std::max(0, 1 - abs(code[1])),
+                            info.level + 1);
+#endif
+      if (b_ptr == nullptr)
+        continue;
+      BlockType &b = *b_ptr;
+
+      const int my_ix = abs(code[0]) * (s[0] - m_stencilStart[0]) +
+                        (1 - abs(code[0])) * (s[0] - m_stencilStart[0] +
+                                              (B % 2) * (e[0] - s[0]) / 2);
+      const int XX = s[0] - code[0] * nX + std::min(0, code[0]) * (e[0] - s[0]);
+
+#pragma GCC ivdep
+      for (int iz = s[2]; iz < e[2]; iz += zStep) {
+        const int ZZ = (abs(code[2]) == 1)
+                           ? 2 * (iz - code[2] * nZ) + std::min(0, code[2]) * nZ
+                           : iz;
+        const int my_izx =
+            (abs(code[2]) * (iz - m_stencilStart[2]) +
+             (1 - abs(code[2])) *
+                 (iz / 2 - m_stencilStart[2] + (B / 2) * (e[2] - s[2]) / 2)) *
+                m_nElemsPerSlice +
+            my_ix;
+
+#pragma GCC ivdep
+        for (int iy = s[1]; iy < e[1] - mod; iy += 4 * yStep) {
+          ElementType *__restrict__ ptrDest0 = &m_cacheBlock->LinAccess(
+              my_izx +
+              (abs(code[1]) * (iy + 0 * yStep - m_stencilStart[1]) +
+               (1 - abs(code[1])) * ((iy + 0 * yStep) / 2 - m_stencilStart[1] +
+                                     aux * (e[1] - s[1]) / 2)) *
+                  m_vSize0);
+          ElementType *__restrict__ ptrDest1 = &m_cacheBlock->LinAccess(
+              my_izx +
+              (abs(code[1]) * (iy + 1 * yStep - m_stencilStart[1]) +
+               (1 - abs(code[1])) * ((iy + 1 * yStep) / 2 - m_stencilStart[1] +
+                                     aux * (e[1] - s[1]) / 2)) *
+                  m_vSize0);
+          ElementType *__restrict__ ptrDest2 = &m_cacheBlock->LinAccess(
+              my_izx +
+              (abs(code[1]) * (iy + 2 * yStep - m_stencilStart[1]) +
+               (1 - abs(code[1])) * ((iy + 2 * yStep) / 2 - m_stencilStart[1] +
+                                     aux * (e[1] - s[1]) / 2)) *
+                  m_vSize0);
+          ElementType *__restrict__ ptrDest3 = &m_cacheBlock->LinAccess(
+              my_izx +
+              (abs(code[1]) * (iy + 3 * yStep - m_stencilStart[1]) +
+               (1 - abs(code[1])) * ((iy + 3 * yStep) / 2 - m_stencilStart[1] +
+                                     aux * (e[1] - s[1]) / 2)) *
+                  m_vSize0);
+          const int YY0 = (abs(code[1]) == 1)
+                              ? 2 * (iy + 0 * yStep - code[1] * nY) +
+                                    std::min(0, code[1]) * nY
+                              : iy + 0 * yStep;
+          const int YY1 = (abs(code[1]) == 1)
+                              ? 2 * (iy + 1 * yStep - code[1] * nY) +
+                                    std::min(0, code[1]) * nY
+                              : iy + 1 * yStep;
+          const int YY2 = (abs(code[1]) == 1)
+                              ? 2 * (iy + 2 * yStep - code[1] * nY) +
+                                    std::min(0, code[1]) * nY
+                              : iy + 2 * yStep;
+          const int YY3 = (abs(code[1]) == 1)
+                              ? 2 * (iy + 3 * yStep - code[1] * nY) +
+                                    std::min(0, code[1]) * nY
+                              : iy + 3 * yStep;
+#if DIMENSION == 3
+          const ElementType *ptrSrc_00 = &b(XX, YY0, ZZ);
+          const ElementType *ptrSrc_10 = &b(XX, YY0, ZZ + 1);
+          const ElementType *ptrSrc_20 = &b(XX, YY0 + 1, ZZ);
+          const ElementType *ptrSrc_30 = &b(XX, YY0 + 1, ZZ + 1);
+          const ElementType *ptrSrc_01 = &b(XX, YY1, ZZ);
+          const ElementType *ptrSrc_11 = &b(XX, YY1, ZZ + 1);
+          const ElementType *ptrSrc_21 = &b(XX, YY1 + 1, ZZ);
+          const ElementType *ptrSrc_31 = &b(XX, YY1 + 1, ZZ + 1);
+          const ElementType *ptrSrc_02 = &b(XX, YY2, ZZ);
+          const ElementType *ptrSrc_12 = &b(XX, YY2, ZZ + 1);
+          const ElementType *ptrSrc_22 = &b(XX, YY2 + 1, ZZ);
+          const ElementType *ptrSrc_32 = &b(XX, YY2 + 1, ZZ + 1);
+          const ElementType *ptrSrc_03 = &b(XX, YY3, ZZ);
+          const ElementType *ptrSrc_13 = &b(XX, YY3, ZZ + 1);
+          const ElementType *ptrSrc_23 = &b(XX, YY3 + 1, ZZ);
+          const ElementType *ptrSrc_33 = &b(XX, YY3 + 1, ZZ + 1);
+#pragma GCC ivdep
+          for (int ee = 0; ee < (abs(code[0]) * (e[0] - s[0]) +
+                                 (1 - abs(code[0])) * ((e[0] - s[0]) / 2));
+               ee++) {
+            ptrDest0[ee] = AverageDown(
+                ptrSrc_00[2 * ee], ptrSrc_10[2 * ee], ptrSrc_20[2 * ee],
+                ptrSrc_30[2 * ee], ptrSrc_00[2 * ee + 1], ptrSrc_10[2 * ee + 1],
+                ptrSrc_20[2 * ee + 1], ptrSrc_30[2 * ee + 1]);
+            ptrDest1[ee] = AverageDown(
+                ptrSrc_01[2 * ee], ptrSrc_11[2 * ee], ptrSrc_21[2 * ee],
+                ptrSrc_31[2 * ee], ptrSrc_01[2 * ee + 1], ptrSrc_11[2 * ee + 1],
+                ptrSrc_21[2 * ee + 1], ptrSrc_31[2 * ee + 1]);
+            ptrDest2[ee] = AverageDown(
+                ptrSrc_02[2 * ee], ptrSrc_12[2 * ee], ptrSrc_22[2 * ee],
+                ptrSrc_32[2 * ee], ptrSrc_02[2 * ee + 1], ptrSrc_12[2 * ee + 1],
+                ptrSrc_22[2 * ee + 1], ptrSrc_32[2 * ee + 1]);
+            ptrDest3[ee] = AverageDown(
+                ptrSrc_03[2 * ee], ptrSrc_13[2 * ee], ptrSrc_23[2 * ee],
+                ptrSrc_33[2 * ee], ptrSrc_03[2 * ee + 1], ptrSrc_13[2 * ee + 1],
+                ptrSrc_23[2 * ee + 1], ptrSrc_33[2 * ee + 1]);
+          }
+#else
+          const ElementType *ptrSrc_00 = &b(XX, YY0, ZZ);
+          const ElementType *ptrSrc_10 = &b(XX, YY0 + 1, ZZ);
+          const ElementType *ptrSrc_01 = &b(XX, YY1, ZZ);
+          const ElementType *ptrSrc_11 = &b(XX, YY1 + 1, ZZ);
+          const ElementType *ptrSrc_02 = &b(XX, YY2, ZZ);
+          const ElementType *ptrSrc_12 = &b(XX, YY2 + 1, ZZ);
+          const ElementType *ptrSrc_03 = &b(XX, YY3, ZZ);
+          const ElementType *ptrSrc_13 = &b(XX, YY3 + 1, ZZ);
+#pragma GCC ivdep
+          for (int ee = 0; ee < (abs(code[0]) * (e[0] - s[0]) +
+                                 (1 - abs(code[0])) * ((e[0] - s[0]) / 2));
+               ee++) {
+            ptrDest0[ee] = AverageDown(
+                *(ptrSrc_00 + 2 * ee), *(ptrSrc_10 + 2 * ee),
+                *(ptrSrc_00 + 2 * ee + 1), *(ptrSrc_10 + 2 * ee + 1));
+            ptrDest1[ee] = AverageDown(
+                *(ptrSrc_01 + 2 * ee), *(ptrSrc_11 + 2 * ee),
+                *(ptrSrc_01 + 2 * ee + 1), *(ptrSrc_11 + 2 * ee + 1));
+            ptrDest2[ee] = AverageDown(
+                *(ptrSrc_02 + 2 * ee), *(ptrSrc_12 + 2 * ee),
+                *(ptrSrc_02 + 2 * ee + 1), *(ptrSrc_12 + 2 * ee + 1));
+            ptrDest3[ee] = AverageDown(
+                *(ptrSrc_03 + 2 * ee), *(ptrSrc_13 + 2 * ee),
+                *(ptrSrc_03 + 2 * ee + 1), *(ptrSrc_13 + 2 * ee + 1));
+          }
+#endif
+        }
+#pragma GCC ivdep
+        for (int iy = e[1] - mod; iy < e[1]; iy += yStep) {
+          ElementType *ptrDest = (ElementType *)&m_cacheBlock->LinAccess(
+              my_izx + (abs(code[1]) * (iy - m_stencilStart[1]) +
+                        (1 - abs(code[1])) * (iy / 2 - m_stencilStart[1] +
+                                              aux * (e[1] - s[1]) / 2)) *
+                           m_vSize0);
+          const int YY = (abs(code[1]) == 1) ? 2 * (iy - code[1] * nY) +
+                                                   std::min(0, code[1]) * nY
+                                             : iy;
+#if DIMENSION == 3
+          const ElementType *ptrSrc_0 = &b(XX, YY, ZZ);
+          const ElementType *ptrSrc_1 = &b(XX, YY, ZZ + 1);
+          const ElementType *ptrSrc_2 = &b(XX, YY + 1, ZZ);
+          const ElementType *ptrSrc_3 = &b(XX, YY + 1, ZZ + 1);
+          const ElementType *ptrSrc_0_1 = &b(XX + 1, YY, ZZ);
+          const ElementType *ptrSrc_1_1 = &b(XX + 1, YY, ZZ + 1);
+          const ElementType *ptrSrc_2_1 = &b(XX + 1, YY + 1, ZZ);
+          const ElementType *ptrSrc_3_1 = &b(XX + 1, YY + 1, ZZ + 1);
+// average down elements of block b to send to coarser neighbor
+#pragma GCC ivdep
+          for (int ee = 0; ee < (abs(code[0]) * (e[0] - s[0]) +
+                                 (1 - abs(code[0])) * ((e[0] - s[0]) / 2));
+               ee++) {
+            ptrDest[ee] = AverageDown(ptrSrc_0[2 * ee], ptrSrc_1[2 * ee],
+                                      ptrSrc_2[2 * ee], ptrSrc_3[2 * ee],
+                                      ptrSrc_0_1[2 * ee], ptrSrc_1_1[2 * ee],
+                                      ptrSrc_2_1[2 * ee], ptrSrc_3_1[2 * ee]);
+          }
+#else
+          const ElementType *ptrSrc_0 = &b(XX, YY, ZZ);
+          const ElementType *ptrSrc_1 = &b(XX, YY + 1, ZZ);
+// average down elements of block b to send to coarser neighbor
+#pragma GCC ivdep
+          for (int ee = 0; ee < (abs(code[0]) * (e[0] - s[0]) +
+                                 (1 - abs(code[0])) * ((e[0] - s[0]) / 2));
+               ee++) {
+            ptrDest[ee] =
+                AverageDown(*(ptrSrc_0 + 2 * ee), *(ptrSrc_1 + 2 * ee),
+                            *(ptrSrc_0 + 2 * ee + 1), *(ptrSrc_1 + 2 * ee + 1));
+          }
+#endif
+        }
+      }
+    } // B
+  }
+
+  /** Exchange halo cells from coarse to fine blocks.
+   * @param info: the BlockInfo for the GridBlock that needs halo cells.
+   * @param code: pointer to three integers, one for each spatial direction.
+   * Possible values of each integer are -1,0,+1, based on the relative position
+   * of the neighboring block and 'info'
+   */
+  void CoarseFineExchange(const BlockInfo &info, const int *const code) {
+    // Coarse neighbors send their cells. Those are stored in m_CoarsenedBlock
+    // and are later used in function CoarseFineInterpolation to interpolate
+    // fine values.
+
+    const int infoNei_index[3] = {(info.index[0] + code[0] + NX) % NX,
+                                  (info.index[1] + code[1] + NY) % NY,
+                                  (info.index[2] + code[2] + NZ) % NZ};
+    const int infoNei_index_true[3] = {(info.index[0] + code[0]),
+                                       (info.index[1] + code[1]),
+                                       (info.index[2] + code[2])};
+#if DIMENSION == 3
+    BlockType *b_ptr =
+        m_refGrid->avail1((infoNei_index[0]) / 2, (infoNei_index[1]) / 2,
+                          (infoNei_index[2]) / 2, info.level - 1);
+#else
+    BlockType *b_ptr = m_refGrid->avail1(
+        (infoNei_index[0]) / 2, (infoNei_index[1]) / 2, info.level - 1);
+#endif
+
+    if (b_ptr == nullptr)
+      return;
+    const BlockType &b = *b_ptr;
+
+    const int nX = BlockType::sizeX;
+    const int nY = BlockType::sizeY;
+    const int nZ = BlockType::sizeZ;
+
+    const int s[3] = {
+        code[0] < 1 ? (code[0] < 0 ? offset[0] : 0) : CoarseBlockSize[0],
+        code[1] < 1 ? (code[1] < 0 ? offset[1] : 0) : CoarseBlockSize[1],
+        code[2] < 1 ? (code[2] < 0 ? offset[2] : 0) : CoarseBlockSize[2]};
+
+    const int e[3] = {code[0] < 1 ? (code[0] < 0 ? 0 : CoarseBlockSize[0])
+                                  : CoarseBlockSize[0] + (m_stencilEnd[0]) / 2 +
+                                        m_InterpStencilEnd[0] - 1,
+                      code[1] < 1 ? (code[1] < 0 ? 0 : CoarseBlockSize[1])
+                                  : CoarseBlockSize[1] + (m_stencilEnd[1]) / 2 +
+                                        m_InterpStencilEnd[1] - 1,
+                      code[2] < 1 ? (code[2] < 0 ? 0 : CoarseBlockSize[2])
+                                  : CoarseBlockSize[2] + (m_stencilEnd[2]) / 2 +
+                                        m_InterpStencilEnd[2] - 1};
+
+    const int bytes = (e[0] - s[0]) * sizeof(ElementType);
+    if (!bytes)
+      return;
+
+    const int base[3] = {(info.index[0] + code[0]) % 2,
+                         (info.index[1] + code[1]) % 2,
+                         (info.index[2] + code[2]) % 2};
+
+    int CoarseEdge[3];
+    CoarseEdge[0] = (code[0] == 0)
+                        ? 0
+                        : (((info.index[0] % 2 == 0) &&
+                            (infoNei_index_true[0] > info.index[0])) ||
+                           ((info.index[0] % 2 == 1) &&
+                            (infoNei_index_true[0] < info.index[0])))
+                              ? 1
+                              : 0;
+    CoarseEdge[1] = (code[1] == 0)
+                        ? 0
+                        : (((info.index[1] % 2 == 0) &&
+                            (infoNei_index_true[1] > info.index[1])) ||
+                           ((info.index[1] % 2 == 1) &&
+                            (infoNei_index_true[1] < info.index[1])))
+                              ? 1
+                              : 0;
+    CoarseEdge[2] = (code[2] == 0)
+                        ? 0
+                        : (((info.index[2] % 2 == 0) &&
+                            (infoNei_index_true[2] > info.index[2])) ||
+                           ((info.index[2] % 2 == 1) &&
+                            (infoNei_index_true[2] < info.index[2])))
+                              ? 1
+                              : 0;
+
+    const int start[3] = {
+        std::max(code[0], 0) * nX / 2 + (1 - abs(code[0])) * base[0] * nX / 2 -
+            code[0] * nX + CoarseEdge[0] * code[0] * nX / 2,
+        std::max(code[1], 0) * nY / 2 + (1 - abs(code[1])) * base[1] * nY / 2 -
+            code[1] * nY + CoarseEdge[1] * code[1] * nY / 2,
+        std::max(code[2], 0) * nZ / 2 + (1 - abs(code[2])) * base[2] * nZ / 2 -
+            code[2] * nZ + CoarseEdge[2] * code[2] * nZ / 2};
+
+    const int m_vSize0 = m_CoarsenedBlock->getSize(0);
+    const int m_nElemsPerSlice =
+        m_CoarsenedBlock->getNumberOfElementsPerSlice();
+    const int my_ix = s[0] - offset[0];
+    const int mod = (e[1] - s[1]) % 4;
+
+#pragma GCC ivdep
+    for (int iz = s[2]; iz < e[2]; iz++) {
+      const int my_izx = (iz - offset[2]) * m_nElemsPerSlice + my_ix;
+#pragma GCC ivdep
+      for (int iy = s[1]; iy < e[1] - mod; iy += 4) {
+        ElementType *__restrict__ ptrDest0 = &m_CoarsenedBlock->LinAccess(
+            my_izx + (iy + 0 - offset[1]) * m_vSize0);
+        ElementType *__restrict__ ptrDest1 = &m_CoarsenedBlock->LinAccess(
+            my_izx + (iy + 1 - offset[1]) * m_vSize0);
+        ElementType *__restrict__ ptrDest2 = &m_CoarsenedBlock->LinAccess(
+            my_izx + (iy + 2 - offset[1]) * m_vSize0);
+        ElementType *__restrict__ ptrDest3 = &m_CoarsenedBlock->LinAccess(
+            my_izx + (iy + 3 - offset[1]) * m_vSize0);
+        const ElementType *ptrSrc0 =
+            &b(s[0] + start[0], iy + 0 + start[1], iz + start[2]);
+        const ElementType *ptrSrc1 =
+            &b(s[0] + start[0], iy + 1 + start[1], iz + start[2]);
+        const ElementType *ptrSrc2 =
+            &b(s[0] + start[0], iy + 2 + start[1], iz + start[2]);
+        const ElementType *ptrSrc3 =
+            &b(s[0] + start[0], iy + 3 + start[1], iz + start[2]);
+        memcpy2(ptrDest0, ptrSrc0, bytes);
+        memcpy2(ptrDest1, ptrSrc1, bytes);
+        memcpy2(ptrDest2, ptrSrc2, bytes);
+        memcpy2(ptrDest3, ptrSrc3, bytes);
+      }
+#pragma GCC ivdep
+      for (int iy = e[1] - mod; iy < e[1]; iy++) {
+        ElementType *ptrDest =
+            &m_CoarsenedBlock->LinAccess(my_izx + (iy - offset[1]) * m_vSize0);
+        const ElementType *ptrSrc =
+            &b(s[0] + start[0], iy + start[1], iz + start[2]);
+        memcpy2(ptrDest, ptrSrc, bytes);
+      }
+    }
+  }
+
+  /** Fill coarsened version of a block, used for fine-coarse interpolation.
+   * Each block will create a coarsened version of itself, with averaged down
+   * values. This version is also filled with gridpoints for halo cells that are
+   * received from coarser neighbors. It is then used to interpolate fine cells
+   * at coarse-fine interfaces.
+   * @param info: the BlockInfo for the GridBlock that needs halo cells.
+   * @param code: pointer to three integers, one for each spatial direction.
+   * Possible values of each integer are -1,0,+1, based on the relative position
+   * of the neighboring block and 'info'
+   */
+  void FillCoarseVersion(const BlockInfo &info, const int *const code) {
+    // If a neighboring block is on the same level it might need to average down
+    // some cells and use them to fill the coarsened version of this block.
+    // Those cells are needed to refine the coarsened version and obtain ghosts
+    // from coarser neighbors (those cells are inside the interpolation stencil
+    // for refinement).
+
+    const int icode = (code[0] + 1) + 3 * (code[1] + 1) + 9 * (code[2] + 1);
+    if (myblocks[icode] == nullptr)
+      return;
+    const BlockType &b = *myblocks[icode];
+
+    const int nX = BlockType::sizeX;
+    const int nY = BlockType::sizeY;
+    const int nZ = BlockType::sizeZ;
+
+    const int eC[3] = {(m_stencilEnd[0]) / 2 + m_InterpStencilEnd[0],
+                       (m_stencilEnd[1]) / 2 + m_InterpStencilEnd[1],
+                       (m_stencilEnd[2]) / 2 + m_InterpStencilEnd[2]};
+
+    const int s[3] = {
+        code[0] < 1 ? (code[0] < 0 ? offset[0] : 0) : CoarseBlockSize[0],
+        code[1] < 1 ? (code[1] < 0 ? offset[1] : 0) : CoarseBlockSize[1],
+        code[2] < 1 ? (code[2] < 0 ? offset[2] : 0) : CoarseBlockSize[2]};
+
+    const int e[3] = {code[0] < 1 ? (code[0] < 0 ? 0 : CoarseBlockSize[0])
+                                  : CoarseBlockSize[0] + eC[0] - 1,
+                      code[1] < 1 ? (code[1] < 0 ? 0 : CoarseBlockSize[1])
+                                  : CoarseBlockSize[1] + eC[1] - 1,
+                      code[2] < 1 ? (code[2] < 0 ? 0 : CoarseBlockSize[2])
+                                  : CoarseBlockSize[2] + eC[2] - 1};
+
+    const int bytes = (e[0] - s[0]) * sizeof(ElementType);
+    if (!bytes)
+      return;
+
+    const int start[3] = {
+        s[0] + std::max(code[0], 0) * CoarseBlockSize[0] - code[0] * nX +
+            std::min(0, code[0]) * (e[0] - s[0]),
+        s[1] + std::max(code[1], 0) * CoarseBlockSize[1] - code[1] * nY +
+            std::min(0, code[1]) * (e[1] - s[1]),
+        s[2] + std::max(code[2], 0) * CoarseBlockSize[2] - code[2] * nZ +
+            std::min(0, code[2]) * (e[2] - s[2])};
+
+    const int m_vSize0 = m_CoarsenedBlock->getSize(0);
+    const int m_nElemsPerSlice =
+        m_CoarsenedBlock->getNumberOfElementsPerSlice();
+    const int my_ix = s[0] - offset[0];
+    const int XX = start[0];
+
+#pragma GCC ivdep
+    for (int iz = s[2]; iz < e[2]; iz++) {
+      const int ZZ = 2 * (iz - s[2]) + start[2];
+      const int my_izx = (iz - offset[2]) * m_nElemsPerSlice + my_ix;
+
+#pragma GCC ivdep
+      for (int iy = s[1]; iy < e[1]; iy++) {
+        if (code[1] == 0 && code[2] == 0 && iy > -m_InterpStencilStart[1] &&
+            iy < nY / 2 - m_InterpStencilEnd[1] &&
+            iz > -m_InterpStencilStart[2] &&
+            iz < nZ / 2 - m_InterpStencilEnd[2])
+          continue;
+
+        ElementType *__restrict__ ptrDest1 =
+            &m_CoarsenedBlock->LinAccess(my_izx + (iy - offset[1]) * m_vSize0);
+
+        const int YY = 2 * (iy - s[1]) + start[1];
+#if DIMENSION == 3
+        const ElementType *ptrSrc_0 = &b(XX, YY, ZZ);
+        const ElementType *ptrSrc_1 = &b(XX, YY, ZZ + 1);
+        const ElementType *ptrSrc_2 = &b(XX, YY + 1, ZZ);
+        const ElementType *ptrSrc_3 = &b(XX, YY + 1, ZZ + 1);
+// average down elements of block b to send to coarser neighbor
+#pragma GCC ivdep
+        for (int ee = 0; ee < e[0] - s[0]; ee++) {
+          ptrDest1[ee] =
+              AverageDown(*(ptrSrc_0 + 2 * ee), *(ptrSrc_1 + 2 * ee),
+                          *(ptrSrc_2 + 2 * ee), *(ptrSrc_3 + 2 * ee),
+                          *(ptrSrc_0 + 2 * ee + 1), *(ptrSrc_1 + 2 * ee + 1),
+                          *(ptrSrc_2 + 2 * ee + 1), *(ptrSrc_3 + 2 * ee + 1));
+        }
+#else
+        const ElementType *ptrSrc_0 = (const ElementType *)&b(XX, YY, ZZ);
+        const ElementType *ptrSrc_1 = (const ElementType *)&b(XX, YY + 1, ZZ);
+// average down elements of block b to send to coarser neighbor
+#pragma GCC ivdep
+        for (int ee = 0; ee < e[0] - s[0]; ee++) {
+          ptrDest1[ee] =
+              AverageDown(*(ptrSrc_0 + 2 * ee), *(ptrSrc_1 + 2 * ee),
+                          *(ptrSrc_0 + 2 * ee + 1), *(ptrSrc_1 + 2 * ee + 1));
+        }
+#endif
+      }
+    }
+  }
+
+/// Perform fine-coarse interpolation, after filling coarsened version of block.
+#ifdef PRESERVE_SYMMETRY
+  __attribute__((optimize("-O1")))
+#endif
+  void
+  CoarseFineInterpolation(const BlockInfo &info) {
+    const int nX = BlockType::sizeX;
+    const int nY = BlockType::sizeY;
+    const int nZ = BlockType::sizeZ;
+    const bool xperiodic = is_xperiodic();
+    const bool yperiodic = is_yperiodic();
+    const bool zperiodic = is_zperiodic();
+    const std::array<int, 3> blocksPerDim = m_refGrid->getMaxBlocks();
+    const int aux = 1 << info.level;
+    const bool xskin =
+        info.index[0] == 0 || info.index[0] == blocksPerDim[0] * aux - 1;
+    const bool yskin =
+        info.index[1] == 0 || info.index[1] == blocksPerDim[1] * aux - 1;
+    const bool zskin =
+        info.index[2] == 0 || info.index[2] == blocksPerDim[2] * aux - 1;
+    const int xskip = info.index[0] == 0 ? -1 : 1;
+    const int yskip = info.index[1] == 0 ? -1 : 1;
+    const int zskip = info.index[2] == 0 ? -1 : 1;
+
+    for (int ii = 0; ii < coarsened_nei_codes_size; ++ii) {
+      const int icode = coarsened_nei_codes[ii];
+      if (icode == 1 * 1 + 3 * 1 + 9 * 1)
+        continue;
+      const int code[3] = {icode % 3 - 1, (icode / 3) % 3 - 1,
+                           (icode / 9) % 3 - 1};
+
+#if DIMENSION == 2
+      if (code[2] != 0)
+        continue;
+#endif
+
+      if (!xperiodic && code[0] == xskip && xskin)
+        continue;
+      if (!yperiodic && code[1] == yskip && yskin)
+        continue;
+      if (!zperiodic && code[2] == zskip && zskin)
+        continue;
+      if (!istensorial && !use_averages &&
+          abs(code[0]) + abs(code[1]) + abs(code[2]) > 1)
+        continue;
+
+      // s and e correspond to start and end of this lab's cells that are filled
+      // by neighbors
+      const int s[3] = {
+          code[0] < 1 ? (code[0] < 0 ? m_stencilStart[0] : 0) : nX,
+          code[1] < 1 ? (code[1] < 0 ? m_stencilStart[1] : 0) : nY,
+          code[2] < 1 ? (code[2] < 0 ? m_stencilStart[2] : 0) : nZ};
+      const int e[3] = {
+          code[0] < 1 ? (code[0] < 0 ? 0 : nX) : nX + m_stencilEnd[0] - 1,
+          code[1] < 1 ? (code[1] < 0 ? 0 : nY) : nY + m_stencilEnd[1] - 1,
+          code[2] < 1 ? (code[2] < 0 ? 0 : nZ) : nZ + m_stencilEnd[2] - 1};
+
+      const int sC[3] = {
+          code[0] < 1 ? (code[0] < 0 ? ((m_stencilStart[0] - 1) / 2) : 0)
+                      : CoarseBlockSize[0],
+          code[1] < 1 ? (code[1] < 0 ? ((m_stencilStart[1] - 1) / 2) : 0)
+                      : CoarseBlockSize[1],
+          code[2] < 1 ? (code[2] < 0 ? ((m_stencilStart[2] - 1) / 2) : 0)
+                      : CoarseBlockSize[2]};
+
+      const int bytes = (e[0] - s[0]) * sizeof(ElementType);
+      if (!bytes)
+        continue;
+
+#if DIMENSION == 3
+      ElementType retval[8];
+      if (use_averages)
+        for (int iz = s[2]; iz < e[2]; iz += 2) {
+          const int ZZ =
+              (iz - s[2] - std::min(0, code[2]) * ((e[2] - s[2]) % 2)) / 2 +
+              sC[2];
+          const int z =
+              abs(iz - s[2] - std::min(0, code[2]) * ((e[2] - s[2]) % 2)) % 2;
+          const int izp = (abs(iz) % 2 == 1) ? -1 : 1;
+          const int rzp = (izp == 1) ? 1 : 0;
+          const int rz = (izp == 1) ? 0 : 1;
+
+#pragma GCC ivdep
+          for (int iy = s[1]; iy < e[1]; iy += 2) {
+            const int YY =
+                (iy - s[1] - std::min(0, code[1]) * ((e[1] - s[1]) % 2)) / 2 +
+                sC[1];
+            const int y =
+                abs(iy - s[1] - std::min(0, code[1]) * ((e[1] - s[1]) % 2)) % 2;
+            const int iyp = (abs(iy) % 2 == 1) ? -1 : 1;
+            const int ryp = (iyp == 1) ? 1 : 0;
+            const int ry = (iyp == 1) ? 0 : 1;
+
+#pragma GCC ivdep
+            for (int ix = s[0]; ix < e[0]; ix += 2) {
+              const int XX =
+                  (ix - s[0] - std::min(0, code[0]) * ((e[0] - s[0]) % 2)) / 2 +
+                  sC[0];
+              const int x =
+                  abs(ix - s[0] - std::min(0, code[0]) * ((e[0] - s[0]) % 2)) %
+                  2;
+              const int ixp = (abs(ix) % 2 == 1) ? -1 : 1;
+              const int rxp = (ixp == 1) ? 1 : 0;
+              const int rx = (ixp == 1) ? 0 : 1;
+
+              ElementType *Test[3][3][3];
+              for (int i = 0; i < 3; i++)
+                for (int j = 0; j < 3; j++)
+                  for (int k = 0; k < 3; k++)
+                    Test[i][j][k] = &m_CoarsenedBlock->Access(
+                        XX - 1 + i - offset[0], YY - 1 + j - offset[1],
+                        ZZ - 1 + k - offset[2]);
+
+              TestInterp(Test, retval, x, y, z);
+
+              if (ix >= s[0] && ix < e[0] && iy >= s[1] && iy < e[1] &&
+                  iz >= s[2] && iz < e[2])
+                m_cacheBlock->Access(
+                    ix - m_stencilStart[0], iy - m_stencilStart[1],
+                    iz - m_stencilStart[2]) = retval[rx + 2 * ry + 4 * rz];
+              if (ix + ixp >= s[0] && ix + ixp < e[0] && iy >= s[1] &&
+                  iy < e[1] && iz >= s[2] && iz < e[2])
+                m_cacheBlock->Access(
+                    ix + ixp - m_stencilStart[0], iy - m_stencilStart[1],
+                    iz - m_stencilStart[2]) = retval[rxp + 2 * ry + 4 * rz];
+              if (ix >= s[0] && ix < e[0] && iy + iyp >= s[1] &&
+                  iy + iyp < e[1] && iz >= s[2] && iz < e[2])
+                m_cacheBlock->Access(
+                    ix - m_stencilStart[0], iy + iyp - m_stencilStart[1],
+                    iz - m_stencilStart[2]) = retval[rx + 2 * ryp + 4 * rz];
+              if (ix + ixp >= s[0] && ix + ixp < e[0] && iy + iyp >= s[1] &&
+                  iy + iyp < e[1] && iz >= s[2] && iz < e[2])
+                m_cacheBlock->Access(
+                    ix + ixp - m_stencilStart[0], iy + iyp - m_stencilStart[1],
+                    iz - m_stencilStart[2]) = retval[rxp + 2 * ryp + 4 * rz];
+              if (ix >= s[0] && ix < e[0] && iy >= s[1] && iy < e[1] &&
+                  iz + izp >= s[2] && iz + izp < e[2])
+                m_cacheBlock->Access(ix - m_stencilStart[0],
+                                     iy - m_stencilStart[1],
+                                     iz + izp - m_stencilStart[2]) =
+                    retval[rx + 2 * ry + 4 * rzp];
+              if (ix + ixp >= s[0] && ix + ixp < e[0] && iy >= s[1] &&
+                  iy < e[1] && iz + izp >= s[2] && iz + izp < e[2])
+                m_cacheBlock->Access(ix + ixp - m_stencilStart[0],
+                                     iy - m_stencilStart[1],
+                                     iz + izp - m_stencilStart[2]) =
+                    retval[rxp + 2 * ry + 4 * rzp];
+              if (ix >= s[0] && ix < e[0] && iy + iyp >= s[1] &&
+                  iy + iyp < e[1] && iz + izp >= s[2] && iz + izp < e[2])
+                m_cacheBlock->Access(ix - m_stencilStart[0],
+                                     iy + iyp - m_stencilStart[1],
+                                     iz + izp - m_stencilStart[2]) =
+                    retval[rx + 2 * ryp + 4 * rzp];
+              if (ix + ixp >= s[0] && ix + ixp < e[0] && iy + iyp >= s[1] &&
+                  iy + iyp < e[1] && iz + izp >= s[2] && iz + izp < e[2])
+                m_cacheBlock->Access(ix + ixp - m_stencilStart[0],
+                                     iy + iyp - m_stencilStart[1],
+                                     iz + izp - m_stencilStart[2]) =
+                    retval[rxp + 2 * ryp + 4 * rzp];
+            }
+          }
+        }
+      if (m_refGrid->FiniteDifferences &&
+          abs(code[0]) + abs(code[1]) + abs(code[2]) ==
+              1) // Correct stencil points +-1 and +-2 at faces
+      {
+        const int coef_ixyz[3] = {std::min(0, code[0]) * ((e[0] - s[0]) % 2),
+                                  std::min(0, code[1]) * ((e[1] - s[1]) % 2),
+                                  std::min(0, code[2]) * ((e[2] - s[2]) % 2)};
+        const int min_iz = std::max(s[2], -2);
+        const int min_iy = std::max(s[1], -2);
+        const int min_ix = std::max(s[0], -2);
+        const int max_iz = std::min(e[2], nZ + 2);
+        const int max_iy = std::min(e[1], nY + 2);
+        const int max_ix = std::min(e[0], nX + 2);
+
+        for (int iz = min_iz; iz < max_iz; iz++) {
+          const int ZZ = (iz - s[2] - coef_ixyz[2]) / 2 + sC[2] - offset[2];
+          const int z = abs(iz - s[2] - coef_ixyz[2]) % 2;
+          const double dz = 0.25 * (2 * z - 1);
+          const double *dz_coef = dz > 0 ? &d_coef_plus[0] : &d_coef_minus[0];
+          const bool zinner = (ZZ + offset[2] != 0) &&
+                              (ZZ + offset[2] != CoarseBlockSize[2] - 1);
+          const bool zstart = (ZZ + offset[2] == 0);
+
+#pragma GCC ivdep
+          for (int iy = min_iy; iy < max_iy; iy++) {
+            const int YY = (iy - s[1] - coef_ixyz[1]) / 2 + sC[1] - offset[1];
+            const int y = abs(iy - s[1] - coef_ixyz[1]) % 2;
+            const double dy = 0.25 * (2 * y - 1);
+            const double *dy_coef = dy > 0 ? &d_coef_plus[0] : &d_coef_minus[0];
+            const bool yinner = (YY + offset[1] != 0) &&
+                                (YY + offset[1] != CoarseBlockSize[1] - 1);
+            const bool ystart = (YY + offset[1] == 0);
+
+#pragma GCC ivdep
+            for (int ix = min_ix; ix < max_ix; ix++) {
+              const int XX = (ix - s[0] - coef_ixyz[0]) / 2 + sC[0] - offset[0];
+              const int x = abs(ix - s[0] - coef_ixyz[0]) % 2;
+              const double dx = 0.25 * (2 * x - 1);
+              const double *dx_coef =
+                  dx > 0 ? &d_coef_plus[0] : &d_coef_minus[0];
+              const bool xinner = (XX + offset[0] != 0) &&
+                                  (XX + offset[0] != CoarseBlockSize[0] - 1);
+              const bool xstart = (XX + offset[0] == 0);
+
+              auto &a = m_cacheBlock->Access(ix - m_stencilStart[0],
+                                             iy - m_stencilStart[1],
+                                             iz - m_stencilStart[2]);
+              if (code[0] != 0) // X-face
+              {
+                ElementType x1D, x2D, mixed;
+
+                int YP, YM, ZP, ZM;
+                double mixed_coef = 1.0;
+                if (yinner) {
+                  x1D =
+                      (dy_coef[6] * m_CoarsenedBlock->Access(XX, YY - 1, ZZ) +
+                       dy_coef[8] * m_CoarsenedBlock->Access(XX, YY + 1, ZZ)) +
+                      dy_coef[7] * m_CoarsenedBlock->Access(XX, YY, ZZ);
+                  YP = YY + 1;
+                  YM = YY - 1;
+                  mixed_coef *= 0.5;
+                } else if (ystart) {
+                  x1D =
+                      (dy_coef[0] * m_CoarsenedBlock->Access(XX, YY + 2, ZZ) +
+                       dy_coef[1] * m_CoarsenedBlock->Access(XX, YY + 1, ZZ)) +
+                      dy_coef[2] * m_CoarsenedBlock->Access(XX, YY, ZZ);
+                  YP = YY + 1;
+                  YM = YY;
+                } else {
+                  x1D =
+                      (dy_coef[3] * m_CoarsenedBlock->Access(XX, YY - 2, ZZ) +
+                       dy_coef[4] * m_CoarsenedBlock->Access(XX, YY - 1, ZZ)) +
+                      dy_coef[5] * m_CoarsenedBlock->Access(XX, YY, ZZ);
+                  YP = YY;
+                  YM = YY - 1;
+                }
+                if (zinner) {
+                  x2D =
+                      (dz_coef[6] * m_CoarsenedBlock->Access(XX, YY, ZZ - 1) +
+                       dz_coef[8] * m_CoarsenedBlock->Access(XX, YY, ZZ + 1)) +
+                      dz_coef[7] * m_CoarsenedBlock->Access(XX, YY, ZZ);
+                  ZP = ZZ + 1;
+                  ZM = ZZ - 1;
+                  mixed_coef *= 0.5;
+                } else if (zstart) {
+                  x2D =
+                      (dz_coef[0] * m_CoarsenedBlock->Access(XX, YY, ZZ + 2) +
+                       dz_coef[1] * m_CoarsenedBlock->Access(XX, YY, ZZ + 1)) +
+                      dz_coef[2] * m_CoarsenedBlock->Access(XX, YY, ZZ);
+                  ZP = ZZ + 1;
+                  ZM = ZZ;
+                } else {
+                  x2D =
+                      (dz_coef[3] * m_CoarsenedBlock->Access(XX, YY, ZZ - 2) +
+                       dz_coef[4] * m_CoarsenedBlock->Access(XX, YY, ZZ - 1)) +
+                      dz_coef[5] * m_CoarsenedBlock->Access(XX, YY, ZZ);
+                  ZP = ZZ;
+                  ZM = ZZ - 1;
+                }
+                mixed = mixed_coef * dy * dz *
+                        ((m_CoarsenedBlock->Access(XX, YM, ZM) +
+                          m_CoarsenedBlock->Access(XX, YP, ZP)) -
+                         (m_CoarsenedBlock->Access(XX, YP, ZM) +
+                          m_CoarsenedBlock->Access(XX, YM, ZP)));
+                a = (x1D + x2D) + mixed;
+              } else if (code[1] != 0) // Y-face
+              {
+                ElementType x1D, x2D, mixed;
+
+                int XP, XM, ZP, ZM;
+                double mixed_coef = 1.0;
+                if (xinner) {
+                  x1D =
+                      (dx_coef[6] * m_CoarsenedBlock->Access(XX - 1, YY, ZZ) +
+                       dx_coef[8] * m_CoarsenedBlock->Access(XX + 1, YY, ZZ)) +
+                      dx_coef[7] * m_CoarsenedBlock->Access(XX, YY, ZZ);
+                  XP = XX + 1;
+                  XM = XX - 1;
+                  mixed_coef *= 0.5;
+                } else if (xstart) {
+                  x1D =
+                      (dx_coef[0] * m_CoarsenedBlock->Access(XX + 2, YY, ZZ) +
+                       dx_coef[1] * m_CoarsenedBlock->Access(XX + 1, YY, ZZ)) +
+                      dx_coef[2] * m_CoarsenedBlock->Access(XX, YY, ZZ);
+                  XP = XX + 1;
+                  XM = XX;
+                } else {
+                  x1D =
+                      (dx_coef[3] * m_CoarsenedBlock->Access(XX - 2, YY, ZZ) +
+                       dx_coef[4] * m_CoarsenedBlock->Access(XX - 1, YY, ZZ)) +
+                      dx_coef[5] * m_CoarsenedBlock->Access(XX, YY, ZZ);
+                  XP = XX;
+                  XM = XX - 1;
+                }
+                if (zinner) {
+                  x2D =
+                      (dz_coef[6] * m_CoarsenedBlock->Access(XX, YY, ZZ - 1) +
+                       dz_coef[8] * m_CoarsenedBlock->Access(XX, YY, ZZ + 1)) +
+                      dz_coef[7] * m_CoarsenedBlock->Access(XX, YY, ZZ);
+                  ZP = ZZ + 1;
+                  ZM = ZZ - 1;
+                  mixed_coef *= 0.5;
+                } else if (zstart) {
+                  x2D =
+                      (dz_coef[0] * m_CoarsenedBlock->Access(XX, YY, ZZ + 2) +
+                       dz_coef[1] * m_CoarsenedBlock->Access(XX, YY, ZZ + 1)) +
+                      dz_coef[2] * m_CoarsenedBlock->Access(XX, YY, ZZ);
+                  ZP = ZZ + 1;
+                  ZM = ZZ;
+                } else {
+                  x2D =
+                      (dz_coef[3] * m_CoarsenedBlock->Access(XX, YY, ZZ - 2) +
+                       dz_coef[4] * m_CoarsenedBlock->Access(XX, YY, ZZ - 1)) +
+                      dz_coef[5] * m_CoarsenedBlock->Access(XX, YY, ZZ);
+                  ZP = ZZ;
+                  ZM = ZZ - 1;
+                }
+                mixed = mixed_coef * dx * dz *
+                        ((m_CoarsenedBlock->Access(XM, YY, ZM) +
+                          m_CoarsenedBlock->Access(XP, YY, ZP)) -
+                         (m_CoarsenedBlock->Access(XP, YY, ZM) +
+                          m_CoarsenedBlock->Access(XM, YY, ZP)));
+                a = (x1D + x2D) + mixed;
+              } else if (code[2] != 0) // Z-face
+              {
+                ElementType x1D, x2D, mixed;
+
+                int XP, XM, YP, YM;
+                double mixed_coef = 1.0;
+                if (xinner) {
+                  x1D =
+                      (dx_coef[6] * m_CoarsenedBlock->Access(XX - 1, YY, ZZ) +
+                       dx_coef[8] * m_CoarsenedBlock->Access(XX + 1, YY, ZZ)) +
+                      dx_coef[7] * m_CoarsenedBlock->Access(XX, YY, ZZ);
+                  XP = XX + 1;
+                  XM = XX - 1;
+                  mixed_coef *= 0.5;
+                } else if (xstart) {
+                  x1D =
+                      (dx_coef[0] * m_CoarsenedBlock->Access(XX + 2, YY, ZZ) +
+                       dx_coef[1] * m_CoarsenedBlock->Access(XX + 1, YY, ZZ)) +
+                      dx_coef[2] * m_CoarsenedBlock->Access(XX, YY, ZZ);
+                  XP = XX + 1;
+                  XM = XX;
+                } else {
+                  x1D =
+                      (dx_coef[3] * m_CoarsenedBlock->Access(XX - 2, YY, ZZ) +
+                       dx_coef[4] * m_CoarsenedBlock->Access(XX - 1, YY, ZZ)) +
+                      dx_coef[5] * m_CoarsenedBlock->Access(XX, YY, ZZ);
+                  XP = XX;
+                  XM = XX - 1;
+                }
+                if (yinner) {
+                  x2D =
+                      (dy_coef[6] * m_CoarsenedBlock->Access(XX, YY - 1, ZZ) +
+                       dy_coef[8] * m_CoarsenedBlock->Access(XX, YY + 1, ZZ)) +
+                      dy_coef[7] * m_CoarsenedBlock->Access(XX, YY, ZZ);
+                  YP = YY + 1;
+                  YM = YY - 1;
+                  mixed_coef *= 0.5;
+                } else if (ystart) {
+                  x2D =
+                      (dy_coef[0] * m_CoarsenedBlock->Access(XX, YY + 2, ZZ) +
+                       dy_coef[1] * m_CoarsenedBlock->Access(XX, YY + 1, ZZ)) +
+                      dy_coef[2] * m_CoarsenedBlock->Access(XX, YY, ZZ);
+                  YP = YY + 1;
+                  YM = YY;
+                } else {
+                  x2D =
+                      (dy_coef[3] * m_CoarsenedBlock->Access(XX, YY - 2, ZZ) +
+                       dy_coef[4] * m_CoarsenedBlock->Access(XX, YY - 1, ZZ)) +
+                      dy_coef[5] * m_CoarsenedBlock->Access(XX, YY, ZZ);
+                  YP = YY;
+                  YM = YY - 1;
+                }
+
+                mixed = mixed_coef * dx * dy *
+                        ((m_CoarsenedBlock->Access(XM, YM, ZZ) +
+                          m_CoarsenedBlock->Access(XP, YP, ZZ)) -
+                         (m_CoarsenedBlock->Access(XP, YM, ZZ) +
+                          m_CoarsenedBlock->Access(XM, YP, ZZ)));
+                a = (x1D + x2D) + mixed;
+              }
+
+              const auto &b = m_cacheBlock->Access(
+                  ix - m_stencilStart[0] + (-3 * code[0] + 1) / 2 -
+                      x * abs(code[0]),
+                  iy - m_stencilStart[1] + (-3 * code[1] + 1) / 2 -
+                      y * abs(code[1]),
+                  iz - m_stencilStart[2] + (-3 * code[2] + 1) / 2 -
+                      z * abs(code[2]));
+              const auto &c = m_cacheBlock->Access(
+                  ix - m_stencilStart[0] + (-5 * code[0] + 1) / 2 -
+                      x * abs(code[0]),
+                  iy - m_stencilStart[1] + (-5 * code[1] + 1) / 2 -
+                      y * abs(code[1]),
+                  iz - m_stencilStart[2] + (-5 * code[2] + 1) / 2 -
+                      z * abs(code[2]));
+              const int ccc = code[0] + code[1] + code[2];
+              const int xyz =
+                  abs(code[0]) * x + abs(code[1]) * y + abs(code[2]) * z;
+
+              if (ccc == 1)
+                a = (xyz == 0)
+                        ? (1.0 / 15.0) * (8.0 * a + (10.0 * b - 3.0 * c))
+                        : (1.0 / 15.0) * (24.0 * a + (-15.0 * b + 6 * c));
+              else /*(ccc=-1)*/
+                a = (xyz == 1)
+                        ? (1.0 / 15.0) * (8.0 * a + (10.0 * b - 3.0 * c))
+                        : (1.0 / 15.0) * (24.0 * a + (-15.0 * b + 6 * c));
+            }
+          }
+        }
+      }
+#else
+
+      if (use_averages) {
+#pragma GCC ivdep
+        for (int iy = s[1]; iy < e[1]; iy += 1) {
+          const int YY =
+              (iy - s[1] - std::min(0, code[1]) * ((e[1] - s[1]) % 2)) / 2 +
+              sC[1];
+#pragma GCC ivdep
+          for (int ix = s[0]; ix < e[0]; ix += 1) {
+            const int XX =
+                (ix - s[0] - std::min(0, code[0]) * ((e[0] - s[0]) % 2)) / 2 +
+                sC[0];
+            ElementType *Test[3][3];
+            for (int i = 0; i < 3; i++)
+              for (int j = 0; j < 3; j++)
+                Test[i][j] = &m_CoarsenedBlock->Access(
+                    XX - 1 + i - offset[0], YY - 1 + j - offset[1], 0);
+            TestInterp(
+                Test,
+                m_cacheBlock->Access(ix - m_stencilStart[0],
+                                     iy - m_stencilStart[1], 0),
+                abs(ix - s[0] - std::min(0, code[0]) * ((e[0] - s[0]) % 2)) % 2,
+                abs(iy - s[1] - std::min(0, code[1]) * ((e[1] - s[1]) % 2)) %
+                    2);
+          }
+        }
+      }
+      if (m_refGrid->FiniteDifferences &&
+          abs(code[0]) + abs(code[1]) ==
+              1) // Correct stencil points +-1 and +-2 at faces
+      {
+#pragma GCC ivdep
+        for (int iy = s[1]; iy < e[1]; iy += 2) {
+          const int YY =
+              (iy - s[1] - std::min(0, code[1]) * ((e[1] - s[1]) % 2)) / 2 +
+              sC[1] - offset[1];
+          const int y =
+              abs(iy - s[1] - std::min(0, code[1]) * ((e[1] - s[1]) % 2)) % 2;
+          const int iyp = (abs(iy) % 2 == 1) ? -1 : 1;
+          const double dy = 0.25 * (2 * y - 1);
+
+#pragma GCC ivdep
+          for (int ix = s[0]; ix < e[0]; ix += 2) {
+            const int XX =
+                (ix - s[0] - std::min(0, code[0]) * ((e[0] - s[0]) % 2)) / 2 +
+                sC[0] - offset[0];
+            const int x =
+                abs(ix - s[0] - std::min(0, code[0]) * ((e[0] - s[0]) % 2)) % 2;
+            const int ixp = (abs(ix) % 2 == 1) ? -1 : 1;
+            const double dx = 0.25 * (2 * x - 1);
+            if (ix < -2 || iy < -2 || ix > nX + 1 || iy > nY + 1)
+              continue;
+
+            if (code[0] != 0) {
+              ElementType dudy, dudy2;
+              if (YY + offset[1] == 0) {
+                dudy = (-0.5 * m_CoarsenedBlock->Access(XX, YY + 2, 0) -
+                        1.5 * m_CoarsenedBlock->Access(XX, YY, 0)) +
+                       2.0 * m_CoarsenedBlock->Access(XX, YY + 1, 0);
+                dudy2 = (m_CoarsenedBlock->Access(XX, YY + 2, 0) +
+                         m_CoarsenedBlock->Access(XX, YY, 0)) -
+                        2.0 * m_CoarsenedBlock->Access(XX, YY + 1, 0);
+              } else if (YY + offset[1] == CoarseBlockSize[1] - 1) {
+                dudy = (0.5 * m_CoarsenedBlock->Access(XX, YY - 2, 0) +
+                        1.5 * m_CoarsenedBlock->Access(XX, YY, 0)) -
+                       2.0 * m_CoarsenedBlock->Access(XX, YY - 1, 0);
+                dudy2 = (m_CoarsenedBlock->Access(XX, YY - 2, 0) +
+                         m_CoarsenedBlock->Access(XX, YY, 0)) -
+                        2.0 * m_CoarsenedBlock->Access(XX, YY - 1, 0);
+              } else {
+                dudy = 0.5 * (m_CoarsenedBlock->Access(XX, YY + 1, 0) -
+                              m_CoarsenedBlock->Access(XX, YY - 1, 0));
+                dudy2 = (m_CoarsenedBlock->Access(XX, YY + 1, 0) +
+                         m_CoarsenedBlock->Access(XX, YY - 1, 0)) -
+                        2.0 * m_CoarsenedBlock->Access(XX, YY, 0);
+              }
+              m_cacheBlock->Access(ix - m_stencilStart[0],
+                                   iy - m_stencilStart[1], 0) =
+                  m_CoarsenedBlock->Access(XX, YY, 0) + dy * dudy +
+                  (0.5 * dy * dy) * dudy2;
+              if (iy + iyp >= s[1] && iy + iyp < e[1])
+                m_cacheBlock->Access(ix - m_stencilStart[0],
+                                     iy - m_stencilStart[1] + iyp, 0) =
+                    m_CoarsenedBlock->Access(XX, YY, 0) - dy * dudy +
+                    (0.5 * dy * dy) * dudy2;
+              if (ix + ixp >= s[0] && ix + ixp < e[0])
+                m_cacheBlock->Access(ix - m_stencilStart[0] + ixp,
+                                     iy - m_stencilStart[1], 0) =
+                    m_CoarsenedBlock->Access(XX, YY, 0) + dy * dudy +
+                    (0.5 * dy * dy) * dudy2;
+              if (ix + ixp >= s[0] && ix + ixp < e[0] && iy + iyp >= s[1] &&
+                  iy + iyp < e[1])
+                m_cacheBlock->Access(ix - m_stencilStart[0] + ixp,
+                                     iy - m_stencilStart[1] + iyp, 0) =
+                    m_CoarsenedBlock->Access(XX, YY, 0) - dy * dudy +
+                    (0.5 * dy * dy) * dudy2;
+            } else // if (code[1] != 0)
+            {
+              ElementType dudx, dudx2;
+              if (XX + offset[0] == 0) {
+                dudx = (-0.5 * m_CoarsenedBlock->Access(XX + 2, YY, 0) -
+                        1.5 * m_CoarsenedBlock->Access(XX, YY, 0)) +
+                       2.0 * m_CoarsenedBlock->Access(XX + 1, YY, 0);
+                dudx2 = (m_CoarsenedBlock->Access(XX + 2, YY, 0) +
+                         m_CoarsenedBlock->Access(XX, YY, 0)) -
+                        2.0 * m_CoarsenedBlock->Access(XX + 1, YY, 0);
+              } else if (XX + offset[0] == CoarseBlockSize[0] - 1) {
+                dudx = (0.5 * m_CoarsenedBlock->Access(XX - 2, YY, 0) +
+                        1.5 * m_CoarsenedBlock->Access(XX, YY, 0)) -
+                       2.0 * m_CoarsenedBlock->Access(XX - 1, YY, 0);
+                dudx2 = (m_CoarsenedBlock->Access(XX - 2, YY, 0) +
+                         m_CoarsenedBlock->Access(XX, YY, 0)) -
+                        2.0 * m_CoarsenedBlock->Access(XX - 1, YY, 0);
+              } else {
+                dudx = 0.5 * (m_CoarsenedBlock->Access(XX + 1, YY, 0) -
+                              m_CoarsenedBlock->Access(XX - 1, YY, 0));
+                dudx2 = (m_CoarsenedBlock->Access(XX + 1, YY, 0) +
+                         m_CoarsenedBlock->Access(XX - 1, YY, 0)) -
+                        2.0 * m_CoarsenedBlock->Access(XX, YY, 0);
+              }
+              m_cacheBlock->Access(ix - m_stencilStart[0],
+                                   iy - m_stencilStart[1], 0) =
+                  m_CoarsenedBlock->Access(XX, YY, 0) + dx * dudx +
+                  (0.5 * dx * dx) * dudx2;
+              if (iy + iyp >= s[1] && iy + iyp < e[1])
+                m_cacheBlock->Access(ix - m_stencilStart[0],
+                                     iy - m_stencilStart[1] + iyp, 0) =
+                    m_CoarsenedBlock->Access(XX, YY, 0) + dx * dudx +
+                    (0.5 * dx * dx) * dudx2;
+              if (ix + ixp >= s[0] && ix + ixp < e[0])
+                m_cacheBlock->Access(ix - m_stencilStart[0] + ixp,
+                                     iy - m_stencilStart[1], 0) =
+                    m_CoarsenedBlock->Access(XX, YY, 0) - dx * dudx +
+                    (0.5 * dx * dx) * dudx2;
+              if (ix + ixp >= s[0] && ix + ixp < e[0] && iy + iyp >= s[1] &&
+                  iy + iyp < e[1])
+                m_cacheBlock->Access(ix - m_stencilStart[0] + ixp,
+                                     iy - m_stencilStart[1] + iyp, 0) =
+                    m_CoarsenedBlock->Access(XX, YY, 0) - dx * dudx +
+                    (0.5 * dx * dx) * dudx2;
+            }
+          }
+        }
+
+        for (int iy = s[1]; iy < e[1]; iy += 1) {
+#pragma GCC ivdep
+          for (int ix = s[0]; ix < e[0]; ix += 1) {
+            if (ix < -2 || iy < -2 || ix > nX + 1 || iy > nY + 1)
+              continue;
+            const int x =
+                abs(ix - s[0] - std::min(0, code[0]) * ((e[0] - s[0]) % 2)) % 2;
+            const int y =
+                abs(iy - s[1] - std::min(0, code[1]) * ((e[1] - s[1]) % 2)) % 2;
+
+            auto &a = m_cacheBlock->Access(ix - m_stencilStart[0],
+                                           iy - m_stencilStart[1], 0);
+
+            if (code[0] == 0 && code[1] == 1) {
+              if (y == 0) // interpolation
+              {
+                auto &b = m_cacheBlock->Access(ix - m_stencilStart[0],
+                                               iy - m_stencilStart[1] - 1, 0);
+                auto &c = m_cacheBlock->Access(ix - m_stencilStart[0],
+                                               iy - m_stencilStart[1] - 2, 0);
+                LI(a, b, c);
+              } else if (y == 1) // extrapolation
+              {
+                auto &b = m_cacheBlock->Access(ix - m_stencilStart[0],
+                                               iy - m_stencilStart[1] - 2, 0);
+                auto &c = m_cacheBlock->Access(ix - m_stencilStart[0],
+                                               iy - m_stencilStart[1] - 3, 0);
+                LE(a, b, c);
+              }
+            } else if (code[0] == 0 && code[1] == -1) {
+              if (y == 1) // interpolation
+              {
+                auto &b = m_cacheBlock->Access(ix - m_stencilStart[0],
+                                               iy - m_stencilStart[1] + 1, 0);
+                auto &c = m_cacheBlock->Access(ix - m_stencilStart[0],
+                                               iy - m_stencilStart[1] + 2, 0);
+                LI(a, b, c);
+              } else if (y == 0) // extrapolation
+              {
+                auto &b = m_cacheBlock->Access(ix - m_stencilStart[0],
+                                               iy - m_stencilStart[1] + 2, 0);
+                auto &c = m_cacheBlock->Access(ix - m_stencilStart[0],
+                                               iy - m_stencilStart[1] + 3, 0);
+                LE(a, b, c);
+              }
+            } else if (code[1] == 0 && code[0] == 1) {
+              if (x == 0) // interpolation
+              {
+                auto &b = m_cacheBlock->Access(ix - m_stencilStart[0] - 1,
+                                               iy - m_stencilStart[1], 0);
+                auto &c = m_cacheBlock->Access(ix - m_stencilStart[0] - 2,
+                                               iy - m_stencilStart[1], 0);
+                LI(a, b, c);
+              } else if (x == 1) // extrapolation
+              {
+                auto &b = m_cacheBlock->Access(ix - m_stencilStart[0] - 2,
+                                               iy - m_stencilStart[1], 0);
+                auto &c = m_cacheBlock->Access(ix - m_stencilStart[0] - 3,
+                                               iy - m_stencilStart[1], 0);
+                LE(a, b, c);
+              }
+            } else if (code[1] == 0 && code[0] == -1) {
+              if (x == 1) // interpolation
+              {
+                auto &b = m_cacheBlock->Access(ix - m_stencilStart[0] + 1,
+                                               iy - m_stencilStart[1], 0);
+                auto &c = m_cacheBlock->Access(ix - m_stencilStart[0] + 2,
+                                               iy - m_stencilStart[1], 0);
+                LI(a, b, c);
+              } else if (x == 0) // extrapolation
+              {
+                auto &b = m_cacheBlock->Access(ix - m_stencilStart[0] + 2,
+                                               iy - m_stencilStart[1], 0);
+                auto &c = m_cacheBlock->Access(ix - m_stencilStart[0] + 3,
+                                               iy - m_stencilStart[1], 0);
+                LE(a, b, c);
+              }
+            }
+          }
+        }
+      }
+#endif
+    }
+  }
+
+  /// Enforce boundary conditions.
+  virtual void _apply_bc(const BlockInfo &info, const Real t = 0,
+                         bool coarse = false) {}
+
+  /// Deallocate memory.
+  template <typename T> void _release(T *&t) {
+    if (t != NULL) {
+      allocator<T>().destroy(t);
+      allocator<T>().deallocate(t, 1);
+    }
+    t = NULL;
+  }
+
+private:
+  BlockLab(const BlockLab &) = delete;
+  BlockLab &operator=(const BlockLab &) = delete;
+};
+
+} // namespace cubism
+
+
+namespace cubism {
+
+/** \brief Similar to BlockLab, but should be used with simulations that support
+ * MPI.*/
+template <typename MyBlockLab> class BlockLabMPI : public MyBlockLab {
+public:
+  using GridType = typename MyBlockLab::GridType;
+  using BlockType = typename GridType::BlockType;
+  using ElementType = typename BlockType::ElementType;
+  using Real = typename ElementType::RealType;
+
+private:
+  typedef SynchronizerMPI_AMR<Real, GridType> SynchronizerMPIType;
+  SynchronizerMPIType *refSynchronizerMPI;
+
+public:
+  /// Same as 'prepare' from BlockLab. This will also create a
+  /// SynchronizerMPI_AMR for different MPI processes.
+  virtual void prepare(GridType &grid, const StencilInfo &stencil,
+                       const int Istencil_start[3] = default_start,
+                       const int Istencil_end[3] = default_end) override {
+    auto itSynchronizerMPI = grid.SynchronizerMPIs.find(stencil);
+    refSynchronizerMPI = itSynchronizerMPI->second;
+    MyBlockLab::prepare(grid, stencil);
+  }
+
+  /// Same as 'load' from BlockLab. This will also fetch halo cells from
+  /// different MPI processes.
+  virtual void load(const BlockInfo &info, const Real t = 0,
+                    const bool applybc = true) override {
+    MyBlockLab::load(info, t, applybc);
+
+    Real *dst = (Real *)&MyBlockLab ::m_cacheBlock->LinAccess(0);
+    Real *dst1 = (Real *)&MyBlockLab ::m_CoarsenedBlock->LinAccess(0);
+
+    refSynchronizerMPI->fetch(info, MyBlockLab::m_cacheBlock->getSize(),
+                              MyBlockLab::m_CoarsenedBlock->getSize(), dst,
+                              dst1);
+
+    if (MyBlockLab::m_refGrid->get_world_size() > 1)
+      MyBlockLab::post_load(info, t, applybc);
+  }
+};
+
+} // namespace cubism
+
+namespace cubism {
+
+/** Takes care of load-balancing of Blocks.
+ * This class will redistribute Blocks among different MPI ranks for two
+ * reasons: 1) Eight (in 3D) or four (in 2D) blocks need to be compressed to
+ * one, but they are owned by different ranks. PrepareCompression() will collect
+ * them all to one rank, so that they can be compressed. 2) There is a load
+ * imbalance after the grid is refined or compressed. If the imbalance is not
+ * great (load imbalance ratio < 1.1), a 1D-diffusion based scheme is used to
+ * redistribute blocks along the 1D Space-Filling-Curve. Otherwise, all blocks
+ * are simply evenly redistributed among all ranks.
+ * @tparam TGrid: the type of GridMPI to perform load-balancing for
+ */
+template <typename TGrid> class LoadBalancer {
+public:
+  typedef typename TGrid::Block BlockType;
+  typedef typename TGrid::Block::ElementType ElementType;
+  typedef typename TGrid::Block::ElementType::RealType Real;
+  bool movedBlocks; ///< =true if load-balancing is performed when
+                    ///< Balance_Diffusion of Balance_Global is called
+
+protected:
+  TGrid *grid; ///< grid where load balancing will be performed
+
+  /// MPI datatype and auxiliary struct used to send/receive blocks among ranks
+  MPI_Datatype MPI_BLOCK;
+  struct MPI_Block {
+    long long mn[2]; ///< level and Z-order index of a BlockInfo
+    Real data[sizeof(BlockType) /
+              sizeof(Real)]; ///< buffer array of data to send/receive
+
+    /** Constructor; calls 'prepare'.
+     * @param info: BlockInfo for block to be sent/received.
+     * @param Fillptr: true if we want the data of the GridBlock to be copied to
+     * this MPI_Block.
+     */
+    MPI_Block(const BlockInfo &info, const bool Fillptr = true) {
+      prepare(info, Fillptr);
+    }
+
+    /** Prepare the MPI_Block with data from a GridBlock.
+     * @param info: BlockInfo for block to be sent/received.
+     * @param Fillptr: true if we want the data of the GridBlock to be copied to
+     * this MPI_Block.
+     */
+    void prepare(const BlockInfo &info, const bool Fillptr = true) {
+      mn[0] = info.level;
+      mn[1] = info.Z;
+      if (Fillptr) {
+        Real *aux = &((BlockType *)info.ptrBlock)->data[0][0][0].member(0);
+        std::memcpy(&data[0], aux, sizeof(BlockType));
+      }
+    }
+
+    MPI_Block() {}
+  };
+
+  /// Allocate a block at a given level and Z-index and fill it with received
+  /// data
+  void AddBlock(const int level, const long long Z, Real *data) {
+    // 1. Allocate the block from the grid
+    grid->_alloc(level, Z);
+
+    // 2. Fill the block with data received
+    BlockInfo &info = grid->getBlockInfoAll(level, Z);
+    BlockType *b1 = (BlockType *)info.ptrBlock;
+    assert(b1 != NULL);
+    Real *a1 = &b1->data[0][0][0].member(0);
+    std::memcpy(a1, data, sizeof(BlockType));
+
+// 3. Update status of children and parent block of newly allocated block
+#if DIMENSION == 3
+    int p[3];
+    BlockInfo::inverse(Z, level, p[0], p[1], p[2]);
+    if (level < grid->getlevelMax() - 1)
+      for (int k1 = 0; k1 < 2; k1++)
+        for (int j1 = 0; j1 < 2; j1++)
+          for (int i1 = 0; i1 < 2; i1++) {
+            const long long nc = grid->getZforward(
+                level + 1, 2 * p[0] + i1, 2 * p[1] + j1, 2 * p[2] + k1);
+            grid->Tree(level + 1, nc).setCheckCoarser();
+          }
+    if (level > 0) {
+      const long long nf =
+          grid->getZforward(level - 1, p[0] / 2, p[1] / 2, p[2] / 2);
+      grid->Tree(level - 1, nf).setCheckFiner();
+    }
+#else
+    int p[2];
+    BlockInfo::inverse(Z, level, p[0], p[1]);
+    if (level < grid->getlevelMax() - 1)
+      for (int j1 = 0; j1 < 2; j1++)
+        for (int i1 = 0; i1 < 2; i1++) {
+          const long long nc =
+              grid->getZforward(level + 1, 2 * p[0] + i1, 2 * p[1] + j1);
+          grid->Tree(level + 1, nc).setCheckCoarser();
+        }
+    if (level > 0) {
+      const long long nf = grid->getZforward(level - 1, p[0] / 2, p[1] / 2);
+      grid->Tree(level - 1, nf).setCheckFiner();
+    }
+#endif
+  }
+
+public:
+  /// Constructor
+  LoadBalancer(TGrid &a_grid) {
+    grid = &a_grid;
+    movedBlocks = false;
+
+    // Create MPI datatype to send/receive blocks (data) + two integers (their
+    // level and Z-index)
+    int array_of_blocklengths[2] = {2, sizeof(BlockType) / sizeof(Real)};
+    MPI_Aint array_of_displacements[2] = {0, 2 * sizeof(long long)};
+    MPI_Datatype array_of_types[2];
+    array_of_types[0] = MPI_LONG_LONG;
+    if (sizeof(Real) == sizeof(float))
+      array_of_types[1] = MPI_FLOAT;
+    else if (sizeof(Real) == sizeof(double))
+      array_of_types[1] = MPI_DOUBLE;
+    else if (sizeof(Real) == sizeof(long double))
+      array_of_types[1] = MPI_LONG_DOUBLE;
+    MPI_Type_create_struct(2, array_of_blocklengths, array_of_displacements,
+                           array_of_types, &MPI_BLOCK);
+    MPI_Type_commit(&MPI_BLOCK);
+  }
+
+  /// Destructor
+  ~LoadBalancer() { MPI_Type_free(&MPI_BLOCK); }
+
+  /// Compression of eight blocks requires all of them to be owned by one rank;
+  /// this function collects all groups of 8 blocks to be compressed to a single
+  /// rank.
+  void PrepareCompression() {
+    const int size = grid->get_world_size();
+    const int rank = grid->rank();
+
+    std::vector<BlockInfo> &I = grid->getBlocksInfo();
+    std::vector<std::vector<MPI_Block>> send_blocks(size);
+    std::vector<std::vector<MPI_Block>> recv_blocks(size);
+
+    // Loop over blocks
+    for (auto &b : I) {
+#if DIMENSION == 3
+      const long long nBlock =
+          grid->getZforward(b.level, 2 * (b.index[0] / 2), 2 * (b.index[1] / 2),
+                            2 * (b.index[2] / 2));
+#else
+      const long long nBlock = grid->getZforward(b.level, 2 * (b.index[0] / 2),
+                                                 2 * (b.index[1] / 2));
+#endif
+
+      const BlockInfo &base = grid->getBlockInfoAll(b.level, nBlock);
+
+      // If the 'base' block does not exist, no compression will take place.
+      // Continue to next block. By now, if 'base' block is marked for
+      // compression it means that the remaining 7 (3, in 2D) blocks will also
+      // need compression, so we check if base.state == Compress.
+      if (!grid->Tree(base).Exists() || base.state != Compress)
+        continue;
+
+      const BlockInfo &bCopy = grid->getBlockInfoAll(b.level, b.Z);
+      const int baserank = grid->Tree(b.level, nBlock).rank();
+      const int brank = grid->Tree(b.level, b.Z).rank();
+
+      // if 'b' is NOT the 'base' block we send it to the rank that owns the
+      // 'base' block.
+      if (b.Z != nBlock) {
+        if (baserank != rank && brank == rank) {
+          send_blocks[baserank].push_back({bCopy});
+          grid->Tree(b.level, b.Z).setrank(baserank);
+        }
+      }
+      // if 'b' is the 'base' block we collect the remaining 7 (3, in 2D) blocks
+      // that will be compressed with it.
+      else {
+#if DIMENSION == 3
+        for (int k = 0; k < 2; k++)
+#endif
+          for (int j = 0; j < 2; j++)
+            for (int i = 0; i < 2; i++) {
+#if DIMENSION == 3
+              const long long n = grid->getZforward(
+                  b.level, b.index[0] + i, b.index[1] + j, b.index[2] + k);
+#else
+            const long long n =
+                grid->getZforward(b.level, b.index[0] + i, b.index[1] + j);
+#endif
+              if (n == nBlock)
+                continue;
+              BlockInfo &temp = grid->getBlockInfoAll(b.level, n);
+              const int temprank = grid->Tree(b.level, n).rank();
+              if (temprank != rank) {
+                recv_blocks[temprank].push_back({temp, false});
+                grid->Tree(b.level, n).setrank(baserank);
+              }
+            }
+      }
+    }
+
+    // 1/4 Perform the sends/receives of blocks
+    std::vector<MPI_Request> requests;
+    for (int r = 0; r < size; r++)
+      if (r != rank) {
+        if (recv_blocks[r].size() != 0) {
+          MPI_Request req{};
+          requests.push_back(req);
+          MPI_Irecv(&recv_blocks[r][0], recv_blocks[r].size(), MPI_BLOCK, r,
+                    2468, grid->getWorldComm(), &requests.back());
+        }
+        if (send_blocks[r].size() != 0) {
+          MPI_Request req{};
+          requests.push_back(req);
+          MPI_Isend(&send_blocks[r][0], send_blocks[r].size(), MPI_BLOCK, r,
+                    2468, grid->getWorldComm(), &requests.back());
+        }
+      }
+
+    // 2/4 Do some work while sending/receiving. Here we deallocate the blocks
+    // we sent.
+    for (int r = 0; r < size; r++)
+      for (int i = 0; i < (int)send_blocks[r].size(); i++) {
+        grid->_dealloc(send_blocks[r][i].mn[0], send_blocks[r][i].mn[1]);
+        grid->Tree(send_blocks[r][i].mn[0], send_blocks[r][i].mn[1])
+            .setCheckCoarser();
+      }
+
+    // 3/4 Wait for communication to complete
+    if (requests.size() != 0) {
+      movedBlocks = true;
+      MPI_Waitall(requests.size(), &requests[0], MPI_STATUSES_IGNORE);
+    }
+
+    // 4/4 Allocate the blocks we received and copy data to them.
+    for (int r = 0; r < size; r++)
+      for (int i = 0; i < (int)recv_blocks[r].size(); i++) {
+        const int level = (int)recv_blocks[r][i].mn[0];
+        const long long Z = recv_blocks[r][i].mn[1];
+        grid->_alloc(level, Z);
+        BlockInfo &info = grid->getBlockInfoAll(level, Z);
+        BlockType *b1 = (BlockType *)info.ptrBlock;
+        assert(b1 != NULL);
+        Real *a1 = &b1->data[0][0][0].member(0);
+        std::memcpy(a1, recv_blocks[r][i].data, sizeof(BlockType));
+      }
+  }
+
+  /// Redistributes blocks with diffusion algorithm along the 1D Space-Filling
+  /// Hilbert Curve; block_distribution[i] is the number of blocks owned by rank
+  /// i, for i=0,...,#of ranks -1
+  void Balance_Diffusion(const bool verbose,
+                         std::vector<long long> &block_distribution) {
+    const int size = grid->get_world_size();
+    const int rank = grid->rank();
+
+    movedBlocks = false;
+    {
+      long long max_b = block_distribution[0];
+      long long min_b = block_distribution[0];
+      for (auto &b : block_distribution) {
+        max_b = std::max(max_b, b);
+        min_b = std::min(min_b, b);
+      }
+      const double ratio = static_cast<double>(max_b) / min_b;
+      if (rank == 0 && verbose) {
+        std::cout << "Load imbalance ratio = " << ratio << std::endl;
+      }
+      if (ratio > 1.01 || min_b == 0) {
+        Balance_Global(block_distribution);
+        return;
+      }
+    }
+
+    const int right = (rank == size - 1) ? MPI_PROC_NULL : rank + 1;
+    const int left = (rank == 0) ? MPI_PROC_NULL : rank - 1;
+
+    const int my_blocks = grid->getBlocksInfo().size();
+
+    int right_blocks, left_blocks;
+
+    MPI_Request reqs[4];
+    MPI_Irecv(&left_blocks, 1, MPI_INT, left, 123, grid->getWorldComm(),
+              &reqs[0]);
+    MPI_Irecv(&right_blocks, 1, MPI_INT, right, 456, grid->getWorldComm(),
+              &reqs[1]);
+    MPI_Isend(&my_blocks, 1, MPI_INT, left, 456, grid->getWorldComm(),
+              &reqs[2]);
+    MPI_Isend(&my_blocks, 1, MPI_INT, right, 123, grid->getWorldComm(),
+              &reqs[3]);
+
+    MPI_Waitall(4, &reqs[0], MPI_STATUSES_IGNORE);
+
+    const int nu = 4;
+    const int flux_left = (rank == 0) ? 0 : (my_blocks - left_blocks) / nu;
+    const int flux_right =
+        (rank == size - 1) ? 0 : (my_blocks - right_blocks) / nu;
+
+    std::vector<BlockInfo> SortedInfos = grid->getBlocksInfo();
+    if (flux_right != 0 || flux_left != 0)
+      std::sort(SortedInfos.begin(), SortedInfos.end());
+
+    std::vector<MPI_Block> send_left;
+    std::vector<MPI_Block> recv_left;
+    std::vector<MPI_Block> send_right;
+    std::vector<MPI_Block> recv_right;
+
+    std::vector<MPI_Request> request;
+
+    if (flux_left > 0) // then I will send blocks to my left rank
+    {
+      send_left.resize(flux_left);
+#pragma omp parallel for schedule(runtime)
+      for (int i = 0; i < flux_left; i++)
+        send_left[i].prepare(SortedInfos[i]);
+      MPI_Request req{};
+      request.push_back(req);
+      MPI_Isend(&send_left[0], send_left.size(), MPI_BLOCK, left, 7890,
+                grid->getWorldComm(), &request.back());
+    } else if (flux_left < 0) // then I will receive blocks from my left rank
+    {
+      recv_left.resize(abs(flux_left));
+      MPI_Request req{};
+      request.push_back(req);
+      MPI_Irecv(&recv_left[0], recv_left.size(), MPI_BLOCK, left, 4560,
+                grid->getWorldComm(), &request.back());
+    }
+    if (flux_right > 0) // then I will send blocks to my right rank
+    {
+      send_right.resize(flux_right);
+#pragma omp parallel for schedule(runtime)
+      for (int i = 0; i < flux_right; i++)
+        send_right[i].prepare(SortedInfos[my_blocks - i - 1]);
+      MPI_Request req{};
+      request.push_back(req);
+      MPI_Isend(&send_right[0], send_right.size(), MPI_BLOCK, right, 4560,
+                grid->getWorldComm(), &request.back());
+    } else if (flux_right < 0) // then I will receive blocks from my right rank
+    {
+      recv_right.resize(abs(flux_right));
+      MPI_Request req{};
+      request.push_back(req);
+      MPI_Irecv(&recv_right[0], recv_right.size(), MPI_BLOCK, right, 7890,
+                grid->getWorldComm(), &request.back());
+    }
+
+    for (int i = 0; i < flux_right; i++) {
+      BlockInfo &info = SortedInfos[my_blocks - i - 1];
+      grid->_dealloc(info.level, info.Z);
+      grid->Tree(info.level, info.Z).setrank(right);
+    }
+
+    for (int i = 0; i < flux_left; i++) {
+      BlockInfo &info = SortedInfos[i];
+      grid->_dealloc(info.level, info.Z);
+      grid->Tree(info.level, info.Z).setrank(left);
+    }
+
+    if (request.size() != 0) {
+      movedBlocks = true;
+      MPI_Waitall(request.size(), &request[0], MPI_STATUSES_IGNORE);
+    }
+    int temp = movedBlocks ? 1 : 0;
+    MPI_Request request_reduction;
+    MPI_Iallreduce(MPI_IN_PLACE, &temp, 1, MPI_INT, MPI_SUM,
+                   grid->getWorldComm(), &request_reduction);
+
+    for (int i = 0; i < -flux_left; i++)
+      AddBlock(recv_left[i].mn[0], recv_left[i].mn[1], recv_left[i].data);
+    for (int i = 0; i < -flux_right; i++)
+      AddBlock(recv_right[i].mn[0], recv_right[i].mn[1], recv_right[i].data);
+
+    MPI_Wait(&request_reduction, MPI_STATUS_IGNORE);
+    movedBlocks = (temp >= 1);
+    grid->FillPos();
+  }
+
+  /// Redistributes all blocks evenly, along the 1D Space-Filling Hilbert Curve;
+  /// all_b[i] is the number of blocks owned by rank i, for i=0,...,#of ranks -1
+  void Balance_Global(std::vector<long long> &all_b) {
+    const int size = grid->get_world_size();
+    const int rank = grid->rank();
+
+    // Redistribute all blocks evenly, along the 1D Hilbert curve.
+    // all_b[i] = # of blocks currently owned by rank i.
+
+    // sort blocks according to Z-index and level on the Hilbert curve.
+    std::vector<BlockInfo> SortedInfos = grid->getBlocksInfo();
+    std::sort(SortedInfos.begin(), SortedInfos.end());
+
+    // compute the total number of blocks (total_load) and how many blocks each
+    // rank should have, for a balanced load distribution
+    long long total_load = 0;
+    for (int r = 0; r < size; r++)
+      total_load += all_b[r];
+    long long my_load = total_load / size;
+    if (rank < (total_load % size))
+      my_load += 1;
+
+    std::vector<long long> index_start(size);
+    index_start[0] = 0;
+    for (int r = 1; r < size; r++)
+      index_start[r] = index_start[r - 1] + all_b[r - 1];
+
+    long long ideal_index = (total_load / size) * rank;
+    ideal_index += (rank < (total_load % size)) ? rank : (total_load % size);
+
+    // now check the actual block distribution and mark the blocks that should
+    // not be owned by a particular rank and should instead be sent to another
+    // rank.
+    std::vector<std::vector<MPI_Block>> send_blocks(size);
+    std::vector<std::vector<MPI_Block>> recv_blocks(size);
+    for (int r = 0; r < size; r++)
+      if (rank != r) {
+        { // check if I need to receive blocks
+          const long long a1 = ideal_index;
+          const long long a2 = ideal_index + my_load - 1;
+          const long long b1 = index_start[r];
+          const long long b2 = index_start[r] + all_b[r] - 1;
+          const long long c1 = std::max(a1, b1);
+          const long long c2 = std::min(a2, b2);
+          if (c2 - c1 + 1 > 0)
+            recv_blocks[r].resize(c2 - c1 + 1);
+        }
+        { // check if I need to send blocks
+          long long other_ideal_index = (total_load / size) * r;
+          other_ideal_index +=
+              (r < (total_load % size)) ? r : (total_load % size);
+          long long other_load = total_load / size;
+          if (r < (total_load % size))
+            other_load += 1;
+          const long long a1 = other_ideal_index;
+          const long long a2 = other_ideal_index + other_load - 1;
+          const long long b1 = index_start[rank];
+          const long long b2 = index_start[rank] + all_b[rank] - 1;
+          const long long c1 = std::max(a1, b1);
+          const long long c2 = std::min(a2, b2);
+          if (c2 - c1 + 1 > 0)
+            send_blocks[r].resize(c2 - c1 + 1);
+        }
+      }
+
+    // perform the sends and receives of blocks
+    int tag = 12345;
+    std::vector<MPI_Request> requests;
+    for (int r = 0; r < size; r++)
+      if (recv_blocks[r].size() != 0) {
+        MPI_Request req{};
+        requests.push_back(req);
+        MPI_Irecv(recv_blocks[r].data(), recv_blocks[r].size(), MPI_BLOCK, r,
+                  tag, grid->getWorldComm(), &requests.back());
+      }
+
+    long long counter_S = 0;
+    long long counter_E = 0;
+    for (int r = 0; r < rank; r++)
+      if (send_blocks[r].size() != 0) {
+        for (size_t i = 0; i < send_blocks[r].size(); i++)
+          send_blocks[r][i].prepare(SortedInfos[counter_S + i]);
+        counter_S += send_blocks[r].size();
+        MPI_Request req{};
+        requests.push_back(req);
+        MPI_Isend(send_blocks[r].data(), send_blocks[r].size(), MPI_BLOCK, r,
+                  tag, grid->getWorldComm(), &requests.back());
+      }
+    for (int r = size - 1; r > rank; r--)
+      if (send_blocks[r].size() != 0) {
+        for (size_t i = 0; i < send_blocks[r].size(); i++)
+          send_blocks[r][i].prepare(
+              SortedInfos[SortedInfos.size() - 1 - (counter_E + i)]);
+        counter_E += send_blocks[r].size();
+        MPI_Request req{};
+        requests.push_back(req);
+        MPI_Isend(send_blocks[r].data(), send_blocks[r].size(), MPI_BLOCK, r,
+                  tag, grid->getWorldComm(), &requests.back());
+      }
+
+    // no need to wait here, do some work first!
+    // MPI_Waitall(requests.size(), requests.data(), MPI_STATUSES_IGNORE);
+
+    // do some work while sending/receiving, by deallocating the blocks that are
+    // being sent
+    movedBlocks = true;
+    std::vector<long long> deallocIDs;
+    counter_S = 0;
+    counter_E = 0;
+    for (int r = 0; r < size; r++)
+      if (send_blocks[r].size() != 0) {
+        if (r < rank) {
+          for (size_t i = 0; i < send_blocks[r].size(); i++) {
+            BlockInfo &info = SortedInfos[counter_S + i];
+            deallocIDs.push_back(info.blockID_2);
+            grid->Tree(info.level, info.Z).setrank(r);
+          }
+          counter_S += send_blocks[r].size();
+        } else {
+          for (size_t i = 0; i < send_blocks[r].size(); i++) {
+            BlockInfo &info =
+                SortedInfos[SortedInfos.size() - 1 - (counter_E + i)];
+            deallocIDs.push_back(info.blockID_2);
+            grid->Tree(info.level, info.Z).setrank(r);
+          }
+          counter_E += send_blocks[r].size();
+        }
+      }
+    grid->dealloc_many(deallocIDs);
+
+    // wait for communication
+    MPI_Waitall(requests.size(), requests.data(), MPI_STATUSES_IGNORE);
+
+// allocate received blocks
+#pragma omp parallel
+    {
+      for (int r = 0; r < size; r++)
+        if (recv_blocks[r].size() != 0) {
+#pragma omp for
+          for (size_t i = 0; i < recv_blocks[r].size(); i++)
+            AddBlock(recv_blocks[r][i].mn[0], recv_blocks[r][i].mn[1],
+                     recv_blocks[r][i].data);
+        }
+    }
+    grid->FillPos();
+  }
+};
+
+} // namespace cubism
+
+
+namespace cubism {
+
+/**
+ * @brief Class responsible for mesh refinement of a GridMPI.
+ *
+ * This class can label each GridBlock of a GridMPI as requiring
+ * refinement/compression/nothing. It can then perform interpolation of points
+ * for refinement and averaging down for compression, followed by load balancing
+ * of GridBlocks among different processes.
+ *
+ * The user should use this class through its constructor and through the
+ * functions 'Tag', 'TagLike' and 'Adapt'. When constructed, the user provides
+ * this class with a Grid and two numbers: the tolerance for refinement (Rtol)
+ * and the tolerance for compression (Ctol). By calling 'Tag', GridBlocks with
+ * gridpoints that have magnitude() > Rtol will be tagged for refinement and
+ * those with magnitude() < Ctol for compression. Alternatively, 'TagLike' can
+ * be used to copy the tags of blocks from another already tagged grid to this
+ * grid. Once tagged, the user needs to call 'Adapt', which will adapt the mesh,
+ * interpolate new points and do the load-balancing of blocks among processes.
+ *
+ * In order to change the default refinement criterion, a new class can inherit
+ * from this class and overload the function 'TagLoadedBlock'. In order to
+ * change the default refinement interpolation, a new class can inherit from
+ * this class and overload the function 'RefineBlocks'.
+ *
+ * @tparam TLab  The BlockLab type used for halo cells exchange and boundary
+ * condition enforcement, when interpolation of gridpoints happens after mesh
+ * refinement.
+ */
+template <typename TLab> class MeshAdaptation {
+protected:
+  typedef typename TLab::GridType TGrid;
+  typedef typename TGrid::Block BlockType;
+  typedef typename TGrid::BlockType::ElementType ElementType;
+  typedef typename TGrid::BlockType::ElementType::RealType Real;
+  typedef SynchronizerMPI_AMR<Real, TGrid> SynchronizerMPIType;
+
+  StencilInfo stencil;  ///< stencil of +-1 point, needed for 2nd-order
+                        ///< refinement interpolation
+  bool CallValidStates; ///< will be true when 'Tag' is called and some
+                        ///< refinement/compression is needed
+  bool boundary_needed; ///< set true to update the boundary blocks of each
+                        ///< GridMPI
+  LoadBalancer<TGrid> *Balancer; ///< load-balancing of blocks
+  TGrid *grid;                   ///< pointer to Grid that will be adapted
+  double time; ///< (optional) time of simulation, for time-dependent refinement
+               ///< criteria
+  bool basic_refinement; ///< set to false if no interpolation is to be
+                         ///< performed after refinement
+  double tolerance_for_refinement;  ///< compare 'magnitude()' of each gridpoint
+                                    ///< to this number, to check if refinement
+                                    ///< is needed
+  double tolerance_for_compression; ///< compare 'magnitude()' of each gridpoint
+                                    ///< to this number, to check if compression
+                                    ///< is needed
+  std::vector<long long>
+      dealloc_IDs; ///< blockIDs for blocks that are deallocated because of mesh
+                   ///< refinement/compression
+
+public:
+  /**
+   * @brief Class constructor.
+   *
+   * @param g The Grid to be refined/compressed.
+   * @param Rtol Tolerance for refinement.
+   * @param Ctol Tolerance for compression.
+   */
+  MeshAdaptation(TGrid &g, double Rtol, double Ctol) {
+    grid = &g;
+
+    tolerance_for_refinement = Rtol;
+    tolerance_for_compression = Ctol;
+
+    boundary_needed = false;
+
+    constexpr int Gx = 1;
+    constexpr int Gy = 1;
+    constexpr int Gz = DIMENSION == 3 ? 1 : 0;
+    stencil.sx = -Gx;
+    stencil.sy = -Gy;
+    stencil.sz = -Gz;
+    stencil.ex = Gx + 1;
+    stencil.ey = Gy + 1;
+    stencil.ez = Gz + 1;
+    stencil.tensorial = true;
+    for (int i = 0; i < ElementType::DIM; i++)
+      stencil.selcomponents.push_back(i);
+
+    Balancer = new LoadBalancer<TGrid>(*grid);
+  }
+
+  /**
+   * @brief Class destructor.
+   */
+  virtual ~MeshAdaptation() { delete Balancer; }
+
+  /**
+   * @brief Tag each block of this grid for refinement/compression based on
+   * criterion from 'TagLoadedBlock'.
+   * @param t Current time of the simulation; used only for time-dependent
+   * boundary conditions.
+   */
+  void Tag(double t = 0) {
+    time = t;
+    boundary_needed = true;
+
+    SynchronizerMPI_AMR<Real, TGrid> *Synch = grid->sync(stencil);
+
+    CallValidStates = false;
+    bool Reduction = false;
+    MPI_Request Reduction_req;
+    int tmp;
+
+    std::vector<BlockInfo *> &inner = Synch->avail_inner();
+    TagBlocksVector(inner, Reduction, Reduction_req, tmp);
+
+    std::vector<BlockInfo *> &halo = Synch->avail_halo();
+    TagBlocksVector(halo, Reduction, Reduction_req, tmp);
+
+    if (!Reduction) {
+      tmp = CallValidStates ? 1 : 0;
+      Reduction = true;
+      MPI_Iallreduce(MPI_IN_PLACE, &tmp, 1, MPI_INT, MPI_SUM,
+                     grid->getWorldComm(), &Reduction_req);
+    }
+
+    MPI_Wait(&Reduction_req, MPI_STATUS_IGNORE);
+    CallValidStates = (tmp > 0);
+
+    grid->boundary = halo;
+
+    if (CallValidStates)
+      ValidStates();
+  }
+
+  /**
+   * @brief Refine/compress the mesh after blocks are tagged.
+   * @param t Current time of the simulation; used only for time-dependent
+   * boundary conditions.
+   * @param verbosity Boolean variable controlling screen output.
+   * @param basic Boolean variable; if set to false, no refinement interpolation
+   * is performed and blocks are simply allocated (and filled with nothing)
+   * after refinement.
+   */
+  void Adapt(double t = 0, bool verbosity = false, bool basic = false) {
+    basic_refinement = basic;
+    SynchronizerMPI_AMR<Real, TGrid> *Synch = nullptr;
+    if (basic == false) {
+      Synch = grid->sync(stencil);
+      // TODO: the line below means there's no computation & communication
+      // overlap here
+      grid->boundary = Synch->avail_halo();
+      if (boundary_needed)
+        grid->UpdateBoundary();
+    }
+
+    int r = 0;
+    int c = 0;
+
+    std::vector<int> m_com;
+    std::vector<int> m_ref;
+    std::vector<long long> n_com;
+    std::vector<long long> n_ref;
+
+    std::vector<BlockInfo> &I = grid->getBlocksInfo();
+
+    long long blocks_after = I.size();
+
+    for (auto &info : I) {
+      if (info.state == Refine) {
+        m_ref.push_back(info.level);
+        n_ref.push_back(info.Z);
+        blocks_after += (1 << DIMENSION) - 1;
+        r++;
+      } else if (info.state == Compress && info.index[0] % 2 == 0 &&
+                 info.index[1] % 2 == 0 && info.index[2] % 2 == 0) {
+        m_com.push_back(info.level);
+        n_com.push_back(info.Z);
+        c++;
+      } else if (info.state == Compress) {
+        blocks_after--;
+      }
+    }
+    MPI_Request requests[2];
+    int temp[2] = {r, c};
+    int result[2];
+    int size;
+    MPI_Comm_size(grid->getWorldComm(), &size);
+    std::vector<long long> block_distribution(size);
+    MPI_Iallreduce(&temp, &result, 2, MPI_INT, MPI_SUM, grid->getWorldComm(),
+                   &requests[0]);
+    MPI_Iallgather(&blocks_after, 1, MPI_LONG_LONG, block_distribution.data(),
+                   1, MPI_LONG_LONG, grid->getWorldComm(), &requests[1]);
+
+    dealloc_IDs.clear();
+
+    {
+      TLab lab;
+      if (Synch != nullptr)
+        lab.prepare(*grid, Synch->getstencil());
+      for (size_t i = 0; i < m_ref.size(); i++) {
+        refine_1(m_ref[i], n_ref[i], lab);
+      }
+      for (size_t i = 0; i < m_ref.size(); i++) {
+        refine_2(m_ref[i], n_ref[i]);
+      }
+    }
+    grid->dealloc_many(dealloc_IDs);
+
+    Balancer->PrepareCompression();
+
+    dealloc_IDs.clear();
+
+    for (size_t i = 0; i < m_com.size(); i++) {
+      compress(m_com[i], n_com[i]);
+    }
+
+    grid->dealloc_many(dealloc_IDs);
+
+    MPI_Waitall(2, requests, MPI_STATUS_IGNORE);
+    if (verbosity) {
+      std::cout
+          << "==============================================================\n";
+      std::cout << " refined:" << result[0] << "   compressed:" << result[1]
+                << std::endl;
+      std::cout
+          << "=============================================================="
+          << std::endl;
+    }
+
+    Balancer->Balance_Diffusion(verbosity, block_distribution);
+
+    if (result[0] > 0 || result[1] > 0 || Balancer->movedBlocks) {
+      grid->UpdateFluxCorrection = true;
+      grid->UpdateGroups = true;
+
+      grid->UpdateBlockInfoAll_States(false);
+
+      auto it = grid->SynchronizerMPIs.begin();
+      while (it != grid->SynchronizerMPIs.end()) {
+        (*it->second)._Setup();
+        it++;
+      }
+    }
+  }
+
+  /**
+   * @brief Tag each block of this grid for refinement/compression by copying
+   * the tags of the given BlockInfos.
+   * @param I1 Vector of BlockInfos whose 'state' (refine/compress/leave) will
+   * be copied to the BlockInfos of this grid.
+   */
+  void TagLike(const std::vector<BlockInfo> &I1) {
+    std::vector<BlockInfo> &I2 = grid->getBlocksInfo();
+    for (size_t i1 = 0; i1 < I2.size(); i1++) {
+      BlockInfo &ary0 = I2[i1];
+      BlockInfo &info = grid->getBlockInfoAll(ary0.level, ary0.Z);
+      for (int i = 2 * (info.index[0] / 2); i <= 2 * (info.index[0] / 2) + 1;
+           i++)
+        for (int j = 2 * (info.index[1] / 2); j <= 2 * (info.index[1] / 2) + 1;
+             j++)
+#if DIMENSION == 3
+          for (int k = 2 * (info.index[2] / 2);
+               k <= 2 * (info.index[2] / 2) + 1; k++) {
+            const long long n = grid->getZforward(info.level, i, j, k);
+            BlockInfo &infoNei = grid->getBlockInfoAll(info.level, n);
+            infoNei.state = Leave;
+          }
+#else
+        {
+          const long long n = grid->getZforward(info.level, i, j);
+          BlockInfo &infoNei = grid->getBlockInfoAll(info.level, n);
+          infoNei.state = Leave;
+        }
+#endif
+      info.state = Leave;
+      ary0.state = Leave;
+    }
+#pragma omp parallel for
+    for (size_t i = 0; i < I1.size(); i++) {
+      const BlockInfo &info1 = I1[i];
+      BlockInfo &info2 = I2[i];
+      BlockInfo &info3 = grid->getBlockInfoAll(info2.level, info2.Z);
+      info2.state = info1.state;
+      info3.state = info1.state;
+      if (info2.state == Compress) {
+        const int i2 = 2 * (info2.index[0] / 2);
+        const int j2 = 2 * (info2.index[1] / 2);
+#if DIMENSION == 3
+        const int k2 = 2 * (info2.index[2] / 2);
+        const long long n = grid->getZforward(info2.level, i2, j2, k2);
+#else
+        const long long n = grid->getZforward(info2.level, i2, j2);
+#endif
+        BlockInfo &infoNei = grid->getBlockInfoAll(info2.level, n);
+        infoNei.state = Compress;
+      }
+    }
+  }
+
+protected:
+  /**
+   * @brief Auxiliary function to tag a vector of blocks
+   * @param I Vector of BlockInfos to tag.
+   * @param Reduction Boolean that will be set to true if any block is tagged;
+   * setting to true will cause a call to 'ValidStates()' after tagging blocks.
+   * @param Reduction_req MPI request that will be used if 'Reduction' is true
+   * @param tmp Same value as 'Reduction' by this is an integer
+   */
+  void TagBlocksVector(std::vector<BlockInfo *> &I, bool &Reduction,
+                       MPI_Request &Reduction_req, int &tmp) {
+    const int levelMax = grid->getlevelMax();
+#pragma omp parallel
+    {
+#pragma omp for schedule(dynamic, 1)
+      for (size_t i = 0; i < I.size(); i++) {
+        BlockInfo &info = grid->getBlockInfoAll(I[i]->level, I[i]->Z);
+
+        I[i]->state = TagLoadedBlock(info);
+
+        const bool maxLevel =
+            (I[i]->state == Refine) && (I[i]->level == levelMax - 1);
+        const bool minLevel = (I[i]->state == Compress) && (I[i]->level == 0);
+
+        if (maxLevel || minLevel)
+          I[i]->state = Leave;
+
+        info.state = I[i]->state;
+        if (info.state != Leave) {
+#pragma omp critical
+          {
+            CallValidStates = true;
+            if (!Reduction) {
+              tmp = 1;
+              Reduction = true;
+              MPI_Iallreduce(MPI_IN_PLACE, &tmp, 1, MPI_INT, MPI_SUM,
+                             grid->getWorldComm(), &Reduction_req);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * @brief First step of refinement of a block.
+   *
+   * The new blocks are allocated and the interpolation needed for refinement is
+   * perfomed. The parent block will be deallocated in step 2 (refine_2).
+   *
+   * @param level The refinement level of the block to be refined.
+   * @param Z The Z-order index of the block to be refined.
+   */
+  void refine_1(const int level, const long long Z, TLab &lab) {
+    BlockInfo &parent = grid->getBlockInfoAll(level, Z);
+    parent.state = Leave;
+    if (basic_refinement == false)
+      lab.load(parent, time, true);
+
+    const int p[3] = {parent.index[0], parent.index[1], parent.index[2]};
+
+    assert(parent.ptrBlock != NULL);
+    assert(level <= grid->getlevelMax() - 1);
+#if DIMENSION == 3
+    BlockType *Blocks[8];
+    for (int k = 0; k < 2; k++)
+      for (int j = 0; j < 2; j++)
+        for (int i = 0; i < 2; i++) {
+          const long long nc = grid->getZforward(level + 1, 2 * p[0] + i,
+                                                 2 * p[1] + j, 2 * p[2] + k);
+          BlockInfo &Child = grid->getBlockInfoAll(level + 1, nc);
+          Child.state = Leave;
+          grid->_alloc(level + 1, nc);
+          grid->Tree(level + 1, nc).setCheckCoarser();
+          Blocks[k * 4 + j * 2 + i] = (BlockType *)Child.ptrBlock;
+        }
+#else
+    BlockType *Blocks[4];
+    for (int j = 0; j < 2; j++)
+      for (int i = 0; i < 2; i++) {
+        const long long nc =
+            grid->getZforward(level + 1, 2 * p[0] + i, 2 * p[1] + j);
+        BlockInfo &Child = grid->getBlockInfoAll(level + 1, nc);
+        Child.state = Leave;
+        grid->_alloc(level + 1, nc);
+        grid->Tree(level + 1, nc).setCheckCoarser();
+        Blocks[j * 2 + i] = (BlockType *)Child.ptrBlock;
+      }
+#endif
+    if (basic_refinement == false)
+      RefineBlocks(Blocks, lab);
+  }
+
+  /**
+   * @brief Second step of refinement of a block.
+   *
+   * After all blocks are refined with refine_1, we can deallocate their parent
+   * blocks here.
+   *
+   * @param level The refinement level of the block to be refined.
+   * @param Z The Z-order index of the block to be refined.
+   */
+  void refine_2(const int level, const long long Z) {
+#pragma omp critical
+    { dealloc_IDs.push_back(grid->getBlockInfoAll(level, Z).blockID_2); }
+
+    BlockInfo &parent = grid->getBlockInfoAll(level, Z);
+    grid->Tree(parent).setCheckFiner();
+    parent.state = Leave;
+
+    int p[3] = {parent.index[0], parent.index[1], parent.index[2]};
+#if DIMENSION == 3
+    for (int k = 0; k < 2; k++)
+      for (int j = 0; j < 2; j++)
+        for (int i = 0; i < 2; i++) {
+          const long long nc = grid->getZforward(level + 1, 2 * p[0] + i,
+                                                 2 * p[1] + j, 2 * p[2] + k);
+          BlockInfo &Child = grid->getBlockInfoAll(level + 1, nc);
+          grid->Tree(Child).setrank(grid->rank());
+          if (level + 2 < grid->getlevelMax())
+            for (int i0 = 0; i0 < 2; i0++)
+              for (int i1 = 0; i1 < 2; i1++)
+                for (int i2 = 0; i2 < 2; i2++)
+                  grid->Tree(level + 2, Child.Zchild[i0][i1][i2])
+                      .setCheckCoarser();
+        }
+#else
+    for (int j = 0; j < 2; j++)
+      for (int i = 0; i < 2; i++) {
+        const long long nc =
+            grid->getZforward(level + 1, 2 * p[0] + i, 2 * p[1] + j);
+        BlockInfo &Child = grid->getBlockInfoAll(level + 1, nc);
+        grid->Tree(Child).setrank(grid->rank());
+        if (level + 2 < grid->getlevelMax())
+          for (int i0 = 0; i0 < 2; i0++)
+            for (int i1 = 0; i1 < 2; i1++)
+              grid->Tree(level + 2, Child.Zchild[i0][i1][1]).setCheckCoarser();
+      }
+#endif
+  }
+
+  /**
+   * @brief Compress eight blocks.
+   *
+   * The 'bottom left' block (i,j,k) is provided in the input, via its
+   * refinement level and Z-order index. The top right block would be the block
+   * (i+1,j+1,k+1).
+   *
+   * @param level The refinement level of the bottom left block to be refined.
+   * @param Z The Z-order index of the bottom left block to be refined.
+   */
+  void compress(const int level, const long long Z) {
+    assert(level > 0);
+
+    BlockInfo &info = grid->getBlockInfoAll(level, Z);
+
+    assert(info.state == Compress);
+
+#if DIMENSION == 3
+    BlockType *Blocks[8];
+    for (int K = 0; K < 2; K++)
+      for (int J = 0; J < 2; J++)
+        for (int I = 0; I < 2; I++) {
+          const int blk = K * 4 + J * 2 + I;
+          const long long n = grid->getZforward(
+              level, info.index[0] + I, info.index[1] + J, info.index[2] + K);
+          Blocks[blk] = (BlockType *)(grid->getBlockInfoAll(level, n)).ptrBlock;
+        }
+
+    const int nx = BlockType::sizeX;
+    const int ny = BlockType::sizeY;
+    const int nz = BlockType::sizeZ;
+    const int offsetX[2] = {0, nx / 2};
+    const int offsetY[2] = {0, ny / 2};
+    const int offsetZ[2] = {0, nz / 2};
+    if (basic_refinement == false)
+      for (int K = 0; K < 2; K++)
+        for (int J = 0; J < 2; J++)
+          for (int I = 0; I < 2; I++) {
+            BlockType &b = *Blocks[K * 4 + J * 2 + I];
+            for (int k = 0; k < nz; k += 2)
+              for (int j = 0; j < ny; j += 2)
+                for (int i = 0; i < nx; i += 2) {
+#ifdef PRESERVE_SYMMETRY
+                  const ElementType B1 = b(i, j, k) + b(i + 1, j + 1, k + 1);
+                  const ElementType B2 = b(i + 1, j, k) + b(i, j + 1, k + 1);
+                  const ElementType B3 = b(i, j + 1, k) + b(i + 1, j, k + 1);
+                  const ElementType B4 = b(i, j, k + 1) + b(i + 1, j + 1, k);
+                  (*Blocks[0])(i / 2 + offsetX[I], j / 2 + offsetY[J],
+                               k / 2 + offsetZ[K]) =
+                      0.125 * ConsistentSum<ElementType>(B1, B2, B3, B4);
+#else
+                  (*Blocks[0])(i / 2 + offsetX[I], j / 2 + offsetY[J],
+                               k / 2 + offsetZ[K]) =
+                      0.125 * ((b(i, j, k) + b(i + 1, j + 1, k + 1)) +
+                               (b(i + 1, j, k) + b(i, j + 1, k + 1)) +
+                               (b(i, j + 1, k) + b(i + 1, j, k + 1)) +
+                               (b(i + 1, j + 1, k) + b(i, j, k + 1)));
+#endif
+                }
+          }
+
+    const long long np = grid->getZforward(
+        level - 1, info.index[0] / 2, info.index[1] / 2, info.index[2] / 2);
+    BlockInfo &parent = grid->getBlockInfoAll(level - 1, np);
+    grid->Tree(parent.level, parent.Z).setrank(grid->rank());
+    parent.ptrBlock = info.ptrBlock;
+    parent.state = Leave;
+    if (level - 2 >= 0)
+      grid->Tree(level - 2, parent.Zparent).setCheckFiner();
+
+    for (int K = 0; K < 2; K++)
+      for (int J = 0; J < 2; J++)
+        for (int I = 0; I < 2; I++) {
+          const long long n = grid->getZforward(
+              level, info.index[0] + I, info.index[1] + J, info.index[2] + K);
+          if (I + J + K == 0) {
+            grid->FindBlockInfo(level, n, level - 1, np);
+          } else {
+#pragma omp critical
+            {
+              dealloc_IDs.push_back(grid->getBlockInfoAll(level, n).blockID_2);
+            }
+          }
+          grid->Tree(level, n).setCheckCoarser();
+          grid->getBlockInfoAll(level, n).state = Leave;
+        }
+#endif
+#if DIMENSION == 2
+    BlockType *Blocks[4];
+    for (int J = 0; J < 2; J++)
+      for (int I = 0; I < 2; I++) {
+        const int blk = J * 2 + I;
+        const long long n =
+            grid->getZforward(level, info.index[0] + I, info.index[1] + J);
+        Blocks[blk] = (BlockType *)(grid->getBlockInfoAll(level, n)).ptrBlock;
+      }
+
+    const int nx = BlockType::sizeX;
+    const int ny = BlockType::sizeY;
+    const int offsetX[2] = {0, nx / 2};
+    const int offsetY[2] = {0, ny / 2};
+    if (basic_refinement == false)
+      for (int J = 0; J < 2; J++)
+        for (int I = 0; I < 2; I++) {
+          BlockType &b = *Blocks[J * 2 + I];
+          for (int j = 0; j < ny; j += 2)
+            for (int i = 0; i < nx; i += 2) {
+              ElementType average = 0.25 * ((b(i, j, 0) + b(i + 1, j + 1, 0)) +
+                                            (b(i + 1, j, 0) + b(i, j + 1, 0)));
+              (*Blocks[0])(i / 2 + offsetX[I], j / 2 + offsetY[J], 0) = average;
+            }
+        }
+    const long long np =
+        grid->getZforward(level - 1, info.index[0] / 2, info.index[1] / 2);
+    BlockInfo &parent = grid->getBlockInfoAll(level - 1, np);
+    grid->Tree(parent.level, parent.Z).setrank(grid->rank());
+    parent.ptrBlock = info.ptrBlock;
+    parent.state = Leave;
+    if (level - 2 >= 0)
+      grid->Tree(level - 2, parent.Zparent).setCheckFiner();
+
+    for (int J = 0; J < 2; J++)
+      for (int I = 0; I < 2; I++) {
+        const long long n =
+            grid->getZforward(level, info.index[0] + I, info.index[1] + J);
+        if (I + J == 0) {
+          grid->FindBlockInfo(level, n, level - 1, np);
+        } else {
+#pragma omp critical
+          { dealloc_IDs.push_back(grid->getBlockInfoAll(level, n).blockID_2); }
+        }
+        grid->Tree(level, n).setCheckCoarser();
+        grid->getBlockInfoAll(level, n).state = Leave;
+      }
+#endif
+  }
+
+  /**
+   * @brief Make sure adjacent blocks of the to-be-adapted mesh do not differ by
+   * more than one refinement level.
+   *
+   * Given a set of tagged blocks, this function will mark some additional
+   * blocks for refinement, to make sure no adjacent blocks differ by more than
+   * one refinement level. It will also unmark some blocks from being
+   * compressed, if their adjacent blocks do not need compression and/or belong
+   * to a finer refinement level.
+   */
+  void ValidStates() {
+    const std::array<int, 3> blocksPerDim = grid->getMaxBlocks();
+    const int levelMin = 0;
+    const int levelMax = grid->getlevelMax();
+    const bool xperiodic = grid->xperiodic;
+    const bool yperiodic = grid->yperiodic;
+    const bool zperiodic = grid->zperiodic;
+
+    std::vector<BlockInfo> &I = grid->getBlocksInfo();
+
+#pragma omp parallel for
+    for (size_t j = 0; j < I.size(); j++) {
+      BlockInfo &info = I[j];
+
+      if ((info.state == Refine && info.level == levelMax - 1) ||
+          (info.state == Compress && info.level == levelMin)) {
+        info.state = Leave;
+        (grid->getBlockInfoAll(info.level, info.Z)).state = Leave;
+      }
+      if (info.state != Leave) {
+        info.changed2 = true;
+        (grid->getBlockInfoAll(info.level, info.Z)).changed2 = info.changed2;
+      }
+    }
+
+    // 1.Change states of blocks next to finer resolution blocks
+    // 2.Change states of blocks next to same resolution blocks
+    // 3.Compress a block only if all blocks with the same parent need
+    // compression
+    bool clean_boundary = true;
+    for (int m = levelMax - 1; m >= levelMin; m--) {
+      // 1.
+      for (size_t j = 0; j < I.size(); j++) {
+        BlockInfo &info = I[j];
+        if (info.level == m && info.state != Refine &&
+            info.level != levelMax - 1) {
+          const int TwoPower = 1 << info.level;
+          const bool xskin = info.index[0] == 0 ||
+                             info.index[0] == blocksPerDim[0] * TwoPower - 1;
+          const bool yskin = info.index[1] == 0 ||
+                             info.index[1] == blocksPerDim[1] * TwoPower - 1;
+          const bool zskin = info.index[2] == 0 ||
+                             info.index[2] == blocksPerDim[2] * TwoPower - 1;
+          const int xskip = info.index[0] == 0 ? -1 : 1;
+          const int yskip = info.index[1] == 0 ? -1 : 1;
+          const int zskip = info.index[2] == 0 ? -1 : 1;
+
+          for (int icode = 0; icode < 27; icode++) {
+            if (info.state == Refine)
+              break;
+            if (icode == 1 * 1 + 3 * 1 + 9 * 1)
+              continue;
+            const int code[3] = {icode % 3 - 1, (icode / 3) % 3 - 1,
+                                 (icode / 9) % 3 - 1};
+            if (!xperiodic && code[0] == xskip && xskin)
+              continue;
+            if (!yperiodic && code[1] == yskip && yskin)
+              continue;
+            if (!zperiodic && code[2] == zskip && zskin)
+              continue;
+#if DIMENSION == 2
+            if (code[2] != 0)
+              continue;
+#endif
+
+            if (grid->Tree(info.level, info.Znei_(code[0], code[1], code[2]))
+                    .CheckFiner()) {
+              if (info.state == Compress) {
+                info.state = Leave;
+                (grid->getBlockInfoAll(info.level, info.Z)).state = Leave;
+              }
+              // if (info.level == levelMax - 1) break;
+
+              const int tmp = abs(code[0]) + abs(code[1]) + abs(code[2]);
+              int Bstep = 1; // face
+              if (tmp == 2)
+                Bstep = 3; // edge
+              else if (tmp == 3)
+                Bstep = 4; // corner
+
+// loop over blocks that make up face/edge/corner(respectively 4,2 or 1 blocks)
+#if DIMENSION == 3
+              for (int B = 0; B <= 3; B += Bstep)
+#else
+              for (int B = 0; B <= 1; B += Bstep)
+#endif
+              {
+                const int aux = (abs(code[0]) == 1) ? (B % 2) : (B / 2);
+                const int iNei = 2 * info.index[0] + std::max(code[0], 0) +
+                                 code[0] +
+                                 (B % 2) * std::max(0, 1 - abs(code[0]));
+                const int jNei = 2 * info.index[1] + std::max(code[1], 0) +
+                                 code[1] + aux * std::max(0, 1 - abs(code[1]));
+#if DIMENSION == 3
+                const int kNei = 2 * info.index[2] + std::max(code[2], 0) +
+                                 code[2] +
+                                 (B / 2) * std::max(0, 1 - abs(code[2]));
+                const long long zzz =
+                    grid->getZforward(m + 1, iNei, jNei, kNei);
+#else
+                const long long zzz = grid->getZforward(m + 1, iNei, jNei);
+#endif
+                BlockInfo &FinerNei = grid->getBlockInfoAll(m + 1, zzz);
+                State NeiState = FinerNei.state;
+                if (NeiState == Refine) {
+                  info.state = Refine;
+                  (grid->getBlockInfoAll(info.level, info.Z)).state = Refine;
+                  info.changed2 = true;
+                  (grid->getBlockInfoAll(info.level, info.Z)).changed2 = true;
+                  break;
+                }
+              }
+            }
+          }
+        }
+      }
+
+      grid->UpdateBoundary(clean_boundary);
+      clean_boundary = false;
+      if (m == levelMin)
+        break;
+
+      // 2.
+      for (size_t j = 0; j < I.size(); j++) {
+        BlockInfo &info = I[j];
+        if (info.level == m && info.state == Compress) {
+          const int aux = 1 << info.level;
+          const bool xskin =
+              info.index[0] == 0 || info.index[0] == blocksPerDim[0] * aux - 1;
+          const bool yskin =
+              info.index[1] == 0 || info.index[1] == blocksPerDim[1] * aux - 1;
+          const bool zskin =
+              info.index[2] == 0 || info.index[2] == blocksPerDim[2] * aux - 1;
+          const int xskip = info.index[0] == 0 ? -1 : 1;
+          const int yskip = info.index[1] == 0 ? -1 : 1;
+          const int zskip = info.index[2] == 0 ? -1 : 1;
+
+          for (int icode = 0; icode < 27; icode++) {
+            if (icode == 1 * 1 + 3 * 1 + 9 * 1)
+              continue;
+            const int code[3] = {icode % 3 - 1, (icode / 3) % 3 - 1,
+                                 (icode / 9) % 3 - 1};
+            if (!xperiodic && code[0] == xskip && xskin)
+              continue;
+            if (!yperiodic && code[1] == yskip && yskin)
+              continue;
+            if (!zperiodic && code[2] == zskip && zskin)
+              continue;
+#if DIMENSION == 2
+            if (code[2] != 0)
+              continue;
+#endif
+
+            BlockInfo &infoNei = grid->getBlockInfoAll(
+                info.level, info.Znei_(code[0], code[1], code[2]));
+            if (grid->Tree(infoNei).Exists() && infoNei.state == Refine) {
+              info.state = Leave;
+              (grid->getBlockInfoAll(info.level, info.Z)).state = Leave;
+              break;
+            }
+          }
+        }
+      }
+    } // m
+
+    // 3.
+    for (size_t jjj = 0; jjj < I.size(); jjj++) {
+      BlockInfo &info = I[jjj];
+      const int m = info.level;
+      bool found = false;
+      for (int i = 2 * (info.index[0] / 2); i <= 2 * (info.index[0] / 2) + 1;
+           i++)
+        for (int j = 2 * (info.index[1] / 2); j <= 2 * (info.index[1] / 2) + 1;
+             j++)
+          for (int k = 2 * (info.index[2] / 2);
+               k <= 2 * (info.index[2] / 2) + 1; k++) {
+#if DIMENSION == 3
+            const long long n = grid->getZforward(m, i, j, k);
+#else
+            const long long n = grid->getZforward(m, i, j);
+#endif
+            BlockInfo &infoNei = grid->getBlockInfoAll(m, n);
+            if (grid->Tree(infoNei).Exists() == false ||
+                infoNei.state != Compress) {
+              found = true;
+              if (info.state == Compress) {
+                info.state = Leave;
+                (grid->getBlockInfoAll(info.level, info.Z)).state = Leave;
+              }
+              break;
+            }
+          }
+      if (found)
+        for (int i = 2 * (info.index[0] / 2); i <= 2 * (info.index[0] / 2) + 1;
+             i++)
+          for (int j = 2 * (info.index[1] / 2);
+               j <= 2 * (info.index[1] / 2) + 1; j++)
+            for (int k = 2 * (info.index[2] / 2);
+                 k <= 2 * (info.index[2] / 2) + 1; k++) {
+#if DIMENSION == 3
+              const long long n = grid->getZforward(m, i, j, k);
+#else
+              const long long n = grid->getZforward(m, i, j);
+#endif
+              BlockInfo &infoNei = grid->getBlockInfoAll(m, n);
+              if (grid->Tree(infoNei).Exists() && infoNei.state == Compress)
+                infoNei.state = Leave;
+            }
+    }
+  }
+
+  ////////////////////////////////////////////////////////////////////////////////////////////////
+  // Virtual functions that can be overwritten by user
+  ////////////////////////////////////////////////////////////////////////////////////////////////
+
+  /**
+   * @brief How cells are interpolated after refinement
+   *
+   * Default interpolation is a 2nd order Taylor expansion. Can be overidden by
+   * a derived class, to enable a custom refinement interpolation.
+   *
+   * @param B Pointers to the eight new blocks to be interpolated.
+   */
+  virtual void RefineBlocks(BlockType *B[8], TLab &Lab) {
+    const int nx = BlockType::sizeX;
+    const int ny = BlockType::sizeY;
+
+    int offsetX[2] = {0, nx / 2};
+    int offsetY[2] = {0, ny / 2};
+
+#if DIMENSION == 3
+    const int nz = BlockType::sizeZ;
+    int offsetZ[2] = {0, nz / 2};
+
+    for (int K = 0; K < 2; K++)
+      for (int J = 0; J < 2; J++)
+        for (int I = 0; I < 2; I++) {
+          BlockType &b = *B[K * 4 + J * 2 + I];
+          b.clear();
+
+          for (int k = 0; k < nz; k += 2)
+            for (int j = 0; j < ny; j += 2)
+              for (int i = 0; i < nx; i += 2) {
+                const int x = i / 2 + offsetX[I];
+                const int y = j / 2 + offsetY[J];
+                const int z = k / 2 + offsetZ[K];
+                const ElementType dudx =
+                    0.5 * (Lab(x + 1, y, z) - Lab(x - 1, y, z));
+                const ElementType dudy =
+                    0.5 * (Lab(x, y + 1, z) - Lab(x, y - 1, z));
+                const ElementType dudz =
+                    0.5 * (Lab(x, y, z + 1) - Lab(x, y, z - 1));
+                const ElementType dudx2 =
+                    (Lab(x + 1, y, z) + Lab(x - 1, y, z)) - 2.0 * Lab(x, y, z);
+                const ElementType dudy2 =
+                    (Lab(x, y + 1, z) + Lab(x, y - 1, z)) - 2.0 * Lab(x, y, z);
+                const ElementType dudz2 =
+                    (Lab(x, y, z + 1) + Lab(x, y, z - 1)) - 2.0 * Lab(x, y, z);
+                const ElementType dudxdy =
+                    0.25 * ((Lab(x + 1, y + 1, z) + Lab(x - 1, y - 1, z)) -
+                            (Lab(x + 1, y - 1, z) + Lab(x - 1, y + 1, z)));
+                const ElementType dudxdz =
+                    0.25 * ((Lab(x + 1, y, z + 1) + Lab(x - 1, y, z - 1)) -
+                            (Lab(x + 1, y, z - 1) + Lab(x - 1, y, z + 1)));
+                const ElementType dudydz =
+                    0.25 * ((Lab(x, y + 1, z + 1) + Lab(x, y - 1, z - 1)) -
+                            (Lab(x, y + 1, z - 1) + Lab(x, y - 1, z + 1)));
+
+#ifdef PRESERVE_SYMMETRY
+                const ElementType d2 =
+                    0.03125 * ConsistentSum<ElementType>(dudx2, dudy2, dudz2);
+                b(i, j, k) =
+                    Lab(x, y, z) +
+                    (0.25 * ConsistentSum<ElementType>(
+                                -(1.0) * dudx, -(1.0) * dudy, -(1.0) * dudz) +
+                     d2) +
+                    0.0625 * ConsistentSum(dudxdy, dudxdz, dudydz);
+                b(i + 1, j, k) =
+                    Lab(x, y, z) +
+                    (0.25 * ConsistentSum<ElementType>(dudx, -(1.0) * dudy,
+                                                       -(1.0) * dudz) +
+                     d2) +
+                    0.0625 *
+                        ConsistentSum(-(1.0) * dudxdy, -(1.0) * dudxdz, dudydz);
+                b(i, j + 1, k) =
+                    Lab(x, y, z) +
+                    (0.25 * ConsistentSum<ElementType>(-(1.0) * dudx, dudy,
+                                                       -(1.0) * dudz) +
+                     d2) +
+                    0.0625 *
+                        ConsistentSum(-(1.0) * dudxdy, dudxdz, -(1.0) * dudydz);
+                b(i + 1, j + 1, k) =
+                    Lab(x, y, z) +
+                    (0.25 *
+                         ConsistentSum<ElementType>(dudx, dudy, -(1.0) * dudz) +
+                     d2) +
+                    0.0625 *
+                        ConsistentSum(dudxdy, -(1.0) * dudxdz, -(1.0) * dudydz);
+                b(i, j, k + 1) =
+                    Lab(x, y, z) +
+                    (0.25 * ConsistentSum<ElementType>(-(1.0) * dudx,
+                                                       -(1.0) * dudy, dudz) +
+                     d2) +
+                    0.0625 *
+                        ConsistentSum(dudxdy, -(1.0) * dudxdz, -(1.0) * dudydz);
+                b(i + 1, j, k + 1) =
+                    Lab(x, y, z) +
+                    (0.25 *
+                         ConsistentSum<ElementType>(dudx, -(1.0) * dudy, dudz) +
+                     d2) +
+                    0.0625 *
+                        ConsistentSum(-(1.0) * dudxdy, dudxdz, -(1.0) * dudydz);
+                b(i, j + 1, k + 1) =
+                    Lab(x, y, z) +
+                    (0.25 *
+                         ConsistentSum<ElementType>(-(1.0) * dudx, dudy, dudz) +
+                     d2) +
+                    0.0625 *
+                        ConsistentSum(-(1.0) * dudxdy, -(1.0) * dudxdz, dudydz);
+                b(i + 1, j + 1, k + 1) =
+                    Lab(x, y, z) +
+                    (0.25 * ConsistentSum<ElementType>(dudx, dudy, dudz) + d2) +
+                    0.0625 * ConsistentSum(dudxdy, dudxdz, dudydz);
+#else
+                b(i, j, k) = Lab(x, y, z) +
+                             0.25 * (-(1.0) * dudx - dudy - dudz) +
+                             0.03125 * (dudx2 + dudy2 + dudz2) +
+                             0.0625 * (dudxdy + dudxdz + dudydz);
+                b(i + 1, j, k) = Lab(x, y, z) + 0.25 * (dudx - dudy - dudz) +
+                                 0.03125 * (dudx2 + dudy2 + dudz2) +
+                                 0.0625 * (-(1.0) * dudxdy - dudxdz + dudydz);
+                b(i, j + 1, k) = Lab(x, y, z) +
+                                 0.25 * (-(1.0) * dudx + dudy - dudz) +
+                                 0.03125 * (dudx2 + dudy2 + dudz2) +
+                                 0.0625 * (-(1.0) * dudxdy + dudxdz - dudydz);
+                b(i + 1, j + 1, k) = Lab(x, y, z) +
+                                     0.25 * (dudx + dudy - dudz) +
+                                     0.03125 * (dudx2 + dudy2 + dudz2) +
+                                     0.0625 * (dudxdy - dudxdz - dudydz);
+                b(i, j, k + 1) = Lab(x, y, z) +
+                                 0.25 * (-(1.0) * dudx - dudy + dudz) +
+                                 0.03125 * (dudx2 + dudy2 + dudz2) +
+                                 0.0625 * (dudxdy - dudxdz - dudydz);
+                b(i + 1, j, k + 1) =
+                    Lab(x, y, z) + 0.25 * (dudx - dudy + dudz) +
+                    0.03125 * (dudx2 + dudy2 + dudz2) +
+                    0.0625 * (-(1.0) * dudxdy + dudxdz - dudydz);
+                b(i, j + 1, k + 1) =
+                    Lab(x, y, z) + 0.25 * (-(1.0) * dudx + dudy + dudz) +
+                    0.03125 * (dudx2 + dudy2 + dudz2) +
+                    0.0625 * (-(1.0) * dudxdy - dudxdz + dudydz);
+                b(i + 1, j + 1, k + 1) = Lab(x, y, z) +
+                                         0.25 * (dudx + dudy + dudz) +
+                                         0.03125 * (dudx2 + dudy2 + dudz2) +
+                                         0.0625 * (dudxdy + dudxdz + dudydz);
+#endif
+              }
+        }
+#else
+
+    for (int J = 0; J < 2; J++)
+      for (int I = 0; I < 2; I++) {
+        BlockType &b = *B[J * 2 + I];
+        b.clear();
+
+        for (int j = 0; j < ny; j += 2)
+          for (int i = 0; i < nx; i += 2) {
+            ElementType dudx =
+                0.5 * (Lab(i / 2 + offsetX[I] + 1, j / 2 + offsetY[J]) -
+                       Lab(i / 2 + offsetX[I] - 1, j / 2 + offsetY[J]));
+            ElementType dudy =
+                0.5 * (Lab(i / 2 + offsetX[I], j / 2 + offsetY[J] + 1) -
+                       Lab(i / 2 + offsetX[I], j / 2 + offsetY[J] - 1));
+
+            ElementType dudx2 =
+                (Lab(i / 2 + offsetX[I] + 1, j / 2 + offsetY[J]) +
+                 Lab(i / 2 + offsetX[I] - 1, j / 2 + offsetY[J])) -
+                2.0 * Lab(i / 2 + offsetX[I], j / 2 + offsetY[J]);
+            ElementType dudy2 =
+                (Lab(i / 2 + offsetX[I], j / 2 + offsetY[J] + 1) +
+                 Lab(i / 2 + offsetX[I], j / 2 + offsetY[J] - 1)) -
+                2.0 * Lab(i / 2 + offsetX[I], j / 2 + offsetY[J]);
+
+            ElementType dudxdy =
+                0.25 * ((Lab(i / 2 + offsetX[I] + 1, j / 2 + offsetY[J] + 1) +
+                         Lab(i / 2 + offsetX[I] - 1, j / 2 + offsetY[J] - 1)) -
+                        (Lab(i / 2 + offsetX[I] + 1, j / 2 + offsetY[J] - 1) +
+                         Lab(i / 2 + offsetX[I] - 1, j / 2 + offsetY[J] + 1)));
+
+            b(i, j, 0) =
+                (Lab(i / 2 + offsetX[I], j / 2 + offsetY[J]) +
+                 (-0.25 * dudx - 0.25 * dudy)) +
+                ((0.03125 * dudx2 + 0.03125 * dudy2) + 0.0625 * dudxdy);
+            b(i + 1, j, 0) =
+                (Lab(i / 2 + offsetX[I], j / 2 + offsetY[J]) +
+                 (+0.25 * dudx - 0.25 * dudy)) +
+                ((0.03125 * dudx2 + 0.03125 * dudy2) - 0.0625 * dudxdy);
+            b(i, j + 1, 0) =
+                (Lab(i / 2 + offsetX[I], j / 2 + offsetY[J]) +
+                 (-0.25 * dudx + 0.25 * dudy)) +
+                ((0.03125 * dudx2 + 0.03125 * dudy2) - 0.0625 * dudxdy);
+            b(i + 1, j + 1, 0) =
+                (Lab(i / 2 + offsetX[I], j / 2 + offsetY[J]) +
+                 (+0.25 * dudx + 0.25 * dudy)) +
+                ((0.03125 * dudx2 + 0.03125 * dudy2) + 0.0625 * dudxdy);
+          }
+      }
+#endif
+  }
+
+  /**
+   * @brief Refinement criterion.
+   *
+   * Default refinement criterion is to compare the 'magnitude()' of each
+   * gridpoint to Rtol and Ctol. Can be overidden by a derived class, to enable
+   * a custom refinement criterion.
+   *
+   * @param info BlockInfo to be tagged.
+   */
+  virtual State TagLoadedBlock(BlockInfo &info) {
+    const int nx = BlockType::sizeX;
+    const int ny = BlockType::sizeY;
+    BlockType &b = *(BlockType *)info.ptrBlock;
+
+    double Linf = 0.0;
+#if DIMENSION == 3
+    const int nz = BlockType::sizeZ;
+    for (int k = 0; k < nz; k++)
+      for (int j = 0; j < ny; j++)
+        for (int i = 0; i < nx; i++) {
+          Linf = std::max(Linf, std::fabs(b(i, j, k).magnitude()));
+        }
+#endif
+#if DIMENSION == 2
+    for (int j = 0; j < ny; j++)
+      for (int i = 0; i < nx; i++) {
+        Linf = std::max(Linf, std::fabs(b(i, j).magnitude()));
+      }
+#endif
+
+    if (Linf > tolerance_for_refinement)
+      return Refine;
+    else if (Linf < tolerance_for_compression)
+      return Compress;
+
+    return Leave;
+  }
+};
+
+} // namespace cubism
+
+
+namespace cubism {
+
+template <typename Lab, typename Kernel, typename TGrid,
+          typename TGrid_corr = TGrid>
+void compute(Kernel &&kernel, TGrid *g, TGrid_corr *g_corr = nullptr) {
+  // If flux corrections are needed, prepare the flux correction object
+  if (g_corr != nullptr)
+    g_corr->Corrector.prepare(*g_corr);
+
+  // Start sending and receiving of data for blocks at the boundary of each rank
+  cubism::SynchronizerMPI_AMR<typename TGrid::Real, TGrid> &Synch =
+      *(g->sync(kernel.stencil));
+
+  // Access the inner blocks of each rank
+  std::vector<cubism::BlockInfo *> *inner = &Synch.avail_inner();
+
+  std::vector<cubism::BlockInfo *> *halo_next;
+  bool done = false;
+#pragma omp parallel
+  {
+    Lab lab;
+    lab.prepare(*g, kernel.stencil);
+
+// First compute for inner blocks
+#pragma omp for nowait
+    for (const auto &I : *inner) {
+      lab.load(*I, 0);
+      kernel(lab, *I);
+    }
+
+    // Then compute for boundary blocks
+#if 1
+    while (done == false) {
+#pragma omp master
+      halo_next = &Synch.avail_next();
+#pragma omp barrier
+
+#pragma omp for nowait
+      for (const auto &I : *halo_next) {
+        lab.load(*I, 0);
+        kernel(lab, *I);
+      }
+
+#pragma omp single
+      {
+        if (halo_next->size() == 0)
+          done = true;
+      }
+    }
+#else
+    std::vector<cubism::BlockInfo> &blk = g->getBlocksInfo();
+    std::vector<bool> ready(blk.size(), false);
+    std::vector<cubism::BlockInfo *> &avail1 = Synch.avail_halo_nowait();
+    const int Nhalo = avail1.size();
+    while (done == false) {
+      done = true;
+      for (int i = 0; i < Nhalo; i++) {
+        const cubism::BlockInfo &I = *avail1[i];
+        if (ready[I.blockID] == false) {
+          if (Synch.isready(I)) {
+            ready[I.blockID] = true;
+            lab.load(I, 0);
+            kernel(lab, I);
+          } else {
+            done = false;
+          }
+        }
+      }
+    }
+#endif
+  }
+
+  // Complete the send requests remaining
+  Synch.avail_halo();
+
+  // Carry out flux corrections
+  if (g_corr != nullptr)
+    g_corr->Corrector.FillBlockCases();
+}
+
+// Get two BlockLabs from two different Grids
+template <typename Kernel, typename TGrid, typename LabMPI, typename TGrid2,
+          typename LabMPI2, typename TGrid_corr = TGrid>
+static void compute(const Kernel &kernel, TGrid &grid, TGrid2 &grid2,
+                    const bool applyFluxCorrection = false,
+                    TGrid_corr *corrected_grid = nullptr) {
+  if (applyFluxCorrection)
+    corrected_grid->Corrector.prepare(*corrected_grid);
+
+  SynchronizerMPI_AMR<typename TGrid::Real, TGrid> &Synch =
+      *grid.sync(kernel.stencil);
+  Kernel kernel2 = kernel;
+  kernel2.stencil.sx = kernel2.stencil2.sx;
+  kernel2.stencil.sy = kernel2.stencil2.sy;
+  kernel2.stencil.sz = kernel2.stencil2.sz;
+  kernel2.stencil.ex = kernel2.stencil2.ex;
+  kernel2.stencil.ey = kernel2.stencil2.ey;
+  kernel2.stencil.ez = kernel2.stencil2.ez;
+  kernel2.stencil.tensorial = kernel2.stencil2.tensorial;
+  kernel2.stencil.selcomponents.clear();
+  kernel2.stencil.selcomponents = kernel2.stencil2.selcomponents;
+
+  SynchronizerMPI_AMR<typename TGrid::Real, TGrid2> &Synch2 =
+      *grid2.sync(kernel2.stencil);
+
+  const StencilInfo &stencil = Synch.getstencil();
+  const StencilInfo &stencil2 = Synch2.getstencil();
+
+  std::vector<cubism::BlockInfo> &blk = grid.getBlocksInfo();
+  std::vector<bool> ready(blk.size(), false);
+
+  std::vector<BlockInfo *> &avail0 = Synch.avail_inner();
+  std::vector<BlockInfo *> &avail02 = Synch2.avail_inner();
+  const int Ninner = avail0.size();
+  std::vector<cubism::BlockInfo *> avail1;
+  std::vector<cubism::BlockInfo *> avail12;
+// bool done = false;
+#pragma omp parallel
+  {
+    LabMPI lab;
+    LabMPI2 lab2;
+    lab.prepare(grid, stencil);
+    lab2.prepare(grid2, stencil2);
+#pragma omp for
+    for (int i = 0; i < Ninner; i++) {
+      const BlockInfo &I = *avail0[i];
+      const BlockInfo &I2 = *avail02[i];
+      lab.load(I, 0);
+      lab2.load(I2, 0);
+      kernel(lab, lab2, I, I2);
+      ready[I.blockID] = true;
+    }
+
+#if 1
+#pragma omp master
+    {
+      avail1 = Synch.avail_halo();
+      avail12 = Synch2.avail_halo();
+    }
+#pragma omp barrier
+
+    const int Nhalo = avail1.size();
+
+#pragma omp for
+    for (int i = 0; i < Nhalo; i++) {
+      const cubism::BlockInfo &I = *avail1[i];
+      const cubism::BlockInfo &I2 = *avail12[i];
+      lab.load(I, 0);
+      lab2.load(I2, 0);
+      kernel(lab, lab2, I, I2);
+    }
+#else
+
+#pragma omp master
+    {
+      avail1 = Synch.avail_halo_nowait();
+      avail12 = Synch2.avail_halo_nowait();
+    }
+#pragma omp barrier
+    const int Nhalo = avail1.size();
+
+    while (done == false) {
+#pragma omp barrier
+
+#pragma omp single
+      done = true;
+
+#pragma omp for
+      for (int i = 0; i < Nhalo; i++) {
+        const cubism::BlockInfo &I = *avail1[i];
+        const cubism::BlockInfo &I2 = *avail12[i];
+        if (ready[I.blockID] == false) {
+          bool blockready;
+#pragma omp critical
+          { blockready = (Synch.isready(I) && Synch.isready(I2)); }
+          if (blockready) {
+            ready[I.blockID] = true;
+            lab.load(I, 0);
+            lab2.load(I2, 0);
+            kernel(lab, lab2, I, I2);
+          } else {
+#pragma omp atomic write
+            done = false;
+          }
+        }
+      }
+    }
+    avail1 = Synch.avail_halo();
+    avail12 = Synch2.avail_halo();
+#endif
+  }
+
+  if (applyFluxCorrection)
+    corrected_grid->Corrector.FillBlockCases();
+}
+
+/// Example of a gridpoint element that is merely a scalar quantity of type
+/// 'Real' (double/float).
+template <typename Real = double> struct ScalarElement {
+  using RealType = Real; ///< definition of 'RealType', needed by BlockLab
+  Real s = 0;            ///< scalar quantity
+
+  /// set scalar to zero
+  inline void clear() { s = 0; }
+
+  /// set scalar to a value
+  inline void set(const Real v) { s = v; }
+
+  /// copy a ScalarElement
+  inline void copy(const ScalarElement &c) { s = c.s; }
+
+  ScalarElement &operator*=(const Real a) {
+    this->s *= a;
+    return *this;
+  }
+  ScalarElement &operator+=(const ScalarElement &rhs) {
+    this->s += rhs.s;
+    return *this;
+  }
+  ScalarElement &operator-=(const ScalarElement &rhs) {
+    this->s -= rhs.s;
+    return *this;
+  }
+  ScalarElement &operator/=(const ScalarElement &rhs) {
+    this->s /= rhs.s;
+    return *this;
+  }
+  friend ScalarElement operator*(const Real a, ScalarElement el) {
+    return (el *= a);
+  }
+  friend ScalarElement operator+(ScalarElement lhs, const ScalarElement &rhs) {
+    return (lhs += rhs);
+  }
+  friend ScalarElement operator-(ScalarElement lhs, const ScalarElement &rhs) {
+    return (lhs -= rhs);
+  }
+  friend ScalarElement operator/(ScalarElement lhs, const ScalarElement &rhs) {
+    return (lhs /= rhs);
+  }
+  bool operator<(const ScalarElement &other) const { return (s < other.s); }
+  bool operator>(const ScalarElement &other) const { return (s > other.s); }
+  bool operator<=(const ScalarElement &other) const { return (s <= other.s); }
+  bool operator>=(const ScalarElement &other) const { return (s >= other.s); }
+  Real magnitude() { return s; }
+  Real &member(int i) { return s; }
+  static constexpr int DIM = 1;
+};
+
+/// Example of a gridpoint element that is a vector quantity of type 'Real'
+/// (double/float); 'dim' are the number of dimensions of the vector
+template <int dim, typename Real = double> struct VectorElement {
+  using RealType = Real; ///< definition of 'RealType', needed by BlockLab
+  static constexpr int DIM = dim;
+  Real u[DIM]; ///< vector quantity
+
+  VectorElement() { clear(); }
+
+  /// set vector components to zero
+  inline void clear() {
+    for (int i = 0; i < DIM; ++i)
+      u[i] = 0;
+  }
+
+  /// set vector components to a number
+  inline void set(const Real v) {
+    for (int i = 0; i < DIM; ++i)
+      u[i] = v;
+  }
+
+  /// set copy one VectorElement to another
+  inline void copy(const VectorElement &c) {
+    for (int i = 0; i < DIM; ++i)
+      u[i] = c.u[i];
+  }
+
+  VectorElement &operator=(const VectorElement &c) = default;
+
+  VectorElement &operator*=(const Real a) {
+    for (int i = 0; i < DIM; ++i)
+      this->u[i] *= a;
+    return *this;
+  }
+  VectorElement &operator+=(const VectorElement &rhs) {
+    for (int i = 0; i < DIM; ++i)
+      this->u[i] += rhs.u[i];
+    return *this;
+  }
+  VectorElement &operator-=(const VectorElement &rhs) {
+    for (int i = 0; i < DIM; ++i)
+      this->u[i] -= rhs.u[i];
+    return *this;
+  }
+  VectorElement &operator/=(const VectorElement &rhs) {
+    for (int i = 0; i < DIM; ++i)
+      this->u[i] /= rhs.u[i];
+    return *this;
+  }
+  friend VectorElement operator*(const Real a, VectorElement el) {
+    return (el *= a);
+  }
+  friend VectorElement operator+(VectorElement lhs, const VectorElement &rhs) {
+    return (lhs += rhs);
+  }
+  friend VectorElement operator-(VectorElement lhs, const VectorElement &rhs) {
+    return (lhs -= rhs);
+  }
+  friend VectorElement operator/(VectorElement lhs, const VectorElement &rhs) {
+    return (lhs /= rhs);
+  }
+  bool operator<(const VectorElement &other) const {
+    Real s1 = 0.0;
+    Real s2 = 0.0;
+    for (int i = 0; i < DIM; ++i) {
+      s1 += u[i] * u[i];
+      s2 += other.u[i] * other.u[i];
+    }
+
+    return (s1 < s2);
+  }
+  bool operator>(const VectorElement &other) const {
+    Real s1 = 0.0;
+    Real s2 = 0.0;
+    for (int i = 0; i < DIM; ++i) {
+      s1 += u[i] * u[i];
+      s2 += other.u[i] * other.u[i];
+    }
+
+    return (s1 > s2);
+  }
+  bool operator<=(const VectorElement &other) const {
+    Real s1 = 0.0;
+    Real s2 = 0.0;
+    for (int i = 0; i < DIM; ++i) {
+      s1 += u[i] * u[i];
+      s2 += other.u[i] * other.u[i];
+    }
+
+    return (s1 <= s2);
+  }
+  bool operator>=(const VectorElement &other) const {
+    Real s1 = 0.0;
+    Real s2 = 0.0;
+    for (int i = 0; i < DIM; ++i) {
+      s1 += u[i] * u[i];
+      s2 += other.u[i] * other.u[i];
+    }
+
+    return (s1 >= s2);
+  }
+  Real magnitude() {
+    Real s1 = 0.0;
+    for (int i = 0; i < DIM; ++i) {
+      s1 += u[i] * u[i];
+    }
+    return sqrt(s1);
+  }
+  Real &member(int i) { return u[i]; }
+};
+
+/// array of blocksize^dim gridpoints of type 'TElement'.
+template <int blocksize, int dim, typename TElement> struct GridBlock {
+  // these identifiers are required by cubism!
+  static constexpr int BS = blocksize;
+  static constexpr int sizeX = blocksize;
+  static constexpr int sizeY = blocksize;
+  static constexpr int sizeZ = dim > 2 ? blocksize : 1;
+  static constexpr std::array<int, 3> sizeArray = {sizeX, sizeY, sizeZ};
+  using ElementType = TElement;
+  using RealType = typename TElement::RealType;
+
+  ElementType data[sizeZ][sizeY][sizeX];
+
+  /// set 'data' to zero (call 'clear()' of each TElement)
+  inline void clear() {
+    ElementType *const entry = &data[0][0][0];
+    for (int i = 0; i < sizeX * sizeY * sizeZ; ++i)
+      entry[i].clear();
+  }
+
+  /// set 'data' to a value (call 'set()' of each TElement)
+  inline void set(const RealType v) {
+    ElementType *const entry = &data[0][0][0];
+    for (int i = 0; i < sizeX * sizeY * sizeZ; ++i)
+      entry[i].set(v);
+  }
+
+  /// copy one GridBlock to another  (call 'copy()' of each TElement)
+  inline void copy(const GridBlock<blocksize, dim, ElementType> &c) {
+    ElementType *const entry = &data[0][0][0];
+    const ElementType *const source = &c.data[0][0][0];
+    for (int i = 0; i < sizeX * sizeY * sizeZ; ++i)
+      entry[i].copy(source[i]);
+  }
+
+  /// Access an element of this GridBlock (const.)
+  const ElementType &operator()(int ix, int iy = 0, int iz = 0) const {
+    assert(ix >= 0 && iy >= 0 && iz >= 0 && ix < sizeX && iy < sizeY &&
+           iz < sizeZ);
+    return data[iz][iy][ix];
+  }
+
+  /// Access an element of this GridBlock
+  ElementType &operator()(int ix, int iy = 0, int iz = 0) {
+    assert(ix >= 0 && iy >= 0 && iz >= 0 && ix < sizeX && iy < sizeY &&
+           iz < sizeZ);
+    return data[iz][iy][ix];
+  }
+  GridBlock(const GridBlock &) = delete;
+  GridBlock &operator=(const GridBlock &) = delete;
+};
+
+/** BlockLab to apply zero Neumann boundary conditions (zero normal derivative
+ * to the boundary).
+ * @tparam TGrid: Grid/GridMPI type to apply the boundary conditions to.
+ * @tparam dim: = 2 or 3, depending on the spatial dimensions
+ * @tparam allocator: allocator object, same as the one from BlockLab.
+ */
+template <typename TGrid, int dim,
+          template <typename X> class allocator = std::allocator>
+class BlockLabNeumann : public cubism::BlockLab<TGrid, allocator> {
+  /*
+   * Apply 2nd order Neumann boundary condition: du/dn_{i+1/2} = 0 => u_{i} =
+   * u_{i+1}
+   */
+  static constexpr int sizeX = TGrid::BlockType::sizeX;
+  static constexpr int sizeY = TGrid::BlockType::sizeY;
+  static constexpr int sizeZ = TGrid::BlockType::sizeZ;
+  static constexpr int DIM = dim;
+
+protected:
+  /// Apply bc on face of direction dir and side side (0 or 1):
+  template <int dir, int side> void Neumann3D(const bool coarse = false) {
+    int stenBeg[3];
+    int stenEnd[3];
+    int bsize[3];
+    if (!coarse) {
+      stenEnd[0] = this->m_stencilEnd[0];
+      stenEnd[1] = this->m_stencilEnd[1];
+      stenEnd[2] = this->m_stencilEnd[2];
+      stenBeg[0] = this->m_stencilStart[0];
+      stenBeg[1] = this->m_stencilStart[1];
+      stenBeg[2] = this->m_stencilStart[2];
+      bsize[0] = sizeX;
+      bsize[1] = sizeY;
+      bsize[2] = sizeZ;
+    } else {
+      stenEnd[0] =
+          (this->m_stencilEnd[0]) / 2 + 1 + this->m_InterpStencilEnd[0] - 1;
+      stenEnd[1] =
+          (this->m_stencilEnd[1]) / 2 + 1 + this->m_InterpStencilEnd[1] - 1;
+      stenEnd[2] =
+          (this->m_stencilEnd[2]) / 2 + 1 + this->m_InterpStencilEnd[2] - 1;
+      stenBeg[0] =
+          (this->m_stencilStart[0] - 1) / 2 + this->m_InterpStencilStart[0];
+      stenBeg[1] =
+          (this->m_stencilStart[1] - 1) / 2 + this->m_InterpStencilStart[1];
+      stenBeg[2] =
+          (this->m_stencilStart[2] - 1) / 2 + this->m_InterpStencilStart[2];
+      bsize[0] = sizeX / 2;
+      bsize[1] = sizeY / 2;
+      bsize[2] = sizeZ / 2;
+    }
+
+    auto *const cb = coarse ? this->m_CoarsenedBlock : this->m_cacheBlock;
+
+    int s[3];
+    int e[3];
+    s[0] = dir == 0 ? (side == 0 ? stenBeg[0] : bsize[0]) : 0;
+    s[1] = dir == 1 ? (side == 0 ? stenBeg[1] : bsize[1]) : 0;
+    s[2] = dir == 2 ? (side == 0 ? stenBeg[2] : bsize[2]) : 0;
+    e[0] = dir == 0 ? (side == 0 ? 0 : bsize[0] + stenEnd[0] - 1) : bsize[0];
+    e[1] = dir == 1 ? (side == 0 ? 0 : bsize[1] + stenEnd[1] - 1) : bsize[1];
+    e[2] = dir == 2 ? (side == 0 ? 0 : bsize[2] + stenEnd[2] - 1) : bsize[2];
+
+    // Fill face
+    for (int iz = s[2]; iz < e[2]; iz++)
+      for (int iy = s[1]; iy < e[1]; iy++)
+        for (int ix = s[0]; ix < e[0]; ix++) {
+          cb->Access(ix - stenBeg[0], iy - stenBeg[1], iz - stenBeg[2]) =
+              cb->Access(
+                  (dir == 0 ? (side == 0 ? 0 : bsize[0] - 1) : ix) - stenBeg[0],
+                  (dir == 1 ? (side == 0 ? 0 : bsize[1] - 1) : iy) - stenBeg[1],
+                  (dir == 2 ? (side == 0 ? 0 : bsize[2] - 1) : iz) -
+                      stenBeg[2]);
+        }
+
+    // Fill edges and corners (necessary for the coarse block)
+    s[dir] = stenBeg[dir] * (1 - side) + bsize[dir] * side;
+    e[dir] = (bsize[dir] - 1 + stenEnd[dir]) * side;
+    const int d1 = (dir + 1) % 3;
+    const int d2 = (dir + 2) % 3;
+    for (int b = 0; b < 2; ++b)
+      for (int a = 0; a < 2; ++a) {
+        s[d1] = stenBeg[d1] + a * b * (bsize[d1] - stenBeg[d1]);
+        s[d2] = stenBeg[d2] + (a - a * b) * (bsize[d2] - stenBeg[d2]);
+        e[d1] = (1 - b + a * b) * (bsize[d1] - 1 + stenEnd[d1]);
+        e[d2] = (a + b - a * b) * (bsize[d2] - 1 + stenEnd[d2]);
+        for (int iz = s[2]; iz < e[2]; iz++)
+          for (int iy = s[1]; iy < e[1]; iy++)
+            for (int ix = s[0]; ix < e[0]; ix++) {
+              cb->Access(ix - stenBeg[0], iy - stenBeg[1], iz - stenBeg[2]) =
+                  dir == 0
+                      ? cb->Access(side * (bsize[0] - 1) - stenBeg[0],
+                                   iy - stenBeg[1], iz - stenBeg[2])
+                      : (dir == 1
+                             ? cb->Access(ix - stenBeg[0],
+                                          side * (bsize[1] - 1) - stenBeg[1],
+                                          iz - stenBeg[2])
+                             : cb->Access(ix - stenBeg[0], iy - stenBeg[1],
+                                          side * (bsize[2] - 1) - stenBeg[2]));
+            }
+      }
+  }
+
+  /// Apply bc on face of direction dir and side side (0 or 1):
+  template <int dir, int side> void Neumann2D(const bool coarse = false) {
+    int stenBeg[2];
+    int stenEnd[2];
+    int bsize[2];
+    if (!coarse) {
+      stenEnd[0] = this->m_stencilEnd[0];
+      stenEnd[1] = this->m_stencilEnd[1];
+      stenBeg[0] = this->m_stencilStart[0];
+      stenBeg[1] = this->m_stencilStart[1];
+      bsize[0] = sizeX;
+      bsize[1] = sizeY;
+    } else {
+      stenEnd[0] =
+          (this->m_stencilEnd[0]) / 2 + 1 + this->m_InterpStencilEnd[0] - 1;
+      stenEnd[1] =
+          (this->m_stencilEnd[1]) / 2 + 1 + this->m_InterpStencilEnd[1] - 1;
+      stenBeg[0] =
+          (this->m_stencilStart[0] - 1) / 2 + this->m_InterpStencilStart[0];
+      stenBeg[1] =
+          (this->m_stencilStart[1] - 1) / 2 + this->m_InterpStencilStart[1];
+      bsize[0] = sizeX / 2;
+      bsize[1] = sizeY / 2;
+    }
+
+    auto *const cb = coarse ? this->m_CoarsenedBlock : this->m_cacheBlock;
+
+    int s[2];
+    int e[2];
+    s[0] = dir == 0 ? (side == 0 ? stenBeg[0] : bsize[0]) : stenBeg[0];
+    s[1] = dir == 1 ? (side == 0 ? stenBeg[1] : bsize[1]) : stenBeg[1];
+    e[0] = dir == 0 ? (side == 0 ? 0 : bsize[0] + stenEnd[0] - 1)
+                    : bsize[0] + stenEnd[0] - 1;
+    e[1] = dir == 1 ? (side == 0 ? 0 : bsize[1] + stenEnd[1] - 1)
+                    : bsize[1] + stenEnd[1] - 1;
+
+    for (int iy = s[1]; iy < e[1]; iy++)
+      for (int ix = s[0]; ix < e[0]; ix++)
+        cb->Access(ix - stenBeg[0], iy - stenBeg[1], 0) = cb->Access(
+            (dir == 0 ? (side == 0 ? 0 : bsize[0] - 1) : ix) - stenBeg[0],
+            (dir == 1 ? (side == 0 ? 0 : bsize[1] - 1) : iy) - stenBeg[1], 0);
+  }
+
+public:
+  typedef typename TGrid::BlockType::ElementType ElementTypeBlock;
+  typedef typename TGrid::BlockType::ElementType ElementType;
+  using Real = typename ElementType::RealType; ///< Number type used by Element
+                                               ///< (double/float etc.)
+  /// Will return 'false' as the boundary conditions are not periodic for this
+  /// BlockLab.
+  virtual bool is_xperiodic() override { return false; }
+  /// Will return 'false' as the boundary conditions are not periodic for this
+  /// BlockLab.
+  virtual bool is_yperiodic() override { return false; }
+  /// Will return 'false' as the boundary conditions are not periodic for this
+  /// BlockLab.
+  virtual bool is_zperiodic() override { return false; }
+
+  BlockLabNeumann() = default;
+  BlockLabNeumann(const BlockLabNeumann &) = delete;
+  BlockLabNeumann &operator=(const BlockLabNeumann &) = delete;
+
+  /// Apply the boundary condition; 'coarse' is set to true if the boundary
+  /// condition should be applied to the coarsened version of the BlockLab (see
+  /// also BlockLab).
+  void _apply_bc(const cubism::BlockInfo &info, const Real t = 0,
+                 const bool coarse = false) override {
+    if (DIM == 2) {
+      if (info.index[0] == 0)
+        this->template Neumann2D<0, 0>(coarse);
+      if (info.index[0] == this->NX - 1)
+        this->template Neumann2D<0, 1>(coarse);
+      if (info.index[1] == 0)
+        this->template Neumann2D<1, 0>(coarse);
+      if (info.index[1] == this->NY - 1)
+        this->template Neumann2D<1, 1>(coarse);
+    } else if (DIM == 3) {
+      if (info.index[0] == 0)
+        this->template Neumann3D<0, 0>(coarse);
+      if (info.index[0] == this->NX - 1)
+        this->template Neumann3D<0, 1>(coarse);
+      if (info.index[1] == 0)
+        this->template Neumann3D<1, 0>(coarse);
+      if (info.index[1] == this->NY - 1)
+        this->template Neumann3D<1, 1>(coarse);
+      if (info.index[2] == 0)
+        this->template Neumann3D<2, 0>(coarse);
+      if (info.index[2] == this->NZ - 1)
+        this->template Neumann3D<2, 1>(coarse);
+    }
+  }
+};
+
+} // namespace cubism
+
+
+// https://github.com/open-mpi/ompi/issues/5157#issuecomment-388495496
+#define OMPI_SKIP_MPICXX 1 // silence annoying openmpi warnings
+
+using namespace cubism;
+
+#ifndef CUP_BLOCK_SIZEX
+#define CUP_BLOCK_SIZEX 8
+#define CUP_BLOCK_SIZEY 8
+#define CUP_BLOCK_SIZEZ 8
+#endif
+
+CubismUP_3D_NAMESPACE_BEGIN
+
+    enum BCflag {
+      freespace,
+      periodic,
+      wall
+    };
+inline BCflag string2BCflag(const std::string &strFlag) {
+  if (strFlag == "periodic")
+    return periodic;
+  else if (strFlag == "wall")
+    return wall;
+  else if (strFlag == "freespace")
+    return freespace;
+  else {
+    fprintf(stderr, "BC not recognized %s\n", strFlag.c_str());
+    fflush(0);
+    abort();
+    return periodic; // dummy
+  }
+}
+
+// CAREFUL THESE ARE GLOBAL VARIABLES!
+extern BCflag cubismBCX;
+extern BCflag cubismBCY;
+extern BCflag cubismBCZ;
+
+template <typename TGrid,
+          template <typename X> class allocator = std::allocator,
+          int direction = 0>
+class BlockLabBC : public cubism::BlockLab<TGrid, allocator> {
+  static constexpr int sizeX = TGrid::BlockType::sizeX;
+  static constexpr int sizeY = TGrid::BlockType::sizeY;
+  static constexpr int sizeZ = TGrid::BlockType::sizeZ;
+  typedef typename TGrid::BlockType::ElementType ElementTypeBlock;
+
+  // Used for Boundary Conditions:
+  // Apply bc on face of direction dir and side side (0 or 1):
+  template <int dir, int side> void applyBCfaceOpen(const bool coarse = false) {
+    // First we apply zero Neumann BCs to all variables. Then, if we are dealing
+    // with a VectorElement (which has DIM=3), we set the normal velocity to
+    // zero. Second order Neumann   BCs mean than u_{i} = u_{i+1} Second order
+    // Dirichlet BCs mean than u_{i} = -u_{i+1}
+    if (!coarse) {
+      auto *const cb = this->m_cacheBlock;
+
+      int s[3] = {0, 0, 0}, e[3] = {0, 0, 0};
+      const int *const stenBeg = this->m_stencilStart;
+      const int *const stenEnd = this->m_stencilEnd;
+      s[0] = dir == 0 ? (side == 0 ? stenBeg[0] : sizeX) : 0;
+      s[1] = dir == 1 ? (side == 0 ? stenBeg[1] : sizeY) : 0;
+      s[2] = dir == 2 ? (side == 0 ? stenBeg[2] : sizeZ) : 0;
+      e[0] = dir == 0 ? (side == 0 ? 0 : sizeX + stenEnd[0] - 1) : sizeX;
+      e[1] = dir == 1 ? (side == 0 ? 0 : sizeY + stenEnd[1] - 1) : sizeY;
+      e[2] = dir == 2 ? (side == 0 ? 0 : sizeZ + stenEnd[2] - 1) : sizeZ;
+
+      if (ElementTypeBlock::DIM == 1) {
+        const int coef = (dir == direction) ? -1 : +1;
+        for (int iz = s[2]; iz < e[2]; iz++)
+          for (int iy = s[1]; iy < e[1]; iy++)
+            for (int ix = s[0]; ix < e[0]; ix++) {
+              cb->Access(ix - stenBeg[0], iy - stenBeg[1], iz - stenBeg[2]) =
+                  coef *
+                  cb->Access((dir == 0 ? (side == 0 ? 0 : sizeX - 1) : ix) -
+                                 stenBeg[0],
+                             (dir == 1 ? (side == 0 ? 0 : sizeY - 1) : iy) -
+                                 stenBeg[1],
+                             (dir == 2 ? (side == 0 ? 0 : sizeZ - 1) : iz) -
+                                 stenBeg[2]);
+            }
+      } else {
+        for (int iz = s[2]; iz < e[2]; iz++)
+          for (int iy = s[1]; iy < e[1]; iy++)
+            for (int ix = s[0]; ix < e[0]; ix++) {
+              cb->Access(ix - stenBeg[0], iy - stenBeg[1], iz - stenBeg[2]) =
+                  cb->Access((dir == 0 ? (side == 0 ? 0 : sizeX - 1) : ix) -
+                                 stenBeg[0],
+                             (dir == 1 ? (side == 0 ? 0 : sizeY - 1) : iy) -
+                                 stenBeg[1],
+                             (dir == 2 ? (side == 0 ? 0 : sizeZ - 1) : iz) -
+                                 stenBeg[2]);
+              cb->Access(ix - stenBeg[0], iy - stenBeg[1], iz - stenBeg[2])
+                  .member(dir) =
+                  (-1.) *
+                  cb->Access((dir == 0 ? (side == 0 ? 0 : sizeX - 1) : ix) -
+                                 stenBeg[0],
+                             (dir == 1 ? (side == 0 ? 0 : sizeY - 1) : iy) -
+                                 stenBeg[1],
+                             (dir == 2 ? (side == 0 ? 0 : sizeZ - 1) : iz) -
+                                 stenBeg[2])
+                      .member(dir);
+            }
+      }
+
+      // tensorial edges and corners also filled
+      const int aux = coarse ? 2 : 1;
+      const int bsize[3] = {sizeX / aux, sizeY / aux, sizeZ / aux};
+      int s_[3], e_[3];
+      s_[dir] = stenBeg[dir] * (1 - side) + bsize[dir] * side;
+      e_[dir] = (bsize[dir] - 1 + stenEnd[dir]) * side;
+      const int d1 = (dir + 1) % 3;
+      const int d2 = (dir + 2) % 3;
+
+      if (ElementTypeBlock::DIM == 1) {
+        const int coef = (dir == direction) ? -1 : +1;
+        for (int b = 0; b < 2; ++b)
+          for (int a = 0; a < 2; ++a) {
+            s_[d1] = stenBeg[d1] + a * b * (bsize[d1] - stenBeg[d1]);
+            s_[d2] = stenBeg[d2] + (a - a * b) * (bsize[d2] - stenBeg[d2]);
+            e_[d1] = (1 - b + a * b) * (bsize[d1] - 1 + stenEnd[d1]);
+            e_[d2] = (a + b - a * b) * (bsize[d2] - 1 + stenEnd[d2]);
+            for (int iz = s_[2]; iz < e_[2]; iz++)
+              for (int iy = s_[1]; iy < e_[1]; iy++)
+                for (int ix = s_[0]; ix < e_[0]; ix++) {
+                  cb->Access(ix - stenBeg[0], iy - stenBeg[1],
+                             iz - stenBeg[2]) =
+                      coef * (dir == 0)
+                          ? cb->Access(side * (bsize[0] - 1) - stenBeg[0],
+                                       iy - stenBeg[1], iz - stenBeg[2])
+                          : (dir == 1
+                                 ? cb->Access(ix - stenBeg[0],
+                                              side * (bsize[1] - 1) -
+                                                  stenBeg[1],
+                                              iz - stenBeg[2])
+                                 : cb->Access(ix - stenBeg[0], iy - stenBeg[1],
+                                              side * (bsize[2] - 1) -
+                                                  stenBeg[2]));
+                }
+          }
+      } else {
+        for (int b = 0; b < 2; ++b)
+          for (int a = 0; a < 2; ++a) {
+            s_[d1] = stenBeg[d1] + a * b * (bsize[d1] - stenBeg[d1]);
+            s_[d2] = stenBeg[d2] + (a - a * b) * (bsize[d2] - stenBeg[d2]);
+            e_[d1] = (1 - b + a * b) * (bsize[d1] - 1 + stenEnd[d1]);
+            e_[d2] = (a + b - a * b) * (bsize[d2] - 1 + stenEnd[d2]);
+            for (int iz = s_[2]; iz < e_[2]; iz++)
+              for (int iy = s_[1]; iy < e_[1]; iy++)
+                for (int ix = s_[0]; ix < e_[0]; ix++) {
+                  cb->Access(ix - stenBeg[0], iy - stenBeg[1],
+                             iz - stenBeg[2]) =
+                      dir == 0 ? cb->Access(side * (bsize[0] - 1) - stenBeg[0],
+                                            iy - stenBeg[1], iz - stenBeg[2])
+                               : (dir == 1 ? cb->Access(ix - stenBeg[0],
+                                                        side * (bsize[1] - 1) -
+                                                            stenBeg[1],
+                                                        iz - stenBeg[2])
+                                           : cb->Access(ix - stenBeg[0],
+                                                        iy - stenBeg[1],
+                                                        side * (bsize[2] - 1) -
+                                                            stenBeg[2]));
+                  cb->Access(ix - stenBeg[0], iy - stenBeg[1], iz - stenBeg[2])
+                      .member(dir) =
+                      dir == 0
+                          ? (-1.) *
+                                cb->Access(side * (bsize[0] - 1) - stenBeg[0],
+                                           iy - stenBeg[1], iz - stenBeg[2])
+                                    .member(dir)
+                          : (dir == 1
+                                 ? (-1.) * cb->Access(ix - stenBeg[0],
+                                                      side * (bsize[1] - 1) -
+                                                          stenBeg[1],
+                                                      iz - stenBeg[2])
+                                               .member(dir)
+                                 : (-1.) * cb->Access(ix - stenBeg[0],
+                                                      iy - stenBeg[1],
+                                                      side * (bsize[2] - 1) -
+                                                          stenBeg[2])
+                                               .member(dir));
+                }
+          }
+      }
+    } else {
+      auto *const cb = this->m_CoarsenedBlock;
+
+      int s[3] = {0, 0, 0}, e[3] = {0, 0, 0};
+      const int eI[3] = {
+          (this->m_stencilEnd[0]) / 2 + 1 + this->m_InterpStencilEnd[0] - 1,
+          (this->m_stencilEnd[1]) / 2 + 1 + this->m_InterpStencilEnd[1] - 1,
+          (this->m_stencilEnd[2]) / 2 + 1 + this->m_InterpStencilEnd[2] - 1};
+      const int sI[3] = {
+          (this->m_stencilStart[0] - 1) / 2 + this->m_InterpStencilStart[0],
+          (this->m_stencilStart[1] - 1) / 2 + this->m_InterpStencilStart[1],
+          (this->m_stencilStart[2] - 1) / 2 + this->m_InterpStencilStart[2]};
+
+      const int *const stenBeg = sI;
+      const int *const stenEnd = eI;
+      s[0] = dir == 0 ? (side == 0 ? stenBeg[0] : sizeX / 2) : 0;
+      s[1] = dir == 1 ? (side == 0 ? stenBeg[1] : sizeY / 2) : 0;
+      s[2] = dir == 2 ? (side == 0 ? stenBeg[2] : sizeZ / 2) : 0;
+      e[0] =
+          dir == 0 ? (side == 0 ? 0 : sizeX / 2 + stenEnd[0] - 1) : sizeX / 2;
+      e[1] =
+          dir == 1 ? (side == 0 ? 0 : sizeY / 2 + stenEnd[1] - 1) : sizeY / 2;
+      e[2] =
+          dir == 2 ? (side == 0 ? 0 : sizeZ / 2 + stenEnd[2] - 1) : sizeZ / 2;
+
+      if (ElementTypeBlock::DIM == 1) {
+        const int coef = (dir == direction) ? -1 : +1;
+        for (int iz = s[2]; iz < e[2]; iz++)
+          for (int iy = s[1]; iy < e[1]; iy++)
+            for (int ix = s[0]; ix < e[0]; ix++) {
+              cb->Access(ix - stenBeg[0], iy - stenBeg[1], iz - stenBeg[2]) =
+                  coef *
+                  cb->Access((dir == 0 ? (side == 0 ? 0 : sizeX / 2 - 1) : ix) -
+                                 stenBeg[0],
+                             (dir == 1 ? (side == 0 ? 0 : sizeY / 2 - 1) : iy) -
+                                 stenBeg[1],
+                             (dir == 2 ? (side == 0 ? 0 : sizeZ / 2 - 1) : iz) -
+                                 stenBeg[2]);
+            }
+      } else {
+        for (int iz = s[2]; iz < e[2]; iz++)
+          for (int iy = s[1]; iy < e[1]; iy++)
+            for (int ix = s[0]; ix < e[0]; ix++) {
+              cb->Access(ix - stenBeg[0], iy - stenBeg[1], iz - stenBeg[2]) =
+                  cb->Access((dir == 0 ? (side == 0 ? 0 : sizeX / 2 - 1) : ix) -
+                                 stenBeg[0],
+                             (dir == 1 ? (side == 0 ? 0 : sizeY / 2 - 1) : iy) -
+                                 stenBeg[1],
+                             (dir == 2 ? (side == 0 ? 0 : sizeZ / 2 - 1) : iz) -
+                                 stenBeg[2]);
+              cb->Access(ix - stenBeg[0], iy - stenBeg[1], iz - stenBeg[2])
+                  .member(dir) =
+                  (-1.) *
+                  cb->Access((dir == 0 ? (side == 0 ? 0 : sizeX / 2 - 1) : ix) -
+                                 stenBeg[0],
+                             (dir == 1 ? (side == 0 ? 0 : sizeY / 2 - 1) : iy) -
+                                 stenBeg[1],
+                             (dir == 2 ? (side == 0 ? 0 : sizeZ / 2 - 1) : iz) -
+                                 stenBeg[2])
+                      .member(dir);
+            }
+      }
+
+      // tensorial edges and corners also filled (this is necessary for the
+      // coarse block!)
+      const int aux = coarse ? 2 : 1;
+      const int bsize[3] = {sizeX / aux, sizeY / aux, sizeZ / aux};
+      int s_[3], e_[3];
+      s_[dir] = stenBeg[dir] * (1 - side) + bsize[dir] * side;
+      e_[dir] = (bsize[dir] - 1 + stenEnd[dir]) * side;
+      const int d1 = (dir + 1) % 3;
+      const int d2 = (dir + 2) % 3;
+
+      if (ElementTypeBlock::DIM == 1) {
+        const int coef = (dir == direction) ? -1 : +1;
+        for (int b = 0; b < 2; ++b)
+          for (int a = 0; a < 2; ++a) {
+            s_[d1] = stenBeg[d1] + a * b * (bsize[d1] - stenBeg[d1]);
+            s_[d2] = stenBeg[d2] + (a - a * b) * (bsize[d2] - stenBeg[d2]);
+            e_[d1] = (1 - b + a * b) * (bsize[d1] - 1 + stenEnd[d1]);
+            e_[d2] = (a + b - a * b) * (bsize[d2] - 1 + stenEnd[d2]);
+            for (int iz = s_[2]; iz < e_[2]; iz++)
+              for (int iy = s_[1]; iy < e_[1]; iy++)
+                for (int ix = s_[0]; ix < e_[0]; ix++) {
+                  cb->Access(ix - stenBeg[0], iy - stenBeg[1],
+                             iz - stenBeg[2]) =
+                      coef * (dir == 0)
+                          ? cb->Access(side * (bsize[0] - 1) - stenBeg[0],
+                                       iy - stenBeg[1], iz - stenBeg[2])
+                          : (dir == 1
+                                 ? cb->Access(ix - stenBeg[0],
+                                              side * (bsize[1] - 1) -
+                                                  stenBeg[1],
+                                              iz - stenBeg[2])
+                                 : cb->Access(ix - stenBeg[0], iy - stenBeg[1],
+                                              side * (bsize[2] - 1) -
+                                                  stenBeg[2]));
+                }
+          }
+      } else {
+        for (int b = 0; b < 2; ++b)
+          for (int a = 0; a < 2; ++a) {
+            s_[d1] = stenBeg[d1] + a * b * (bsize[d1] - stenBeg[d1]);
+            s_[d2] = stenBeg[d2] + (a - a * b) * (bsize[d2] - stenBeg[d2]);
+            e_[d1] = (1 - b + a * b) * (bsize[d1] - 1 + stenEnd[d1]);
+            e_[d2] = (a + b - a * b) * (bsize[d2] - 1 + stenEnd[d2]);
+            for (int iz = s_[2]; iz < e_[2]; iz++)
+              for (int iy = s_[1]; iy < e_[1]; iy++)
+                for (int ix = s_[0]; ix < e_[0]; ix++) {
+                  cb->Access(ix - stenBeg[0], iy - stenBeg[1],
+                             iz - stenBeg[2]) =
+                      dir == 0 ? cb->Access(side * (bsize[0] - 1) - stenBeg[0],
+                                            iy - stenBeg[1], iz - stenBeg[2])
+                               : (dir == 1 ? cb->Access(ix - stenBeg[0],
+                                                        side * (bsize[1] - 1) -
+                                                            stenBeg[1],
+                                                        iz - stenBeg[2])
+                                           : cb->Access(ix - stenBeg[0],
+                                                        iy - stenBeg[1],
+                                                        side * (bsize[2] - 1) -
+                                                            stenBeg[2]));
+                  cb->Access(ix - stenBeg[0], iy - stenBeg[1], iz - stenBeg[2])
+                      .member(dir) =
+                      dir == 0
+                          ? (-1.) *
+                                cb->Access(side * (bsize[0] - 1) - stenBeg[0],
+                                           iy - stenBeg[1], iz - stenBeg[2])
+                                    .member(dir)
+                          : (dir == 1
+                                 ? (-1.) * cb->Access(ix - stenBeg[0],
+                                                      side * (bsize[1] - 1) -
+                                                          stenBeg[1],
+                                                      iz - stenBeg[2])
+                                               .member(dir)
+                                 : (-1.) * cb->Access(ix - stenBeg[0],
+                                                      iy - stenBeg[1],
+                                                      side * (bsize[2] - 1) -
+                                                          stenBeg[2])
+                                               .member(dir));
+                }
+          }
+      }
+    }
+  }
+  template <int dir, int side> void applyBCfaceWall(const bool coarse = false) {
+    if (!coarse) {
+      auto *const cb = this->m_cacheBlock;
+      int s[3] = {0, 0, 0}, e[3] = {0, 0, 0};
+      const int *const stenBeg = this->m_stencilStart;
+      const int *const stenEnd = this->m_stencilEnd;
+      s[0] = dir == 0 ? (side == 0 ? stenBeg[0] : sizeX) : 0;
+      s[1] = dir == 1 ? (side == 0 ? stenBeg[1] : sizeY) : 0;
+      s[2] = dir == 2 ? (side == 0 ? stenBeg[2] : sizeZ) : 0;
+      e[0] = dir == 0 ? (side == 0 ? 0 : sizeX + stenEnd[0] - 1) : sizeX;
+      e[1] = dir == 1 ? (side == 0 ? 0 : sizeY + stenEnd[1] - 1) : sizeY;
+      e[2] = dir == 2 ? (side == 0 ? 0 : sizeZ + stenEnd[2] - 1) : sizeZ;
+      for (int iz = s[2]; iz < e[2]; iz++)
+        for (int iy = s[1]; iy < e[1]; iy++)
+          for (int ix = s[0]; ix < e[0]; ix++)
+            for (int k = 0; k < ElementTypeBlock::DIM; k++)
+              cb->Access(ix - stenBeg[0], iy - stenBeg[1], iz - stenBeg[2])
+                  .member(k) =
+                  (-1.0) *
+                  cb->Access((dir == 0 ? (side == 0 ? 0 : sizeX - 1) : ix) -
+                                 stenBeg[0],
+                             (dir == 1 ? (side == 0 ? 0 : sizeY - 1) : iy) -
+                                 stenBeg[1],
+                             (dir == 2 ? (side == 0 ? 0 : sizeZ - 1) : iz) -
+                                 stenBeg[2])
+                      .member(k);
+
+      // tensorial edges and corners also filled
+      const int aux = coarse ? 2 : 1;
+      const int bsize[3] = {sizeX / aux, sizeY / aux, sizeZ / aux};
+      int s_[3], e_[3];
+      s_[dir] = stenBeg[dir] * (1 - side) + bsize[dir] * side;
+      e_[dir] = (bsize[dir] - 1 + stenEnd[dir]) * side;
+      const int d1 = (dir + 1) % 3;
+      const int d2 = (dir + 2) % 3;
+      for (int b = 0; b < 2; ++b)
+        for (int a = 0; a < 2; ++a) {
+          s_[d1] = stenBeg[d1] + a * b * (bsize[d1] - stenBeg[d1]);
+          s_[d2] = stenBeg[d2] + (a - a * b) * (bsize[d2] - stenBeg[d2]);
+          e_[d1] = (1 - b + a * b) * (bsize[d1] - 1 + stenEnd[d1]);
+          e_[d2] = (a + b - a * b) * (bsize[d2] - 1 + stenEnd[d2]);
+          for (int iz = s_[2]; iz < e_[2]; iz++)
+            for (int iy = s_[1]; iy < e_[1]; iy++)
+              for (int ix = s_[0]; ix < e_[0]; ix++)
+                for (int k = 0; k < ElementTypeBlock::DIM; k++) {
+                  cb->Access(ix - stenBeg[0], iy - stenBeg[1], iz - stenBeg[2])
+                      .member(k) =
+                      (-1.0) *
+                      (dir == 0 ? cb->Access(side * (bsize[0] - 1) - stenBeg[0],
+                                             iy - stenBeg[1], iz - stenBeg[2])
+                                      .member(k)
+                                : (dir == 1 ? cb->Access(ix - stenBeg[0],
+                                                         side * (bsize[1] - 1) -
+                                                             stenBeg[1],
+                                                         iz - stenBeg[2])
+                                                  .member(k)
+                                            : cb->Access(ix - stenBeg[0],
+                                                         iy - stenBeg[1],
+                                                         side * (bsize[2] - 1) -
+                                                             stenBeg[2])
+                                                  .member(k)));
+                }
+        }
+    } else {
+      auto *const cb = this->m_CoarsenedBlock;
+
+      int s[3] = {0, 0, 0}, e[3] = {0, 0, 0};
+      const int eI[3] = {
+          (this->m_stencilEnd[0]) / 2 + 1 + this->m_InterpStencilEnd[0] - 1,
+          (this->m_stencilEnd[1]) / 2 + 1 + this->m_InterpStencilEnd[1] - 1,
+          (this->m_stencilEnd[2]) / 2 + 1 + this->m_InterpStencilEnd[2] - 1};
+      const int sI[3] = {
+          (this->m_stencilStart[0] - 1) / 2 + this->m_InterpStencilStart[0],
+          (this->m_stencilStart[1] - 1) / 2 + this->m_InterpStencilStart[1],
+          (this->m_stencilStart[2] - 1) / 2 + this->m_InterpStencilStart[2]};
+
+      const int *const stenBeg = sI;
+      const int *const stenEnd = eI;
+      s[0] = dir == 0 ? (side == 0 ? stenBeg[0] : sizeX / 2) : 0;
+      s[1] = dir == 1 ? (side == 0 ? stenBeg[1] : sizeY / 2) : 0;
+      s[2] = dir == 2 ? (side == 0 ? stenBeg[2] : sizeZ / 2) : 0;
+      e[0] =
+          dir == 0 ? (side == 0 ? 0 : sizeX / 2 + stenEnd[0] - 1) : sizeX / 2;
+      e[1] =
+          dir == 1 ? (side == 0 ? 0 : sizeY / 2 + stenEnd[1] - 1) : sizeY / 2;
+      e[2] =
+          dir == 2 ? (side == 0 ? 0 : sizeZ / 2 + stenEnd[2] - 1) : sizeZ / 2;
+      for (int iz = s[2]; iz < e[2]; iz++)
+        for (int iy = s[1]; iy < e[1]; iy++)
+          for (int ix = s[0]; ix < e[0]; ix++)
+            for (int k = 0; k < ElementTypeBlock::DIM; k++) {
+              cb->Access(ix - stenBeg[0], iy - stenBeg[1], iz - stenBeg[2])
+                  .member(k) =
+                  (-1.0) *
+                  cb->Access((dir == 0 ? (side == 0 ? 0 : sizeX / 2 - 1) : ix) -
+                                 stenBeg[0],
+                             (dir == 1 ? (side == 0 ? 0 : sizeY / 2 - 1) : iy) -
+                                 stenBeg[1],
+                             (dir == 2 ? (side == 0 ? 0 : sizeZ / 2 - 1) : iz) -
+                                 stenBeg[2])
+                      .member(k);
+            }
+
+      // tensorial edges and corners also filled (this is necessary for the
+      // coarse block!)
+      const int aux = coarse ? 2 : 1;
+      const int bsize[3] = {sizeX / aux, sizeY / aux, sizeZ / aux};
+      int s_[3], e_[3];
+      s_[dir] = stenBeg[dir] * (1 - side) + bsize[dir] * side;
+      e_[dir] = (bsize[dir] - 1 + stenEnd[dir]) * side;
+      const int d1 = (dir + 1) % 3;
+      const int d2 = (dir + 2) % 3;
+      for (int b = 0; b < 2; ++b)
+        for (int a = 0; a < 2; ++a) {
+          s_[d1] = stenBeg[d1] + a * b * (bsize[d1] - stenBeg[d1]);
+          s_[d2] = stenBeg[d2] + (a - a * b) * (bsize[d2] - stenBeg[d2]);
+          e_[d1] = (1 - b + a * b) * (bsize[d1] - 1 + stenEnd[d1]);
+          e_[d2] = (a + b - a * b) * (bsize[d2] - 1 + stenEnd[d2]);
+          for (int iz = s_[2]; iz < e_[2]; iz++)
+            for (int iy = s_[1]; iy < e_[1]; iy++)
+              for (int ix = s_[0]; ix < e_[0]; ix++)
+                for (int k = 0; k < ElementTypeBlock::DIM; k++) {
+                  cb->Access(ix - stenBeg[0], iy - stenBeg[1], iz - stenBeg[2])
+                      .member(k) =
+                      (-1.0) *
+                      (dir == 0 ? cb->Access(side * (bsize[0] - 1) - stenBeg[0],
+                                             iy - stenBeg[1], iz - stenBeg[2])
+                                      .member(k)
+                                : (dir == 1 ? cb->Access(ix - stenBeg[0],
+                                                         side * (bsize[1] - 1) -
+                                                             stenBeg[1],
+                                                         iz - stenBeg[2])
+                                                  .member(k)
+                                            : cb->Access(ix - stenBeg[0],
+                                                         iy - stenBeg[1],
+                                                         side * (bsize[2] - 1) -
+                                                             stenBeg[2])
+                                                  .member(k)));
+                }
+        }
+    }
+  }
+
+public:
+  typedef typename TGrid::BlockType::ElementType ElementType;
+
+  virtual bool is_xperiodic() override { return cubismBCX == periodic; }
+  virtual bool is_yperiodic() override { return cubismBCY == periodic; }
+  virtual bool is_zperiodic() override { return cubismBCZ == periodic; }
+
+  BlockLabBC() = default;
+  BlockLabBC(const BlockLabBC &) = delete;
+  BlockLabBC &operator=(const BlockLabBC &) = delete;
+
+  // Called by Cubism:
+  // wall means u=v=w=0 and dp/dn=0
+  // freespace means normal velocity=0, dp/dn=0 and d(tangential
+  // velocities)/dn=0
+  void _apply_bc(const cubism::BlockInfo &info, const Real t = 0,
+                 const bool coarse = false) {
+    const BCflag BCX = cubismBCX;
+    const BCflag BCY = cubismBCY;
+    const BCflag BCZ = cubismBCZ;
+    if (BCX == wall) {
+      if (info.index[0] == 0)
+        this->template applyBCfaceWall<0, 0>(coarse);
+      if (info.index[0] == this->NX - 1)
+        this->template applyBCfaceWall<0, 1>(coarse);
+    } else if (BCX != periodic) {
+      // then either we have freespace or wall. If we have wall, we still apply
+      // freespace to the PoissonElement, as pressure has zero Neumann BCS
+      if (info.index[0] == 0)
+        this->template applyBCfaceOpen<0, 0>(coarse);
+      if (info.index[0] == this->NX - 1)
+        this->template applyBCfaceOpen<0, 1>(coarse);
+    }
+    if (BCY == wall) {
+      if (info.index[1] == 0)
+        this->template applyBCfaceWall<1, 0>(coarse);
+      if (info.index[1] == this->NY - 1)
+        this->template applyBCfaceWall<1, 1>(coarse);
+    } else if (BCY != periodic) {
+      // then either we have freespace or wall. If we have wall, we still apply
+      // freespace to the PoissonElement, as pressure has zero Neumann BCS
+      if (info.index[1] == 0)
+        this->template applyBCfaceOpen<1, 0>(coarse);
+      if (info.index[1] == this->NY - 1)
+        this->template applyBCfaceOpen<1, 1>(coarse);
+    }
+    if (BCZ == wall) {
+      if (info.index[2] == 0)
+        this->template applyBCfaceWall<2, 0>(coarse);
+      if (info.index[2] == this->NZ - 1)
+        this->template applyBCfaceWall<2, 1>(coarse);
+    } else if (BCZ != periodic) {
+      // then either we have freespace or wall. If we have wall, we still apply
+      // freespace to the PoissonElement, as pressure has zero Neumann BCS
+      if (info.index[2] == 0)
+        this->template applyBCfaceOpen<2, 0>(coarse);
+      if (info.index[2] == this->NZ - 1)
+        this->template applyBCfaceOpen<2, 1>(coarse);
+    }
+  }
+};
+
+template <typename TGrid,
+          template <typename X> class allocator = std::allocator>
+class BlockLabNeumann3D : public cubism::BlockLabNeumann<TGrid, 3, allocator> {
+public:
+  using cubismLab = cubism::BlockLabNeumann<TGrid, 3, allocator>;
+  virtual bool is_xperiodic() override { return cubismBCX == periodic; }
+  virtual bool is_yperiodic() override { return cubismBCY == periodic; }
+  virtual bool is_zperiodic() override { return cubismBCZ == periodic; }
+
+  // Called by Cubism:
+  void _apply_bc(const cubism::BlockInfo &info, const Real t = 0,
+                 const bool coarse = false) override {
+    if (is_xperiodic() == false) {
+      if (info.index[0] == 0)
+        cubismLab::template Neumann3D<0, 0>(coarse);
+      if (info.index[0] == this->NX - 1)
+        cubismLab::template Neumann3D<0, 1>(coarse);
+    }
+    if (is_yperiodic() == false) {
+      if (info.index[1] == 0)
+        cubismLab::template Neumann3D<1, 0>(coarse);
+      if (info.index[1] == this->NY - 1)
+        cubismLab::template Neumann3D<1, 1>(coarse);
+    }
+    if (is_zperiodic() == false) {
+      if (info.index[2] == 0)
+        cubismLab::template Neumann3D<2, 0>(coarse);
+      if (info.index[2] == this->NZ - 1)
+        cubismLab::template Neumann3D<2, 1>(coarse);
+    }
+  }
+};
+
+struct StreamerVectorX {
+  static constexpr int NCHANNELS = 1;
+  template <typename TBlock, typename T>
+  static void operate(TBlock &b, const int ix, const int iy, const int iz,
+                      T output[NCHANNELS]) {
+    output[0] = b(ix, iy, iz).u[0];
+  }
+  static std::string prefix() { return std::string(""); }
+  static const char *getAttributeName() { return "VectorX"; }
+};
+struct StreamerVectorY {
+  static constexpr int NCHANNELS = 1;
+  template <typename TBlock, typename T>
+  static void operate(TBlock &b, const int ix, const int iy, const int iz,
+                      T output[NCHANNELS]) {
+    output[0] = b(ix, iy, iz).u[1];
+  }
+  static std::string prefix() { return std::string(""); }
+  static const char *getAttributeName() { return "VectorY"; }
+};
+struct StreamerVectorZ {
+  static constexpr int NCHANNELS = 1;
+  template <typename TBlock, typename T>
+  static void operate(TBlock &b, const int ix, const int iy, const int iz,
+                      T output[NCHANNELS]) {
+    output[0] = b(ix, iy, iz).u[2];
+  }
+  static std::string prefix() { return std::string(""); }
+  static const char *getAttributeName() { return "VectorZ"; }
+};
+
+// The alignmnet of 32 is sufficient for AVX-256, but we put 64 to cover
+// AVX-512.
+static constexpr int kBlockAlignment = 64;
+template <typename T>
+using aligned_block_allocator = aligned_allocator<T, kBlockAlignment>;
+
+using ScalarElement = cubism::ScalarElement<Real>;
+using ScalarBlock = cubism::GridBlock<CUP_BLOCK_SIZEX, 3, ScalarElement>;
+using ScalarGrid =
+    cubism::GridMPI<cubism::Grid<ScalarBlock, aligned_block_allocator>>;
+using ScalarLab =
+    cubism::BlockLabMPI<BlockLabNeumann3D<ScalarGrid, aligned_block_allocator>>;
+
+using VectorElement = cubism::VectorElement<3, Real>;
+using VectorBlock = cubism::GridBlock<CUP_BLOCK_SIZEX, 3, VectorElement>;
+using VectorGrid =
+    cubism::GridMPI<cubism::Grid<VectorBlock, aligned_block_allocator>>;
+using VectorLab =
+    cubism::BlockLabMPI<BlockLabBC<VectorGrid, aligned_block_allocator>>;
+
+using ScalarAMR = cubism::MeshAdaptation<ScalarLab>;
+using VectorAMR = cubism::MeshAdaptation<VectorLab>;
+
+CubismUP_3D_NAMESPACE_END
+
+namespace cubism {
+class Profiler;
+class ArgumentParser;
+} // namespace cubism
+
+CubismUP_3D_NAMESPACE_BEGIN
+
+    class Operator;
+class Obstacle;
+class ObstacleVector;
+class PoissonSolverBase;
+
+struct SimulationData {
+  // MPI
+  MPI_Comm comm;
+  int rank;
+
+  // Profiler
+  cubism::Profiler *profiler = nullptr;
+
+  // declare grids
+  ScalarGrid *chi = nullptr;
+  ScalarGrid *pres = nullptr;
+  VectorGrid *vel = nullptr;
+  VectorGrid *tmpV = nullptr;
+  ScalarGrid *lhs = nullptr;
+
+  // mesh refinement
+  ScalarAMR *chi_amr;
+  ScalarAMR *pres_amr;
+  VectorAMR *vel_amr;
+  VectorAMR *tmpV_amr;
+  ScalarAMR *lhs_amr;
+
+  // Get blocks on current rank
+  inline std::vector<cubism::BlockInfo> &chiInfo() const {
+    return chi->getBlocksInfo();
+  }
+  inline std::vector<cubism::BlockInfo> &presInfo() const {
+    return pres->getBlocksInfo();
+  }
+  inline std::vector<cubism::BlockInfo> &velInfo() const {
+    return vel->getBlocksInfo();
+  }
+  inline std::vector<cubism::BlockInfo> &tmpVInfo() const {
+    return tmpV->getBlocksInfo();
+  }
+  inline std::vector<cubism::BlockInfo> &lhsInfo() const {
+    return lhs->getBlocksInfo();
+  }
+
+  // Container holding the obstacles
+  ObstacleVector *obstacle_vector = nullptr;
+
+  // Operator Pipeline
+  std::vector<std::shared_ptr<Operator>> pipeline;
+
+  // Pressure solver for PressureProjection
+  std::shared_ptr<PoissonSolverBase> pressureSolver;
+
+  // Timestepping
+  Real dt = 0;        // current timestep
+  Real dt_old = 0;    // previous timestep
+  Real CFL = 0;       // Courant number
+  Real time = 0;      // current time
+  int step = 0;       // currect step number
+  Real endTime = 0;   // stop simulation at t=endTime (=0 means inactive)
+  int nsteps = 0;     // stop simulation after nsteps (=0 means inactive)
+  int rampup;         // exponential CFL rampup for the first 'rampup' steps
+  int step_2nd_start; // explicit Euler for the first 'step_2nd_start' steps (to
+                      // initialize u_{n-1} for n=1)
+  Real coefU[3] = {
+      1.5, -2.0,
+      0.5}; // used for 2nd order time integration of obstacle positions
+
+  // AMR & simulation domain
+  int bpdx, bpdy, bpdz;        // blocks per dimension at refinement level 0
+  int levelStart;              // initial refinement level
+  int levelMax;                // max refinement level
+  Real Rtol;                   // mesh refinement tolerance
+  Real Ctol;                   // mesh compression tolerance
+  std::array<Real, 3> extents; // simulation cubic domain extents
+  Real maxextent;              // max(extents[0],extents[1],extents[2])
+  Real hmin, hmax;             // max and min grid spacing
+  std::array<Real, 3> uinf = {0, 0, 0}; // velocity of Frame of Reference
+  int levelMaxVorticity; // mesh refinement due to vorticity magnitude is
+                         // allowed only up to levelMaxVorticity levels (default
+                         // value is levelMax)
+
+  // Other stuff
+  Real uMax_measured = 0; // max velocity at current timestep
+  Real uMax_allowed; // if uMax_measured > uMax_allowed simulation will abort
+  Real nu;           // fluid kinematic viscosity
+  Real lambda;       // penalisation coefficient
+  bool bImplicitPenalization = true; // explicit/implicit Penalisation
+  Real DLM = 0;                      // if DLM>0 then lambda=DLM/dt
+  Real PoissonErrorTol;              // Poisson solver absolute error tolerance
+  Real PoissonErrorTolRel;           // Poisson solver relative error tolerance
+  std::string poissonSolver;     // Type of backed solver for poisson equation
+  bool bCollision = false;       // indicator for collision between obstacles
+  std::vector<int> bCollisionID; // vector with indices of colliding obstacles
+  BCflag BCx_flag = freespace;   // boundary conditions in X
+  BCflag BCy_flag = freespace;   // boundary conditions in Y
+  BCflag BCz_flag = freespace;   // boundary conditions in Z
+  int bMeanConstraint =
+      1; // if 0, no zero mean constraint for Poisson
+         // if 1, replace one equation with zero mean contraint
+         // if 2, add mean to LHS. Ie. solve nabla^2 P + mean(P) = RHS
+         // which is mathematically equivalent to the zero-mean
+         // solution of nabla^2 P = RHS (for zero Neumann BCs of course)
+         // if >2, we set one grid point to p=0
+  bool StaticObstacles =
+      false; // if true, obstacles do not change shape or location.
+             // Useful when obstacle creation is expensive (for ExternalObstacle
+             // for example) as it skips obstacle creation whenever the mesh is
+             // not refined
+  bool MeshChanged = true; // becomes true when the mesh is refined/compressed
+                           // or when load balancing occurs
+
+  // Initial conditions
+  std::string initCond = "zero";
+
+  // uMax Channel flow
+  Real uMax_forced = 0;
+  bool bFixMassFlux = false;
+
+  // Dump Settings
+  int freqDiagnostics = 0;
+  int freqProfiler = 0;
+  int saveFreq = 0;
+  bool bDump = false;
+  bool verbose = false;
+  bool muteAll = false;
+  Real dumpTime = 0;
+  Real nextSaveTime = 0;
+  std::string path4serialization = "./";
+  bool dumpP;
+  bool dumpChi;
+  bool dumpOmega, dumpOmegaX, dumpOmegaY, dumpOmegaZ;
+  bool dumpVelocity, dumpVelocityX, dumpVelocityY, dumpVelocityZ;
+
+  bool implicitDiffusion;
+  Real DiffusionErrorTol;
+  Real DiffusionErrorTolRel;
+
+  void startProfiler(std::string name) const;
+  void stopProfiler() const;
+  void printResetProfiler();
+  void _preprocessArguments();
+  void writeRestartFiles();
+  void readRestartFiles();
+  ~SimulationData();
+  SimulationData() = delete;
+  SimulationData(const SimulationData &) = delete;
+  SimulationData(SimulationData &&) = delete;
+  SimulationData &operator=(const SimulationData &) = delete;
+  SimulationData &operator=(SimulationData &&) = delete;
+  SimulationData(MPI_Comm mpicomm, cubism::ArgumentParser &parser);
+};
+
+CubismUP_3D_NAMESPACE_END
+
+CubismUP_3D_NAMESPACE_BEGIN
+
+    class Operator {
+public:
+  SimulationData &sim;
+  Operator(SimulationData &s) noexcept : sim(s) {}
+  virtual ~Operator() = default;
+  virtual void operator()(Real dt) = 0;
+  virtual std::string getName() = 0;
+};
+CubismUP_3D_NAMESPACE_END
+
+CubismUP_3D_NAMESPACE_BEGIN
+
+    class AdvectionDiffusion : public Operator {
+  std::vector<Real> vOld;
+
+public:
+  AdvectionDiffusion(SimulationData &s) : Operator(s) {}
+
+  ~AdvectionDiffusion() {}
+
+  void operator()(const Real dt);
+
+  std::string getName() { return "AdvectionDiffusion"; }
+};
+
+CubismUP_3D_NAMESPACE_END
+
+namespace cubismup3d {
+namespace diffusion_kernels {
+
+static constexpr int NX = ScalarBlock::sizeX;
+static constexpr int NY = ScalarBlock::sizeY;
+static constexpr int NZ = ScalarBlock::sizeZ;
+static constexpr int N = NX * NY * NZ;
+using Block = Real[NZ][NY][NX];
+
+// Assuming NX == 8, pad not with +/-1 but with +/-4 to reduce the number of
+// unaligned memory accesses, which are up to 2x slower than aligned ones.
+static constexpr int xPad = 4;
+using PaddedBlock = Real[NZ + 2][NY + 2][NX + 2 * xPad];
+
+template <int N> static inline Real sum(const Real (&a)[N]) {
+  Real s = 0;
+  for (int ix = 0; ix < N; ++ix)
+    s += a[ix];
+  return s;
+}
+
+// Simple implementation of the kernel.
+Real kernelDiffusionGetZInnerReference(PaddedBlock &__restrict__ p_,
+                                       Block &__restrict__ Ax_,
+                                       Block &__restrict__ r_,
+                                       Block &__restrict__ block_,
+                                       const Real sqrNorm0, const Real rr);
+
+// Optimized implementation. See the alignment requirements in the code!
+Real kernelDiffusionGetZInner(PaddedBlock &p, const Real *pW, const Real *pE,
+                              Block &__restrict__ Ax, Block &__restrict__ r,
+                              Block &__restrict__ block, Real sqrNorm0, Real rr,
+                              const Real coefficient);
+
+void getZImplParallel(const std::vector<cubism::BlockInfo> &vInfo,
+                      const Real nu, const Real dt);
+
+} // namespace diffusion_kernels
+} // namespace cubismup3d
+
+
+
+CubismUP_3D_NAMESPACE_BEGIN
+
+    class DiffusionSolver {
+public:
+  int mydirection = 0;
+  Real dt;
+
+protected:
+  SimulationData &sim;
+
+  template <typename Lab> struct KernelLHSDiffusion {
+    const SimulationData &sim;
+    KernelLHSDiffusion(const SimulationData &s, const Real _dt)
+        : sim(s), dt(_dt) {}
+    const std::vector<BlockInfo> &lhsInfo = sim.lhsInfo();
+    const Real dt;
+    const int Nx = ScalarBlock::sizeX;
+    const int Ny = ScalarBlock::sizeY;
+    const int Nz = ScalarBlock::sizeZ;
+    const StencilInfo stencil{-1, -1, -1, 2, 2, 2, false, {0}};
+
+    void operator()(const Lab &lab, const BlockInfo &info) const {
+      ScalarBlock &__restrict__ o = (*sim.lhs)(info.blockID);
+      const Real h = info.h;
+      const Real coef = -1.0 / (dt * sim.nu) * h * h * h;
+      for (int z = 0; z < Nz; ++z)
+        for (int y = 0; y < Ny; ++y)
+          for (int x = 0; x < Nx; ++x) {
+            o(x, y, z) =
+                h * (lab(x - 1, y, z) + lab(x + 1, y, z) + lab(x, y - 1, z) +
+                     lab(x, y + 1, z) + lab(x, y, z - 1) + lab(x, y, z + 1) -
+                     6.0 * lab(x, y, z)) +
+                coef * lab(x, y, z);
+          }
+
+      BlockCase<ScalarBlock> *tempCase =
+          (BlockCase<ScalarBlock> *)(lhsInfo[info.blockID].auxiliary);
+
+      if (tempCase == nullptr)
+        return; // no flux corrections needed for this block
+
+      ScalarElement *const faceXm =
+          tempCase->storedFace[0] ? &tempCase->m_pData[0][0] : nullptr;
+      ScalarElement *const faceXp =
+          tempCase->storedFace[1] ? &tempCase->m_pData[1][0] : nullptr;
+      ScalarElement *const faceYm =
+          tempCase->storedFace[2] ? &tempCase->m_pData[2][0] : nullptr;
+      ScalarElement *const faceYp =
+          tempCase->storedFace[3] ? &tempCase->m_pData[3][0] : nullptr;
+      ScalarElement *const faceZm =
+          tempCase->storedFace[4] ? &tempCase->m_pData[4][0] : nullptr;
+      ScalarElement *const faceZp =
+          tempCase->storedFace[5] ? &tempCase->m_pData[5][0] : nullptr;
+
+      if (faceXm != nullptr) {
+        const int x = 0;
+        for (int z = 0; z < Nz; ++z)
+          for (int y = 0; y < Ny; ++y)
+            faceXm[y + Ny * z] = h * (lab(x, y, z) - lab(x - 1, y, z));
+      }
+      if (faceXp != nullptr) {
+        const int x = Nx - 1;
+        for (int z = 0; z < Nz; ++z)
+          for (int y = 0; y < Ny; ++y)
+            faceXp[y + Ny * z] = h * (lab(x, y, z) - lab(x + 1, y, z));
+      }
+      if (faceYm != nullptr) {
+        const int y = 0;
+        for (int z = 0; z < Nz; ++z)
+          for (int x = 0; x < Nx; ++x)
+            faceYm[x + Nx * z] = h * (lab(x, y, z) - lab(x, y - 1, z));
+      }
+      if (faceYp != nullptr) {
+        const int y = Ny - 1;
+        for (int z = 0; z < Nz; ++z)
+          for (int x = 0; x < Nx; ++x)
+            faceYp[x + Nx * z] = h * (lab(x, y, z) - lab(x, y + 1, z));
+      }
+      if (faceZm != nullptr) {
+        const int z = 0;
+        for (int y = 0; y < Ny; ++y)
+          for (int x = 0; x < Nx; ++x)
+            faceZm[x + Nx * y] = h * (lab(x, y, z) - lab(x, y, z - 1));
+      }
+      if (faceZp != nullptr) {
+        const int z = Nz - 1;
+        for (int y = 0; y < Ny; ++y)
+          for (int x = 0; x < Nx; ++x)
+            faceZp[x + Nx * y] = h * (lab(x, y, z) - lab(x, y, z + 1));
+      }
+    }
+  };
+
+  void _preconditioner(const std::vector<Real> &input,
+                       std::vector<Real> &output) {
+    auto &zInfo = sim.pres->getBlocksInfo(); // used for preconditioning
+    const size_t Nblocks = zInfo.size();
+    const int BSX = VectorBlock::sizeX;
+    const int BSY = VectorBlock::sizeY;
+    const int BSZ = VectorBlock::sizeZ;
+
+#pragma omp parallel for
+    for (size_t i = 0; i < Nblocks; i++) {
+      ScalarBlock &__restrict__ bb = (*sim.pres)(i);
+      for (int iz = 0; iz < BSZ; iz++)
+        for (int iy = 0; iy < BSY; iy++)
+          for (int ix = 0; ix < BSX; ix++) {
+            const int j = i * BSX * BSY * BSZ + iz * BSX * BSY + iy * BSX + ix;
+            bb(ix, iy, iz).s = input[j];
+          }
+    }
+
+#pragma omp parallel
+    {
+      cubismup3d::diffusion_kernels::getZImplParallel(sim.presInfo(), sim.nu,
+                                                      dt);
+    }
+
+#pragma omp parallel for
+    for (size_t i = 0; i < Nblocks; i++) {
+      const ScalarBlock &__restrict__ bb = (*sim.pres)(i);
+      for (int iz = 0; iz < BSZ; iz++)
+        for (int iy = 0; iy < BSY; iy++)
+          for (int ix = 0; ix < BSX; ix++) {
+            const int j = i * BSX * BSY * BSZ + iz * BSX * BSY + iy * BSX + ix;
+            output[j] = bb(ix, iy, iz).s;
+            ;
+          }
+    }
+  }
+
+  void _lhs(std::vector<Real> &input, std::vector<Real> &output) {
+    auto &zInfo = sim.pres->getBlocksInfo(); // used for preconditioning
+    auto &AxInfo = sim.lhs->getBlocksInfo(); // will store the LHS result
+    const size_t Nblocks = zInfo.size();
+    const int BSX = VectorBlock::sizeX;
+    const int BSY = VectorBlock::sizeY;
+    const int BSZ = VectorBlock::sizeZ;
+
+#pragma omp parallel for
+    for (size_t i = 0; i < Nblocks; i++) {
+      ScalarBlock &__restrict__ zz = *(ScalarBlock *)zInfo[i].ptrBlock;
+      for (int iz = 0; iz < BSZ; iz++)
+        for (int iy = 0; iy < BSY; iy++)
+          for (int ix = 0; ix < BSX; ix++) {
+            const int j = i * BSX * BSY * BSZ + iz * BSX * BSY + iy * BSX + ix;
+            zz(ix, iy, iz).s = input[j];
+          }
+    }
+
+    using Lab0 =
+        cubism::BlockLabMPI<BlockLabBC<ScalarGrid, aligned_block_allocator, 0>>;
+    using Lab1 =
+        cubism::BlockLabMPI<BlockLabBC<ScalarGrid, aligned_block_allocator, 1>>;
+    using Lab2 =
+        cubism::BlockLabMPI<BlockLabBC<ScalarGrid, aligned_block_allocator, 2>>;
+
+    if (mydirection == 0)
+      compute<Lab0>(KernelLHSDiffusion<Lab0>(sim, dt), sim.pres, sim.lhs);
+    if (mydirection == 1)
+      compute<Lab1>(KernelLHSDiffusion<Lab1>(sim, dt), sim.pres, sim.lhs);
+    if (mydirection == 2)
+      compute<Lab2>(KernelLHSDiffusion<Lab2>(sim, dt), sim.pres, sim.lhs);
+
+#pragma omp parallel for
+    for (size_t i = 0; i < Nblocks; i++) {
+      ScalarBlock &__restrict__ Ax = *(ScalarBlock *)AxInfo[i].ptrBlock;
+      for (int iz = 0; iz < BSZ; iz++)
+        for (int iy = 0; iy < BSY; iy++)
+          for (int ix = 0; ix < BSX; ix++) {
+            const int j = i * BSX * BSY * BSZ + iz * BSX * BSY + iy * BSX + ix;
+            output[j] = Ax(ix, iy, iz).s;
+          }
+    }
+  }
+
+  std::vector<Real> b;
+  std::vector<Real> phat;
+  std::vector<Real> rhat;
+  std::vector<Real> shat;
+  std::vector<Real> what;
+  std::vector<Real> zhat;
+  std::vector<Real> qhat;
+  std::vector<Real> s;
+  std::vector<Real> w;
+  std::vector<Real> z;
+  std::vector<Real> t;
+  std::vector<Real> v;
+  std::vector<Real> q;
+  std::vector<Real> r;
+  std::vector<Real> y;
+  std::vector<Real> x;
+  std::vector<Real> r0;
+  std::vector<Real> x_opt;
+
+public:
+  DiffusionSolver(SimulationData &ss) : sim(ss) {}
+  DiffusionSolver(const DiffusionSolver &c) = delete;
+
+  void solve() {
+    // Algorithm 11 from the paper:
+    //"The communication-hiding pipelined BiCGstab method for the parallel
+    // solution of large unsymmetric linear systems" by S. Cools, W. Vanroose
+    // This is a BiCGstab with less global communication (reductions) that are
+    // overlapped with computation.
+
+    // Warning: 'input'  initially contains the RHS of the system!
+    // Warning: 'output' initially contains the initial solution guess x0!
+    const auto &AxInfo =
+        sim.lhsInfo(); // input ->getBlocksInfo(); //will store the LHS result
+    const auto &zInfo = sim.presInfo(); // output->getBlocksInfo(); //will store
+                                        // the input 'x' when LHS is computed
+    const size_t Nblocks = zInfo.size(); // total blocks of this rank
+    const int BSX = VectorBlock::sizeX;  // block size in x direction
+    const int BSY = VectorBlock::sizeY;  // block size in y direction
+    const int BSZ = VectorBlock::sizeZ;  // block size in z direction
+    const size_t N =
+        BSX * BSY * BSZ * Nblocks; // total number of variables of this rank
+    const Real eps = 1e-100; // used in denominators, to not divide by zero
+    const Real max_error =
+        sim.DiffusionErrorTol; // error tolerance for Linf norm of residual
+    const Real max_rel_error =
+        sim.DiffusionErrorTolRel; // relative error tolerance for
+                                  // Linf(r)/Linf(r0)
+    bool serious_breakdown =
+        false;            // shows if the solver will restart in this iteration
+    bool useXopt = false; //(is almost always true) use the solution that had
+                          // the smallest residual
+    Real min_norm =
+        1e50;          // residual norm (for best solution, see also 'useXopt')
+    Real norm_1 = 0.0; // used to decide if the solver will restart
+    Real norm_2 = 0.0; // used to decide if the solver will restart
+    const MPI_Comm m_comm = sim.comm;
+    const bool verbose = sim.rank == 0;
+
+    phat.resize(N);
+    rhat.resize(N);
+    shat.resize(N);
+    what.resize(N);
+    zhat.resize(N);
+    qhat.resize(N);
+    s.resize(N);
+    w.resize(N);
+    z.resize(N);
+    t.resize(N);
+    v.resize(N);
+    q.resize(N);
+    r.resize(N);
+    y.resize(N);
+    x.resize(N);
+    r0.resize(N);
+    b.resize(N);     // RHS of the system will be stored here
+    x_opt.resize(N); // solution with minimum residual
+
+// initialize b,r,x
+#pragma omp parallel for
+    for (size_t i = 0; i < Nblocks; i++) {
+      ScalarBlock &__restrict__ rhs = *(ScalarBlock *)AxInfo[i].ptrBlock;
+      const ScalarBlock &__restrict__ zz = *(ScalarBlock *)zInfo[i].ptrBlock;
+
+      for (int iz = 0; iz < BSZ; iz++)
+        for (int iy = 0; iy < BSY; iy++)
+          for (int ix = 0; ix < BSX; ix++) {
+            const int j = i * BSX * BSY * BSZ + iz * BSX * BSY + iy * BSX + ix;
+            b[j] = rhs(ix, iy, iz).s;
+            r[j] = rhs(ix, iy, iz).s;
+            x[j] = zz(ix, iy, iz).s;
+          }
+    }
+
+    // In what follows, we indicate by (*n*) the n-th step of the algorithm
+
+    //(*2*) r0 = b - A*x0, r0hat = M^{-1}*r0, w0=A*r0hat, w0hat=M^{-1}w0
+    _lhs(x, r0);
+#pragma omp parallel for
+    for (size_t i = 0; i < N; i++) {
+      r0[i] = r[i] - r0[i];
+      r[i] = r0[i];
+    }
+    _preconditioner(r0, rhat);
+    _lhs(rhat, w);
+    _preconditioner(w, what);
+
+    //(*3*) t0=A*w0hat, alpha0 = (r0,r0) / (r0,w0), beta=0
+    _lhs(what, t);
+    Real alpha = 0.0;
+    Real norm = 0.0;
+    Real beta = 0.0;
+    Real omega = 0.0;
+    Real r0r_prev;
+    {
+      Real temp0 = 0.0;
+      Real temp1 = 0.0;
+#pragma omp parallel for reduction(+ : temp0, temp1, norm)
+      for (size_t j = 0; j < N; j++) {
+        temp0 += r0[j] * r0[j];
+        temp1 += r0[j] * w[j];
+        norm += r0[j] * r0[j]; // std::max(norm,std::fabs(r[j]));
+      }
+      Real temporary[2] = {temp0, temp1};
+      MPI_Allreduce(MPI_IN_PLACE, temporary, 2, MPI_Real, MPI_SUM, m_comm);
+      MPI_Allreduce(MPI_IN_PLACE, &norm, 1, MPI_Real, MPI_SUM, m_comm);
+      alpha = temporary[0] / (temporary[1] + eps);
+      r0r_prev = temporary[0];
+      norm = std::sqrt(norm);
+      if (verbose)
+        std::cout << "[Diffusion solver, direction: " << mydirection
+                  << " ]: initial error norm:" << norm << "\n";
+    }
+    const Real init_norm = norm;
+
+    //(*4*) for k=0,1,...
+    int k;
+    for (k = 0; k < 1000; k++) {
+      Real qy = 0.0;
+      Real yy = 0.0;
+
+      //(*5*),(*6*),...,(*11*)
+      if (k % 50 != 0) {
+#pragma omp parallel for reduction(+ : qy, yy)
+        for (size_t j = 0; j < N; j++) {
+          phat[j] = rhat[j] + beta * (phat[j] - omega * shat[j]);
+          s[j] = w[j] + beta * (s[j] - omega * z[j]);
+          shat[j] = what[j] + beta * (shat[j] - omega * zhat[j]);
+          z[j] = t[j] + beta * (z[j] - omega * v[j]);
+          q[j] = r[j] - alpha * s[j];
+          qhat[j] = rhat[j] - alpha * shat[j];
+          y[j] = w[j] - alpha * z[j];
+          qy += q[j] * y[j];
+          yy += y[j] * y[j];
+        }
+      } else {
+// every 50 iterations we use the residual replacement strategy, to prevent loss
+// of accuracy and compute stuff with the exact (not pipelined) versions
+#pragma omp parallel for
+        for (size_t j = 0; j < N; j++) {
+          phat[j] = rhat[j] + beta * (phat[j] - omega * shat[j]);
+        }
+        _lhs(phat, s);
+        _preconditioner(s, shat);
+        _lhs(shat, z);
+#pragma omp parallel for
+        for (size_t j = 0; j < N; j++) {
+          q[j] = r[j] - alpha * s[j];
+          qhat[j] = rhat[j] - alpha * shat[j];
+          y[j] = w[j] - alpha * z[j];
+          qy += q[j] * y[j];
+          yy += y[j] * y[j];
+        }
+      }
+
+      //(*12*) begin reduction (q,y),(y,y)
+      MPI_Request request;
+      Real quantities[6];
+      quantities[0] = qy;
+      quantities[1] = yy;
+      MPI_Iallreduce(MPI_IN_PLACE, &quantities, 2, MPI_Real, MPI_SUM, m_comm,
+                     &request);
+
+      //(*13*) computation zhat = M^{-1}*z
+      _preconditioner(z, zhat);
+
+      //(*14*) computation v = A*zhat
+      _lhs(zhat, v);
+
+      //(*15*) end reduction
+      MPI_Waitall(1, &request, MPI_STATUSES_IGNORE);
+      qy = quantities[0];
+      yy = quantities[1];
+
+      //(*16*) omega = (q,y)/(y,y)
+      omega = qy / (yy + eps);
+
+      //(*17*),(*18*),(*19*),(*20*)
+      Real r0r = 0.0;
+      Real r0w = 0.0;
+      Real r0s = 0.0;
+      Real r0z = 0.0;
+      norm = 0.0;
+      norm_1 = 0.0;
+      norm_2 = 0.0;
+      if (k % 50 != 0) {
+#pragma omp parallel for reduction(+ : r0r, r0w, r0s, r0z, norm_1, norm_2, norm)
+        for (size_t j = 0; j < N; j++) {
+          x[j] = x[j] + alpha * phat[j] + omega * qhat[j];
+          r[j] = q[j] - omega * y[j];
+          rhat[j] = qhat[j] - omega * (what[j] - alpha * zhat[j]);
+          w[j] = y[j] - omega * (t[j] - alpha * v[j]);
+          r0r += r0[j] * r[j];
+          r0w += r0[j] * w[j];
+          r0s += r0[j] * s[j];
+          r0z += r0[j] * z[j];
+          norm += r[j] * r[j]; // std::max(norm,std::fabs(r[j]));
+          norm_1 += r[j] * r[j];
+          norm_2 += r0[j] * r0[j];
+        }
+      } else {
+// every 50 iterations we use the residual replacement strategy, to prevent loss
+// of accuracy and compute stuff with the exact (not pipelined) versions
+#pragma omp parallel for
+        for (size_t j = 0; j < N; j++) {
+          x[j] = x[j] + alpha * phat[j] + omega * qhat[j];
+        }
+        _lhs(x, r);
+#pragma omp parallel for
+        for (size_t j = 0; j < N; j++) {
+          r[j] = b[j] - r[j];
+        }
+        _preconditioner(r, rhat);
+        _lhs(rhat, w);
+#pragma omp parallel for reduction(+ : r0r, r0w, r0s, r0z, norm_1, norm_2, norm)
+        for (size_t j = 0; j < N; j++) {
+          r0r += r0[j] * r[j];
+          r0w += r0[j] * w[j];
+          r0s += r0[j] * s[j];
+          r0z += r0[j] * z[j];
+          norm += r[j] * r[j];
+          // norm = std::max(norm,std::fabs(r[j]));
+          norm_1 += r[j] * r[j];
+          norm_2 += r0[j] * r0[j];
+        }
+      }
+      quantities[0] = r0r;
+      quantities[1] = r0w;
+      quantities[2] = r0s;
+      quantities[3] = r0z;
+      quantities[4] = norm_1;
+      quantities[5] = norm_2;
+
+      //(*21*) begin reductions
+      MPI_Request request2;
+      MPI_Iallreduce(MPI_IN_PLACE, &quantities, 6, MPI_Real, MPI_SUM, m_comm,
+                     &request);
+      MPI_Iallreduce(MPI_IN_PLACE, &norm, 1, MPI_Real, MPI_SUM, m_comm,
+                     &request2);
+
+      //(*22*) computation what = M^{-1}*w
+      _preconditioner(w, what);
+
+      //(*23*) computation t = A*what
+      _lhs(what, t);
+
+      //(*24*) end reductions
+      MPI_Waitall(1, &request, MPI_STATUSES_IGNORE);
+      r0r = quantities[0];
+      r0w = quantities[1];
+      r0s = quantities[2];
+      r0z = quantities[3];
+      norm_1 = quantities[4];
+      norm_2 = quantities[5];
+
+      //(*25*)
+      beta = alpha / (omega + eps) * r0r / (r0r_prev + eps);
+
+      //(*26*)
+      alpha = r0r / (r0w + beta * r0s - beta * omega * r0z);
+      Real alphat = 1.0 / (omega + eps) + r0w / (r0r + eps) -
+                    beta * omega * r0z / (r0r + eps);
+      alphat = 1.0 / (alphat + eps);
+      if (std::fabs(alphat) < 10 * std::fabs(alpha))
+        alpha = alphat;
+
+      r0r_prev = r0r;
+      MPI_Waitall(1, &request2, MPI_STATUSES_IGNORE);
+      norm = std::sqrt(norm);
+      // Check if restart should be made. If so, current solution estimate is
+      // used as an initial guess and solver starts again.
+      serious_breakdown = r0r * r0r < 1e-16 * norm_1 * norm_2;
+      if (serious_breakdown) // && restarts < max_restarts)
+      {
+        // restarts ++;
+        if (verbose)
+          std::cout << "  [Diffusion solver, direction: " << mydirection
+                    << " ]: Restart at iteration: " << k << " norm: " << norm
+                    << std::endl;
+
+#pragma omp parallel for
+        for (size_t i = 0; i < N; i++)
+          r0[i] = r[i];
+
+        _preconditioner(r0, rhat);
+        _lhs(rhat, w);
+
+        alpha = 0.0;
+        Real temp0 = 0.0;
+        Real temp1 = 0.0;
+#pragma omp parallel for reduction(+ : temp0, temp1)
+        for (size_t j = 0; j < N; j++) {
+          temp0 += r0[j] * r0[j];
+          temp1 += r0[j] * w[j];
+        }
+        Real temporary[2] = {temp0, temp1};
+        MPI_Iallreduce(MPI_IN_PLACE, temporary, 2, MPI_Real, MPI_SUM, m_comm,
+                       &request2);
+
+        _preconditioner(w, what);
+        _lhs(what, t);
+
+        MPI_Waitall(1, &request2, MPI_STATUSES_IGNORE);
+
+        alpha = temporary[0] / (temporary[1] + eps);
+        r0r_prev = temporary[0];
+        beta = 0.0;
+        omega = 0.0;
+      }
+
+      if (norm < min_norm) {
+        useXopt = true;
+        min_norm = norm;
+#pragma omp parallel for
+        for (size_t i = 0; i < N; i++)
+          x_opt[i] = x[i];
+      }
+      // if (verbose) std::cout << k <<"  norm: " << norm << "\n";
+
+      if (norm < max_error || norm / (init_norm + eps) < max_rel_error) {
+        if (verbose)
+          std::cout << "  [Diffusion solver, direction: " << mydirection
+                    << " ]: Converged after " << k << " iterations.\n";
+        break;
+      }
+    }
+
+    if (verbose) {
+      std::cout << " Error norm (relative) = " << min_norm << "/" << max_error
+                << std::endl;
+    }
+
+    Real *xsol = useXopt ? x_opt.data() : x.data();
+#pragma omp parallel for
+    for (size_t i = 0; i < Nblocks; i++) {
+      ScalarBlock &__restrict__ bb = (*sim.pres)(i);
+      for (int iz = 0; iz < BSZ; iz++)
+        for (int iy = 0; iy < BSY; iy++)
+          for (int ix = 0; ix < BSX; ix++) {
+            const int j = i * BSX * BSY * BSZ + iz * BSX * BSY + iy * BSX + ix;
+            bb(ix, iy, iz).s = xsol[j];
+          }
+    }
+  }
+};
+
+class AdvectionDiffusionImplicit : public Operator {
+  std::vector<Real> pressure;
+  std::vector<Real> velocity;
+
+public:
+  AdvectionDiffusionImplicit(SimulationData &s) : Operator(s) {}
+
+  ~AdvectionDiffusionImplicit() {}
+
+  void operator()(const Real dt);
+  void euler(const Real dt);
+
+  std::string getName() { return "AdvectionDiffusionImplicit"; }
+};
+
+CubismUP_3D_NAMESPACE_END
+
+
+namespace cubism {
+
+class Value {
+private:
+  std::string content;
+
+public:
+  Value() = default;
+  Value(const std::string &content_) : content(content_) {}
+  Value(const Value &c) = default;
+
+  Value &operator=(const Value &rhs) {
+    if (this != &rhs)
+      content = rhs.content;
+    return *this;
+  }
+  Value &operator+=(const Value &rhs) {
+    content += " " + rhs.content;
+    return *this;
+  }
+  Value operator+(const Value &rhs) {
+    return Value(content + " " + rhs.content);
+  }
+
+  double asDouble(double def = 0);
+  int asInt(int def = 0);
+  bool asBool(bool def = false);
+  std::string asString(const std::string &def = std::string());
+  friend std::ostream &operator<<(std::ostream &lhs, const Value &rhs);
+};
+
+class CommandlineParser {
+private:
+  const int iArgC;
+  char **vArgV;
+  bool bStrictMode, bVerbose;
+
+  bool _isnumber(const std::string &s) const;
+
+protected:
+  std::map<std::string, Value> mapArguments;
+
+public:
+  CommandlineParser(int argc, char **argv);
+
+  Value &operator()(std::string key);
+  bool check(std::string key) const;
+
+  int getargc() const { return iArgC; }
+  char **getargv() const { return vArgV; }
+
+  void set_strict_mode() { bStrictMode = true; }
+
+  void unset_strict_mode() { bStrictMode = false; }
+
+  void mute() { bVerbose = false; }
+
+  void loud() { bVerbose = true; }
+
+  void save_options(const std::string &path = ".");
+  void print_args();
+};
+
+class ArgumentParser : public CommandlineParser {
+  typedef std::map<std::string, Value> ArgMap;
+  typedef std::map<std::string, Value *> pArgMap;
+  typedef std::map<std::string, ArgMap *> FileMap;
+
+  const char commentStart;
+
+  // keep a reference from option origin
+  ArgMap from_commandline;
+  FileMap from_files;
+  pArgMap from_code;
+
+  // for runtime interaction (we keep the original map)
+  ArgMap mapRuntime;
+
+  // helper
+  void _ignoreComments(std::istream &stream, char commentChar);
+  void _parseFile(std::ifstream &stream, ArgMap &container);
+
+public:
+  ArgumentParser(const int _argc, char **_argv, const char cstart = '#')
+      : CommandlineParser(_argc, _argv), commentStart(cstart) {
+    from_commandline = mapArguments;
+  }
+
+  virtual ~ArgumentParser() {
+    for (FileMap::iterator it = from_files.begin(); it != from_files.end();
+         it++)
+      delete it->second;
+  }
+
+  void readFile(const std::string &filepath);
+  Value &operator()(std::string key);
+
+  inline bool exist(const std::string &key) const { return check(key); }
+
+  void write_runtime_environment() const;
+  void read_runtime_environment();
+
+  Value &parseRuntime(std::string key);
+  void print_args(void);
+};
+
+} // namespace cubism
+#ifndef CubismUP_3D_utils_BufferedLogger_h
+#define CubismUP_3D_utils_BufferedLogger_h
+
+
+namespace cubismup3d {
+
+struct BufferedLoggerImpl;
+/*
+ * Buffered file logging with automatic flush.
+ *
+ * A stream is flushed periodically.
+ * (Such that the user doesn't have to manually call flush.)
+ *
+ * If killing intentionally simulation, don't forget to flush the logger!
+ */
+class BufferedLogger {
+  BufferedLoggerImpl *const impl;
+
+public:
+  static constexpr int AUTO_FLUSH_COUNT = 100;
+
+  BufferedLogger();
+  BufferedLogger(const BufferedLogger &) = delete;
+  BufferedLogger(BufferedLogger &&) = delete;
+  ~BufferedLogger();
+
+  /* Flush all streams. */
+  void flush(void);
+
+  /*
+   * Get or create a string for a given file name.
+   *
+   * The stream is automatically flushed if accessed
+   * many times since last flush.
+   */
+  std::stringstream &get_stream(const std::string &filename);
+};
+
+extern BufferedLogger logger; // Declared in BufferedLogger.cpp.
+
+} // namespace cubismup3d
+
+#endif // CubismUP_3D_utils_BufferedLogger_h
+#ifndef CubismUP_3D_ObstacleBlock_h
+#define CubismUP_3D_ObstacleBlock_h
+
+// to shift the surface where I compute gradchi for surface integrals
+// if set to value greater than 0, it shifts surface by that many mesh sizes
+#define SURFDH 1
+
+CubismUP_3D_NAMESPACE_BEGIN
+
+    struct surface_data {
+  const int ix, iy, iz;
+  const Real dchidx, dchidy, dchidz, delta;
+
+  surface_data(int _ix, int _iy, int _iz, Real _dchidx, Real _dchidy,
+               Real _dchidz, Real _delta)
+      : ix(_ix), iy(_iy), iz(_iz), dchidx(_dchidx), dchidy(_dchidy),
+        dchidz(_dchidz), delta(_delta) {}
+  surface_data() = delete;
+};
+
+struct ObstacleBlock {
+  static constexpr int sizeX = ScalarBlock::sizeX;
+  static constexpr int sizeY = ScalarBlock::sizeY;
+  static constexpr int sizeZ = ScalarBlock::sizeZ;
+
+  // bulk quantities:
+  Real chi[sizeZ][sizeY][sizeX];
+  Real udef[sizeZ][sizeY][sizeX][3];
+  Real sdfLab[sizeZ + 2][sizeY + 2][sizeX + 2];
+
+  // surface quantities:
+  int nPoints = 0;
+  bool filled = false;
+  std::vector<surface_data *> surface;
+  Real *pX = nullptr, *pY = nullptr, *pZ = nullptr, *P = nullptr;
+  Real *fX = nullptr, *fY = nullptr, *fZ = nullptr;
+  Real *fxP = nullptr, *fyP = nullptr, *fzP = nullptr;
+  Real *fxV = nullptr, *fyV = nullptr, *fzV = nullptr;
+  Real *vX = nullptr, *vY = nullptr, *vZ = nullptr;
+  Real *vxDef = nullptr, *vyDef = nullptr, *vzDef = nullptr;
+  Real *omegaX = nullptr, *omegaY = nullptr, *omegaZ = nullptr;
+
+  // additive quantities:
+  // construct CHI & center of mass interpolated on grid:
+  Real CoM_x = 0, CoM_y = 0, CoM_z = 0, mass = 0;
+
+  // Penalization volume integral forces:
+  Real V = 0, FX = 0, FY = 0, FZ = 0, TX = 0, TY = 0, TZ = 0;
+  Real J0 = 0, J1 = 0, J2 = 0, J3 = 0, J4 = 0, J5 = 0;
+
+  Real GfX = 0, GpX = 0, GpY = 0, GpZ = 0, Gj0 = 0, Gj1 = 0, Gj2 = 0, Gj3 = 0,
+       Gj4 = 0, Gj5 = 0;
+  Real GuX = 0, GuY = 0, GuZ = 0, GaX = 0, GaY = 0, GaZ = 0;
+
+  // Fluid-structure interface forces: (these are the 22 quantities of nQoI)
+  Real forcex = 0, forcey = 0, forcez = 0;
+  Real forcex_P = 0, forcey_P = 0, forcez_P = 0;
+  Real forcex_V = 0, forcey_V = 0, forcez_V = 0;
+  Real torquex = 0, torquey = 0, torquez = 0;
+  Real drag = 0, thrust = 0, Pout = 0, PoutBnd = 0, defPower = 0,
+       defPowerBnd = 0, pLocom = 0;
+  static const int nQoI = 19;
+
+  virtual void sumQoI(std::vector<Real> &sum) {
+    assert(sum.size() == nQoI);
+    unsigned k = 0;
+    sum[k++] += forcex;
+    sum[k++] += forcey;
+    sum[k++] += forcez;
+    sum[k++] += forcex_P;
+    sum[k++] += forcey_P;
+    sum[k++] += forcez_P;
+    sum[k++] += forcex_V;
+    sum[k++] += forcey_V;
+    sum[k++] += forcez_V;
+    sum[k++] += torquex;
+    sum[k++] += torquey;
+    sum[k++] += torquez;
+    sum[k++] += drag;
+    sum[k++] += thrust;
+    sum[k++] += Pout;
+    sum[k++] += PoutBnd;
+    sum[k++] += defPower;
+    sum[k++] += defPowerBnd;
+    sum[k++] += pLocom;
+  }
+
+  ObstacleBlock() {
+    // rough estimate of surface cutting the block diagonally
+    // with 2 points needed on each side of surface
+    // surface.reserve(4*BS);
+    surface.reserve(4 * sizeX);
+  }
+  virtual ~ObstacleBlock() { clear_surface(); }
+
+  void clear_surface() {
+    filled = false;
+    nPoints = 0;
+    CoM_x = CoM_y = CoM_z = 0;
+    forcex = forcey = forcez = 0;
+    forcex_P = forcey_P = forcez_P = 0;
+    forcex_V = forcey_V = forcez_V = 0;
+    torquex = torquey = torquez = 0;
+    mass = drag = thrust = Pout = PoutBnd = defPower = defPowerBnd = 0;
+
+    for (auto &trash : surface) {
+      if (trash == nullptr)
+        continue;
+      delete trash;
+      trash = nullptr;
+    }
+    surface.clear();
+    if (pX not_eq nullptr) {
+      free(pX);
+      pX = nullptr;
+    }
+    if (pY not_eq nullptr) {
+      free(pY);
+      pY = nullptr;
+    }
+    if (pZ not_eq nullptr) {
+      free(pZ);
+      pZ = nullptr;
+    }
+    if (P not_eq nullptr) {
+      free(P);
+      P = nullptr;
+    }
+    if (fX not_eq nullptr) {
+      free(fX);
+      fX = nullptr;
+    }
+    if (fY not_eq nullptr) {
+      free(fY);
+      fY = nullptr;
+    }
+    if (fZ not_eq nullptr) {
+      free(fZ);
+      fZ = nullptr;
+    }
+    if (fxP not_eq nullptr) {
+      free(fxP);
+      fxP = nullptr;
+    }
+    if (fyP not_eq nullptr) {
+      free(fyP);
+      fyP = nullptr;
+    }
+    if (fzP not_eq nullptr) {
+      free(fzP);
+      fzP = nullptr;
+    }
+    if (fxV not_eq nullptr) {
+      free(fxV);
+      fxV = nullptr;
+    }
+    if (fyV not_eq nullptr) {
+      free(fyV);
+      fyV = nullptr;
+    }
+    if (fzV not_eq nullptr) {
+      free(fzV);
+      fzV = nullptr;
+    }
+    if (vX not_eq nullptr) {
+      free(vX);
+      vX = nullptr;
+    }
+    if (vY not_eq nullptr) {
+      free(vY);
+      vY = nullptr;
+    }
+    if (vZ not_eq nullptr) {
+      free(vZ);
+      vZ = nullptr;
+    }
+    if (vxDef not_eq nullptr) {
+      free(vxDef);
+      vxDef = nullptr;
+    }
+    if (vyDef not_eq nullptr) {
+      free(vyDef);
+      vyDef = nullptr;
+    }
+    if (vzDef not_eq nullptr) {
+      free(vzDef);
+      vzDef = nullptr;
+    }
+    if (omegaX not_eq nullptr) {
+      free(omegaX);
+      omegaX = nullptr;
+    }
+    if (omegaY not_eq nullptr) {
+      free(omegaY);
+      omegaY = nullptr;
+    }
+    if (omegaZ not_eq nullptr) {
+      free(omegaZ);
+      omegaZ = nullptr;
+    }
+  }
+
+  virtual void clear() {
+    clear_surface();
+    memset(chi, 0, sizeof(Real) * sizeX * sizeY * sizeZ);
+    memset(udef, 0, sizeof(Real) * sizeX * sizeY * sizeZ * 3);
+    memset(sdfLab, 0, sizeof(Real) * (sizeX + 2) * (sizeY + 2) * (sizeZ + 2));
+  }
+
+  inline void write(const int ix, const int iy, const int iz, const Real delta,
+                    const Real gradUX, const Real gradUY, const Real gradUZ) {
+    // if(_chi<chi[iz][iy][ix]) return;
+    assert(!filled);
+    nPoints++;
+    const Real dchidx = -delta * gradUX;
+    const Real dchidy = -delta * gradUY;
+    const Real dchidz = -delta * gradUZ;
+    surface.push_back(
+        new surface_data(ix, iy, iz, dchidx, dchidy, dchidz, delta));
+  }
+
+  void allocate_surface() {
+    filled = true;
+    assert((int)surface.size() == nPoints);
+    assert(pX == nullptr && pY == nullptr && pZ == nullptr);
+    assert(vX == nullptr && vY == nullptr && vZ == nullptr);
+    assert(fX == nullptr && fY == nullptr && fZ == nullptr);
+    pX = init<Real>(nPoints);
+    pY = init<Real>(nPoints);
+    pZ = init<Real>(nPoints);
+    vX = init<Real>(nPoints);
+    vY = init<Real>(nPoints);
+    vZ = init<Real>(nPoints);
+    fX = init<Real>(nPoints);
+    fY = init<Real>(nPoints);
+    fZ = init<Real>(nPoints);
+    fxP = init<Real>(nPoints);
+    fyP = init<Real>(nPoints);
+    fzP = init<Real>(nPoints);
+    fxV = init<Real>(nPoints);
+    fyV = init<Real>(nPoints);
+    fzV = init<Real>(nPoints);
+    vxDef = init<Real>(nPoints);
+    vyDef = init<Real>(nPoints);
+    vzDef = init<Real>(nPoints);
+    P = init<Real>(nPoints);
+    omegaX = init<Real>(nPoints);
+    omegaY = init<Real>(nPoints);
+    omegaZ = init<Real>(nPoints);
+  }
+
+  template <typename T> static inline T *init(const int N) {
+    T *ptr;
+    const int ret = posix_memalign((void **)&ptr, 32, N * sizeof(T));
+    if (ret == EINVAL) {
+      fprintf(stderr, "posix_memalign somehow returned EINVAL...\n");
+      fflush(0);
+      abort();
+    } else if (ret == ENOMEM) {
+      fprintf(stderr, "Cannot allocate %dx%d bytes with align 32!\n", N,
+              (int)sizeof(T));
+      fflush(0);
+      abort();
+    }
+    assert(ptr != nullptr);
+    memset(ptr, 0, N * sizeof(T));
+    return ptr;
+  }
+};
+
+CubismUP_3D_NAMESPACE_END
+#endif // CubismUP_3D_ObstacleBlock_h
+
+namespace cubism {
+class ArgumentParser;
+}
+
+CubismUP_3D_NAMESPACE_BEGIN
+
+    class Obstacle;
+class ObstacleVector;
+
+class Obstacle {
+protected:
+  SimulationData &sim;
+  bool printedHeaderVels = false;
+
+public:
+  std::vector<ObstacleBlock *> obstacleBlocks;
+
+  int obstacleID = 0; // each obstacle has a unique ID
+
+  // There are two frames of reference, denoted by (I) and (II):
+  // (I):  An absolute frame that is not moving.
+  // (II): A frame that is moving with sim.uinf. Generally, this frame follows
+  // the obstacles.
+  //       sim.uinf is the average velocity of obstacles with bFixFrameOfRef =
+  //       true (with the addition of a far field velocity field, if the user
+  //       wants that).
+
+  Real absPos[3] = {0, 0, 0};        // position of obstacle in frame (I)
+  Real position[3] = {0, 0, 0};      // position of obstacle in frame (II)
+  Real quaternion[4] = {1, 0, 0, 0}; // orientation (same for both frames)
+  Real transVel[3] = {0, 0, 0};      // translational velocity in frame (I)
+  Real angVel[3] = {0, 0, 0};        // angular velocity
+  Real mass;                         // obstacle mass
+  Real length;                       // characteristic length of obstacle
+  Real J[6] = {0, 0, 0,
+               0, 0, 0}; // moments of inertia matrix (Jxx,Jyy,Jzz,Jxy,Jxz,Jyz}
+
+  std::array<bool, 3> bFixFrameOfRef = {
+      {false, false, false}}; // set to true if 'camera' will follow the
+                              // obstacle in that direction
+  std::array<bool, 3> bForcedInSimFrame = {
+      {false, false, false}}; // set to true if obstacle is forced
+  std::array<bool, 3> bBlockRotation = {
+      {false, false,
+       false}}; // set to true if obstacle is not allowed to rotate (forced)
+  std::array<Real, 3> transVel_imposed = {
+      {0, 0, 0}}; // prescribed velocity (if the obstacle is forced)
+
+  // auxiliary arrays used for 2nd order time integration of obstacle's position
+  Real old_position[3] = {0, 0, 0};
+  Real old_absPos[3] = {0, 0, 0};
+  Real old_quaternion[4] = {1, 0, 0, 0};
+
+  // The obstacle's mass, linear momentum, angular momentum, center of mass and
+  // moments of inertia are computed from the chi field and stored here.
+  // Then, a 6x6 linear system is solved to determine transVel and angVel.
+  Real penalM;
+  std::array<Real, 3> penalLmom = {0, 0, 0};
+  std::array<Real, 3> penalAmom = {0, 0, 0};
+  std::array<Real, 3> penalCM = {0, 0, 0};
+  std::array<Real, 6> penalJ = {0, 0, 0, 0, 0, 0};
+
+  // Translational and angular velocities computed by solving the 6x6 linear
+  // system. If the obstacle is not forced, transVel and angVel are set equal to
+  // transVel_computed and angVel_computed. Otherwise, the forces and torques
+  // acting on the forced obstacle can be computed as force = mass *
+  // (transVel_computed - transVel) / sim.dt
+  std::array<Real, 3> transVel_computed = {0, 0, 0};
+  std::array<Real, 3> angVel_computed = {0, 0, 0};
+
+  Real centerOfMass[3] = {
+      0, 0,
+      0}; // center of mass (used to resolve collisions), computed from chi
+
+  bool bBreakSymmetry = false; // if true obstacle is forced for a short period,
+                               // to break symmetric flow conditions
+
+  // Quantities of Interest (forces, drag etc.)
+  std::array<Real, 3> force = {0, 0, 0};
+  std::array<Real, 3> torque = {0, 0, 0};
+  Real surfForce[3] = {0, 0, 0};
+  Real presForce[3] = {0, 0, 0};
+  Real viscForce[3] = {0, 0, 0};
+  Real surfTorque[3] = {0, 0, 0};
+  Real drag = 0, thrust = 0, Pout = 0, PoutBnd = 0, pLocom = 0;
+  Real defPower = 0, defPowerBnd = 0, Pthrust = 0, Pdrag = 0, EffPDef = 0,
+       EffPDefBnd = 0;
+
+  // Used to 'stabilize' some computation in KernelIntegrateUdefMomenta from
+  // ObstaclesCreate.cpp
+  std::array<Real, 3> transVel_correction = {0, 0, 0},
+                      angVel_correction = {0, 0, 0};
+
+protected:
+  // functions to save quantities of interest to files
+  virtual void _writeComputedVelToFile();
+  virtual void _writeDiagForcesToFile();
+  virtual void _writeSurfForcesToFile();
+
+public:
+  Obstacle(SimulationData &s, cubism::ArgumentParser &parser);
+  Obstacle(SimulationData &s) : sim(s) {}
+
+  virtual void updateLabVelocity(int nSum[3], Real uSum[3]);
+  virtual void
+  computeVelocities(); // solve the 6x6 linear system to get transVel and angvel
+  virtual void
+  computeForces();       // compute quantities of interest for this obstacle
+  virtual void update(); // time integration of position and orientation
+  virtual void
+  saveRestart(FILE *f); // functions needed for restarting the simulation
+  virtual void loadRestart(FILE *f);
+  virtual void
+  create(); // additional stuff to be done when creating an obstacle (optional)
+  virtual void finalize(); // additional stuff to be done when deleting an
+                           // obstacle (optional)
+  std::array<Real, 3> getTranslationVelocity() const;
+  std::array<Real, 3> getAngularVelocity() const;
+  std::array<Real, 3> getCenterOfMass() const;
+  std::array<Real, 3> getYawPitchRoll() const;
+
+  std::vector<ObstacleBlock *> getObstacleBlocks() const {
+    return obstacleBlocks;
+  }
+  std::vector<ObstacleBlock *> *getObstacleBlocksPtr() {
+    return &obstacleBlocks;
+  }
+
+  // imposed velocities for 1-2 timesteps after a collision with another
+  // Obstacle
+  Real collision_counter = 0;
+  Real u_collision;
+  Real v_collision;
+  Real w_collision;
+  Real ox_collision;
+  Real oy_collision;
+  Real oz_collision;
+
+  virtual ~Obstacle() {
+    for (auto &entry : obstacleBlocks) {
+      if (entry != nullptr) {
+        delete entry;
+        entry = nullptr;
+      }
+    }
+    obstacleBlocks.clear();
+  }
+
+  // driver to execute finite difference kernels either on all points relevant
+  // to the mass of the obstacle (where we have char func) or only on surface
+  template <typename T> void create_base(const T &kernel) {
+    for (auto &entry : obstacleBlocks) {
+      if (entry == nullptr)
+        continue;
+      delete entry;
+      entry = nullptr;
+    }
+    std::vector<cubism::BlockInfo> &chiInfo = sim.chiInfo();
+    obstacleBlocks.resize(chiInfo.size(), nullptr);
+
+#pragma omp parallel for schedule(dynamic, 1)
+    for (size_t i = 0; i < chiInfo.size(); i++) {
+      const cubism::BlockInfo &info = chiInfo[i];
+      const ScalarBlock &b = *(ScalarBlock *)info.ptrBlock;
+      if (kernel.isTouching(info, b)) {
+        assert(obstacleBlocks[info.blockID] == nullptr);
+        obstacleBlocks[info.blockID] = new ObstacleBlock();
+        obstacleBlocks[info.blockID]->clear(); // memset 0
+        kernel(info, obstacleBlocks[info.blockID]);
+      }
+    }
+  }
+};
+
+CubismUP_3D_NAMESPACE_END
+
+
+CubismUP_3D_NAMESPACE_BEGIN
+
+    class FishMidlineData;
+struct VolumeSegment_OBB;
+
+class Fish : public Obstacle {
+protected:
+  void integrateMidline();
+
+  // first how to create blocks of segments:
+  typedef std::vector<VolumeSegment_OBB> vecsegm_t;
+  vecsegm_t prepare_vSegments();
+  // second how to intersect those blocks of segments with grid blocks:
+  // (override to create special obstacle blocks for local force balances)
+  typedef std::vector<std::vector<VolumeSegment_OBB *>> intersect_t;
+  virtual intersect_t prepare_segPerBlock(vecsegm_t &vSeg);
+  // third how to interpolate on the grid given the intersections:
+  virtual void writeSDFOnBlocks(std::vector<VolumeSegment_OBB> &vSegments);
+
+public:
+  Fish(SimulationData &s, cubism::ArgumentParser &p);
+  ~Fish() override;
+  virtual void saveRestart(FILE *f) override;
+  virtual void loadRestart(FILE *f) override;
+  virtual void create() override;
+  FishMidlineData *myFish = nullptr;
+
+  struct BlockID {
+    Real h;
+    Real origin_x;
+    Real origin_y;
+    Real origin_z;
+    long long blockID;
+  };
+  std::vector<BlockID> MyBlockIDs;
+  std::vector<std::vector<int>> MySegments;
+
+#if 1
+  // MPI stuff, for ObstaclesCreate
+  struct MPI_Obstacle {
+    Real d[ScalarBlock::sizeZ * ScalarBlock::sizeY * ScalarBlock::sizeX * 3 +
+           (ScalarBlock::sizeZ + 2) * (ScalarBlock::sizeY + 2) *
+               (ScalarBlock::sizeX + 2)];
+    int i[ScalarBlock::sizeZ * ScalarBlock::sizeY * ScalarBlock::sizeX];
+  };
+  MPI_Datatype MPI_BLOCKID;
+  MPI_Datatype MPI_OBSTACLE;
+#endif
+};
+
+CubismUP_3D_NAMESPACE_END
+#ifndef CubismUP_3D_CarlingFish_h
+#define CubismUP_3D_CarlingFish_h
+
+CubismUP_3D_NAMESPACE_BEGIN
+
+    class CarlingFishMidlineData;
+
+class CarlingFish : public Fish {
+public:
+  CarlingFish(SimulationData &s, cubism::ArgumentParser &p);
+};
+
+CubismUP_3D_NAMESPACE_END
+#endif // CubismUP_3D_CarlingFish_h
+#ifndef CubismUP_3D_Frenet_h
+#define CubismUP_3D_Frenet_h
+CubismUP_3D_NAMESPACE_BEGIN
+
+    struct Frenet2D {
+  static void solve(const int Nm, const Real *const rS, const Real *const curv,
+                    const Real *const curv_dt, Real *const rX, Real *const rY,
+                    Real *const vX, Real *const vY, Real *const norX,
+                    Real *const norY, Real *const vNorX, Real *const vNorY) {
+    // initial conditions
+    rX[0] = 0.0;
+    rY[0] = 0.0;
+    norX[0] = 0.0;
+    norY[0] = 1.0;
+    Real ksiX = 1.0;
+    Real ksiY = 0.0;
+
+    // velocity variables
+    vX[0] = 0.0;
+    vY[0] = 0.0;
+    vNorX[0] = 0.0;
+    vNorY[0] = 0.0;
+    Real vKsiX = 0.0;
+    Real vKsiY = 0.0;
+
+    for (int i = 1; i < Nm; i++) {
+      // compute derivatives positions
+      const Real dksiX = curv[i - 1] * norX[i - 1];
+      const Real dksiY = curv[i - 1] * norY[i - 1];
+      const Real dnuX = -curv[i - 1] * ksiX;
+      const Real dnuY = -curv[i - 1] * ksiY;
+
+      // compute derivatives velocity
+      const Real dvKsiX =
+          curv_dt[i - 1] * norX[i - 1] + curv[i - 1] * vNorX[i - 1];
+      const Real dvKsiY =
+          curv_dt[i - 1] * norY[i - 1] + curv[i - 1] * vNorY[i - 1];
+      const Real dvNuX = -curv_dt[i - 1] * ksiX - curv[i - 1] * vKsiX;
+      const Real dvNuY = -curv_dt[i - 1] * ksiY - curv[i - 1] * vKsiY;
+
+      // compute current ds
+      const Real ds = rS[i] - rS[i - 1];
+
+      // update
+      rX[i] = rX[i - 1] + ds * ksiX;
+      rY[i] = rY[i - 1] + ds * ksiY;
+      norX[i] = norX[i - 1] + ds * dnuX;
+      norY[i] = norY[i - 1] + ds * dnuY;
+      ksiX += ds * dksiX;
+      ksiY += ds * dksiY;
+
+      // update velocities
+      vX[i] = vX[i - 1] + ds * vKsiX;
+      vY[i] = vY[i - 1] + ds * vKsiY;
+      vNorX[i] = vNorX[i - 1] + ds * dvNuX;
+      vNorY[i] = vNorY[i - 1] + ds * dvNuY;
+      vKsiX += ds * dvKsiX;
+      vKsiY += ds * dvKsiY;
+
+      // normalize unit vectors
+      const Real d1 = ksiX * ksiX + ksiY * ksiY;
+      const Real d2 = norX[i] * norX[i] + norY[i] * norY[i];
+      if (d1 > std::numeric_limits<Real>::epsilon()) {
+        const Real normfac = 1.0 / std::sqrt(d1);
+        ksiX *= normfac;
+        ksiY *= normfac;
+      }
+      if (d2 > std::numeric_limits<Real>::epsilon()) {
+        const Real normfac = 1.0 / std::sqrt(d2);
+        norX[i] *= normfac;
+        norY[i] *= normfac;
+      }
+    }
+  }
+};
+
+struct Frenet3D {
+  static void solve(const int Nm, const Real *const rS, const Real *const curv,
+                    const Real *const curv_dt, const Real *const tors,
+                    const Real *const tors_dt, Real *const rX, Real *const rY,
+                    Real *const rZ, Real *const vX, Real *const vY,
+                    Real *const vZ, Real *const norX, Real *const norY,
+                    Real *const norZ, Real *const vNorX, Real *const vNorY,
+                    Real *const vNorZ, Real *const binX, Real *const binY,
+                    Real *const binZ, Real *const vBinX, Real *const vBinY,
+                    Real *const vBinZ) {
+    // initial conditions
+    rX[0] = 0.0;     // x(s)
+    rY[0] = 0.0;     // y(s)
+    rZ[0] = 0.0;     // z(s)
+    Real ksiX = 1.0; // tangent  vector X-component
+    Real ksiY = 0.0; // tangent  vector Y-component
+    Real ksiZ = 0.0; // tangent  vector Z-component
+    norX[0] = 0.0;   // normal   vector X-component
+    norY[0] = 1.0;   // normal   vector Y-component
+    norZ[0] = 0.0;   // normal   vector Z-component
+    binX[0] = 0.0;   // binormal vector X-component
+    binY[0] = 0.0;   // binormal vector Y-component
+    binZ[0] = 1.0;   // binormal vector Z-component
+
+    // velocity variables (time derivatives of variables above)
+    vX[0] = 0.0;
+    vY[0] = 0.0;
+    vZ[0] = 0.0;
+    Real vKsiX = 0.0;
+    Real vKsiY = 0.0;
+    Real vKsiZ = 0.0;
+    vNorX[0] = 0.0;
+    vNorY[0] = 0.0;
+    vNorZ[0] = 0.0;
+    vBinX[0] = 0.0;
+    vBinY[0] = 0.0;
+    vBinZ[0] = 0.0;
+
+    for (int i = 1; i < Nm; i++) {
+      // compute RHS for positions
+      const Real dksiX = curv[i - 1] * norX[i - 1];
+      const Real dksiY = curv[i - 1] * norY[i - 1];
+      const Real dksiZ = curv[i - 1] * norZ[i - 1];
+
+      const Real dnuX = -curv[i - 1] * ksiX + tors[i - 1] * binX[i - 1];
+      const Real dnuY = -curv[i - 1] * ksiY + tors[i - 1] * binY[i - 1];
+      const Real dnuZ = -curv[i - 1] * ksiZ + tors[i - 1] * binZ[i - 1];
+
+      const Real dbinX = -tors[i - 1] * norX[i - 1];
+      const Real dbinY = -tors[i - 1] * norY[i - 1];
+      const Real dbinZ = -tors[i - 1] * norZ[i - 1];
+
+      // compute RHS for velocities
+      const Real dvKsiX =
+          curv_dt[i - 1] * norX[i - 1] + curv[i - 1] * vNorX[i - 1];
+      const Real dvKsiY =
+          curv_dt[i - 1] * norY[i - 1] + curv[i - 1] * vNorY[i - 1];
+      const Real dvKsiZ =
+          curv_dt[i - 1] * norZ[i - 1] + curv[i - 1] * vNorZ[i - 1];
+
+      const Real dvNuX = -curv_dt[i - 1] * ksiX - curv[i - 1] * vKsiX +
+                         tors_dt[i - 1] * binX[i - 1] +
+                         tors[i - 1] * vBinX[i - 1];
+      const Real dvNuY = -curv_dt[i - 1] * ksiY - curv[i - 1] * vKsiY +
+                         tors_dt[i - 1] * binY[i - 1] +
+                         tors[i - 1] * vBinY[i - 1];
+      const Real dvNuZ = -curv_dt[i - 1] * ksiZ - curv[i - 1] * vKsiZ +
+                         tors_dt[i - 1] * binZ[i - 1] +
+                         tors[i - 1] * vBinZ[i - 1];
+
+      const Real dvBinX =
+          -tors_dt[i - 1] * norX[i - 1] - tors[i - 1] * vNorX[i - 1];
+      const Real dvBinY =
+          -tors_dt[i - 1] * norY[i - 1] - tors[i - 1] * vNorY[i - 1];
+      const Real dvBinZ =
+          -tors_dt[i - 1] * norZ[i - 1] - tors[i - 1] * vNorZ[i - 1];
+
+      // compute current ds
+      const Real ds = rS[i] - rS[i - 1];
+
+      // update positions
+      rX[i] = rX[i - 1] + ds * ksiX;
+      rY[i] = rY[i - 1] + ds * ksiY;
+      rZ[i] = rZ[i - 1] + ds * ksiZ;
+      norX[i] = norX[i - 1] + ds * dnuX;
+      norY[i] = norY[i - 1] + ds * dnuY;
+      norZ[i] = norZ[i - 1] + ds * dnuZ;
+      ksiX += ds * dksiX;
+      ksiY += ds * dksiY;
+      ksiZ += ds * dksiZ;
+      binX[i] = binX[i - 1] + ds * dbinX;
+      binY[i] = binY[i - 1] + ds * dbinY;
+      binZ[i] = binZ[i - 1] + ds * dbinZ;
+
+      // update velocities
+      vX[i] = vX[i - 1] + ds * vKsiX;
+      vY[i] = vY[i - 1] + ds * vKsiY;
+      vZ[i] = vZ[i - 1] + ds * vKsiZ;
+      vNorX[i] = vNorX[i - 1] + ds * dvNuX;
+      vNorY[i] = vNorY[i - 1] + ds * dvNuY;
+      vNorZ[i] = vNorZ[i - 1] + ds * dvNuZ;
+      vKsiX += ds * dvKsiX;
+      vKsiY += ds * dvKsiY;
+      vKsiZ += ds * dvKsiZ;
+      vBinX[i] = vBinX[i - 1] + ds * dvBinX;
+      vBinY[i] = vBinY[i - 1] + ds * dvBinY;
+      vBinZ[i] = vBinZ[i - 1] + ds * dvBinZ;
+
+      // normalize unit vectors
+      const Real d1 = ksiX * ksiX + ksiY * ksiY + ksiZ * ksiZ;
+      const Real d2 = norX[i] * norX[i] + norY[i] * norY[i] + norZ[i] * norZ[i];
+      const Real d3 = binX[i] * binX[i] + binY[i] * binY[i] + binZ[i] * binZ[i];
+      if (d1 > std::numeric_limits<Real>::epsilon()) {
+        const Real normfac = 1.0 / std::sqrt(d1);
+        ksiX *= normfac;
+        ksiY *= normfac;
+        ksiZ *= normfac;
+      }
+      if (d2 > std::numeric_limits<Real>::epsilon()) {
+        const Real normfac = 1.0 / std::sqrt(d2);
+        norX[i] *= normfac;
+        norY[i] *= normfac;
+        norZ[i] *= normfac;
+      }
+      if (d3 > std::numeric_limits<Real>::epsilon()) {
+        const Real normfac = 1.0 / std::sqrt(d3);
+        binX[i] *= normfac;
+        binY[i] *= normfac;
+        binZ[i] *= normfac;
+      }
+#if 0
+            std::cout << "Frenet3D: "<< i
+            << " rX:"   << rX[i]   << " rY:"   << rY[i]   << " rZ:"   << rZ[i]
+            << " ksiX:" << ksiX    << " ksiY:" << ksiY    << " ksiZ:" << ksiZ
+            << " norX:" << norX[i] << " norY:" << norY[i] << " norZ:" << norZ[i]
+            << " binX:" << binX[i] << " binY:" << binY[i] << " binZ:" << binZ[i]
+            << " curv:" << curv[i] << " tors:" << tors[i]
+            << " curv_dt:" << curv_dt[i] << " tors_dt:" << tors_dt[i] << std::endl;
+#endif
+    }
+  }
+};
+
+CubismUP_3D_NAMESPACE_END
+#endif // CubismUP_3D_Frenet_h
+#ifndef CubismUP_3D_Interpolation1D_h
+#define CubismUP_3D_Interpolation1D_h
+CubismUP_3D_NAMESPACE_BEGIN
+
+    class Interpolation1D {
+public:
+  template <typename T>
+  static void naturalCubicSpline(const Real *x, const Real *y,
+                                 const unsigned int n, const T *xx, T *yy,
+                                 const unsigned int nn) {
+    return naturalCubicSpline(x, y, n, xx, yy, nn, 0);
+  }
+  template <typename T>
+  static void naturalCubicSpline(const Real *x, const Real *y,
+                                 const unsigned int n, const T *xx, T *yy,
+                                 const unsigned int nn, const Real offset) {
+    Real *y2 = new Real[n];
+    Real *u = new Real[n - 1];
+
+    y2[0] = u[0] = 0.0;
+    for (unsigned int i = 1; i < n - 1; i++) {
+      const Real sig = (x[i] - x[i - 1]) / (x[i + 1] - x[i - 1]);
+      const Real p = sig * y2[i - 1] + 2.0;
+      y2[i] = (sig - 1.0) / p;
+      u[i] = (y[i + 1] - y[i]) / (x[i + 1] - x[i]) -
+             (y[i] - y[i - 1]) / (x[i] - x[i - 1]);
+      u[i] = (6.0 * u[i] / (x[i + 1] - x[i - 1]) - sig * u[i - 1]) / p;
+    }
+    y2[n - 1] = 0;
+
+    for (unsigned int k = n - 2; k > 0; k--)
+      y2[k] = y2[k] * y2[k + 1] + u[k];
+
+    for (unsigned int j = 0; j < nn; j++) {
+      unsigned int klo = 0;
+      unsigned int khi = n - 1;
+      unsigned int k = 0;
+      while (khi - klo > 1) {
+        k = (khi + klo) >> 1;
+        if (x[k] > (xx[j] + offset))
+          khi = k;
+        else
+          klo = k;
+      }
+
+      const Real h = x[khi] - x[klo];
+      if (abs(h) < 2.2e-16) {
+        printf("Interpolation points must be distinct!");
+        fflush(0);
+        abort();
+      }
+      const Real a = (x[khi] - (xx[j] + offset)) / h;
+      const Real b = ((xx[j] + offset) - x[klo]) / h;
+      yy[j] =
+          a * y[klo] + b * y[khi] +
+          ((a * a * a - a) * y2[klo] + (b * b * b - b) * y2[khi]) * (h * h) / 6;
+    }
+
+    delete[] y2;
+    delete[] u;
+  }
+
+  template <typename T>
+  static void cubicInterpolation(const Real x0, const Real x1, const Real x,
+                                 const Real y0, const Real y1, const Real dy0,
+                                 const Real dy1, T &y, T &dy) {
+    const Real xrel = (x - x0);
+    const Real deltax = (x1 - x0);
+
+    const Real a = (dy0 + dy1) / (deltax * deltax) -
+                   2 * (y1 - y0) / (deltax * deltax * deltax);
+    const Real b =
+        (-2 * dy0 - dy1) / deltax + 3 * (y1 - y0) / (deltax * deltax);
+    const Real c = dy0;
+    const Real d = y0;
+
+    y = a * xrel * xrel * xrel + b * xrel * xrel + c * xrel + d;
+    dy = 3 * a * xrel * xrel + 2 * b * xrel + c;
+  }
+
+  template <typename T>
+  static void cubicInterpolation(const Real x0, const Real x1, const Real x,
+                                 const Real y0, const Real y1, T &y, T &dy) {
+    return cubicInterpolation(x0, x1, x, y0, y1, 0.0, 0.0, y,
+                              dy); // zero slope at end points
+  }
+};
+
+CubismUP_3D_NAMESPACE_END
+#endif // CubismUP_3D_Interpolation1D_h
+#ifndef CubismUP_3D_Schedulers_h
+#define CubismUP_3D_Schedulers_h
+
+CubismUP_3D_NAMESPACE_BEGIN
+
+    namespace Schedulers {
+  template <int Npoints> struct ParameterScheduler {
+    static constexpr int npoints = Npoints;
+    std::array<Real, Npoints> parameters_t0;  // parameters at t0
+    std::array<Real, Npoints> parameters_t1;  // parameters at t1
+    std::array<Real, Npoints> dparameters_t0; // derivative at t0
+    Real t0, t1;                              // t0 and t1
+
+    void save(std::string filename) {
+      std::ofstream savestream;
+      savestream.setf(std::ios::scientific);
+      savestream.precision(std::numeric_limits<Real>::digits10 + 1);
+      savestream.open(filename + ".txt");
+
+      savestream << t0 << "\t" << t1 << std::endl;
+      for (int i = 0; i < Npoints; ++i)
+        savestream << parameters_t0[i] << "\t" << parameters_t1[i] << "\t"
+                   << dparameters_t0[i] << std::endl;
+      savestream.close();
+    }
+
+    void restart(std::string filename) {
+      std::ifstream restartstream;
+      restartstream.open(filename + ".txt");
+      int rank;
+      MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+      if (!rank)
+        std::cout << filename << " ";
+      restartstream >> t0 >> t1;
+      for (int i = 0; i < Npoints; ++i) {
+        restartstream >> parameters_t0[i] >> parameters_t1[i] >>
+            dparameters_t0[i];
+        if (!rank)
+          std::cout << parameters_t0[i] << " " << parameters_t1[i] << " "
+                    << dparameters_t0[i];
+      }
+      if (!rank)
+        std::cout << std::endl;
+      restartstream.close();
+    }
+
+    ParameterScheduler() {
+      t0 = -1;
+      t1 = 0;
+      parameters_t0 = std::array<Real, Npoints>();
+      parameters_t1 = std::array<Real, Npoints>();
+      dparameters_t0 = std::array<Real, Npoints>();
+    }
+
+    void transition(const Real t, const Real tstart, const Real tend,
+                    const std::array<Real, Npoints> parameters_tend,
+                    const bool UseCurrentDerivative = false) {
+      if (t < tstart or t > tend)
+        return; // this transition is out of scope
+      // if(tstart<t0) return; // this transition is not relevant: we are doing
+      // a next one already
+
+      // we transition from whatever state we are in to a new state
+      // the start point is where we are now: lets find out
+      std::array<Real, Npoints> parameters;
+      std::array<Real, Npoints> dparameters;
+      gimmeValues(tstart, parameters, dparameters);
+
+      // fill my members
+      t0 = tstart;
+      t1 = tend;
+      parameters_t0 = parameters;
+      parameters_t1 = parameters_tend;
+      dparameters_t0 =
+          UseCurrentDerivative ? dparameters : std::array<Real, Npoints>();
+    }
+
+    void transition(const Real t, const Real tstart, const Real tend,
+                    const std::array<Real, Npoints> parameters_tstart,
+                    const std::array<Real, Npoints> parameters_tend) {
+      if (t < tstart or t > tend)
+        return; // this transition is out of scope
+      if (tstart < t0)
+        return; // this transition is not relevant: we are doing a next one
+                // already
+
+      // fill my members
+      t0 = tstart;
+      t1 = tend;
+      parameters_t0 = parameters_tstart;
+      parameters_t1 = parameters_tend;
+    }
+
+    void gimmeValues(const Real t, std::array<Real, Npoints> &parameters,
+                     std::array<Real, Npoints> &dparameters) {
+      // look at the different cases
+      if (t < t0 or t0 < 0) { // no transition, we are in state 0
+        parameters = parameters_t0;
+        dparameters = std::array<Real, Npoints>();
+      } else if (t > t1) { // no transition, we are in state 1
+        parameters = parameters_t1;
+        dparameters = std::array<Real, Npoints>();
+      } else { // we are within transition: interpolate
+        for (int i = 0; i < Npoints; ++i)
+          Interpolation1D::cubicInterpolation(
+              t0, t1, t, parameters_t0[i], parameters_t1[i], dparameters_t0[i],
+              0.0, parameters[i], dparameters[i]);
+      }
+    }
+
+    void gimmeValues(const Real t, std::array<Real, Npoints> &parameters) {
+      std::array<Real, Npoints> dparameters_whocares; // no derivative info
+      return gimmeValues(t, parameters, dparameters_whocares);
+    }
+  };
+
+  struct ParameterSchedulerScalar : ParameterScheduler<1> {
+    void transition(const Real t, const Real tstart, const Real tend,
+                    const Real parameter_tend,
+                    const bool UseCurrentDerivative = false) {
+      const std::array<Real, 1> myParameter = {parameter_tend};
+      return ParameterScheduler<1>::transition(t, tstart, tend, myParameter,
+                                               UseCurrentDerivative);
+    }
+
+    void transition(const Real t, const Real tstart, const Real tend,
+                    const Real parameter_tstart, const Real parameter_tend) {
+      const std::array<Real, 1> myParameterStart = {parameter_tstart};
+      const std::array<Real, 1> myParameterEnd = {parameter_tend};
+      return ParameterScheduler<1>::transition(
+          t, tstart, tend, myParameterStart, myParameterEnd);
+    }
+
+    void gimmeValues(const Real t, Real &parameter, Real &dparameter) {
+      std::array<Real, 1> myParameter, mydParameter;
+      ParameterScheduler<1>::gimmeValues(t, myParameter, mydParameter);
+      parameter = myParameter[0];
+      dparameter = mydParameter[0];
+    }
+
+    void gimmeValues(const Real t, Real &parameter) {
+      std::array<Real, 1> myParameter;
+      ParameterScheduler<1>::gimmeValues(t, myParameter);
+      parameter = myParameter[0];
+    }
+  };
+
+  template <int Npoints>
+  struct ParameterSchedulerVector : ParameterScheduler<Npoints> {
+    void gimmeValues(const Real t, const std::array<Real, Npoints> &positions,
+                     const int Nfine, const Real *const positions_fine,
+                     Real *const parameters_fine,
+                     Real *const dparameters_fine) {
+      // we interpolate in space the start and end point
+      Real *parameters_t0_fine = new Real[Nfine];
+      Real *parameters_t1_fine = new Real[Nfine];
+      Real *dparameters_t0_fine = new Real[Nfine];
+
+      Interpolation1D::naturalCubicSpline(
+          positions.data(), this->parameters_t0.data(), Npoints, positions_fine,
+          parameters_t0_fine, Nfine);
+      Interpolation1D::naturalCubicSpline(
+          positions.data(), this->parameters_t1.data(), Npoints, positions_fine,
+          parameters_t1_fine, Nfine);
+      Interpolation1D::naturalCubicSpline(
+          positions.data(), this->dparameters_t0.data(), Npoints,
+          positions_fine, dparameters_t0_fine, Nfine);
+
+      // look at the different cases
+      if (t < this->t0 or this->t0 < 0) {
+        // no transition, we are in state 0
+        for (int i = 0; i < Nfine; ++i) {
+          parameters_fine[i] = parameters_t0_fine[i];
+          dparameters_fine[i] = 0.0;
+        }
+      } else if (t > this->t1) {
+        // no transition, we are in state 1
+        for (int i = 0; i < Nfine; ++i) {
+          parameters_fine[i] = parameters_t1_fine[i];
+          dparameters_fine[i] = 0.0;
+        }
+      } else {
+        // we are within transition: interpolate in time for each point of the
+        // fine discretization
+        for (int i = 0; i < Nfine; ++i)
+          Interpolation1D::cubicInterpolation(
+              this->t0, this->t1, t, parameters_t0_fine[i],
+              parameters_t1_fine[i], dparameters_t0_fine[i], 0.0,
+              parameters_fine[i], dparameters_fine[i]);
+      }
+      delete[] parameters_t0_fine;
+      delete[] parameters_t1_fine;
+      delete[] dparameters_t0_fine;
+    }
+
+    void gimmeValues(const Real t, std::array<Real, Npoints> &parameters) {
+      ParameterScheduler<Npoints>::gimmeValues(t, parameters);
+    }
+
+    void gimmeValues(const Real t, std::array<Real, Npoints> &parameters,
+                     std::array<Real, Npoints> &dparameters) {
+      ParameterScheduler<Npoints>::gimmeValues(t, parameters, dparameters);
+    }
+  };
+
+  template <int Npoints>
+  struct ParameterSchedulerLearnWave : ParameterScheduler<Npoints> {
+    template <typename T>
+    void gimmeValues(const Real t, const Real Twave, const Real Length,
+                     const std::array<Real, Npoints> &positions,
+                     const int Nfine, const T *const positions_fine,
+                     T *const parameters_fine, Real *const dparameters_fine) {
+      const Real _1oL = 1. / Length;
+      const Real _1oT = 1. / Twave;
+      // the fish goes through (as function of t and s) a wave function that
+      // describes the curvature
+      for (int i = 0; i < Nfine; ++i) {
+        const Real c = positions_fine[i] * _1oL -
+                       (t - this->t0) * _1oT; // traveling wave coord
+        bool bCheck = true;
+
+        if (c < positions[0]) { // Are you before latest wave node?
+          Interpolation1D::cubicInterpolation(
+              c, positions[0], c, this->parameters_t0[0],
+              this->parameters_t0[0], parameters_fine[i], dparameters_fine[i]);
+          bCheck = false;
+        } else if (c >
+                   positions[Npoints - 1]) { // Are you after oldest wave node?
+          Interpolation1D::cubicInterpolation(
+              positions[Npoints - 1], c, c, this->parameters_t0[Npoints - 1],
+              this->parameters_t0[Npoints - 1], parameters_fine[i],
+              dparameters_fine[i]);
+          bCheck = false;
+        } else {
+          for (int j = 1; j < Npoints;
+               ++j) { // Check at which point of the travelling wave we are
+            if ((c >= positions[j - 1]) && (c <= positions[j])) {
+              Interpolation1D::cubicInterpolation(
+                  positions[j - 1], positions[j], c, this->parameters_t0[j - 1],
+                  this->parameters_t0[j], parameters_fine[i],
+                  dparameters_fine[i]);
+              dparameters_fine[i] =
+                  -dparameters_fine[i] * _1oT; // df/dc * dc/dt
+              bCheck = false;
+            }
+          }
+        }
+        if (bCheck) {
+          std::cout << "[CUP3D] Argument c=positions_fine[i]*_1oL - (t - "
+                       "this->t0)*_1oT="
+                    << positions_fine[i] << "*" << _1oL << "-(" << t << "-"
+                    << this->t0 << ")*" << _1oT << "=" << c
+                    << " could not be associated to wave nodes [Length="
+                    << Length << ", Twave=" << Twave << "]. Aborting..."
+                    << std::endl;
+          abort();
+        }
+      }
+    }
+
+    void
+    Turn(const Real b,
+         const Real t_turn) // each decision adds a node at the beginning of the
+                            // wave (left, right, straight) and pops last node
+    {
+      this->t0 = t_turn;
+      for (int i = Npoints - 1; i > 1; --i)
+        this->parameters_t0[i] = this->parameters_t0[i - 2];
+      this->parameters_t0[1] = b;
+      this->parameters_t0[0] = 0;
+    }
+  };
+}
+
+CubismUP_3D_NAMESPACE_END
+#endif // CubismUP_3D_Schedulers_h
+
+CubismUP_3D_NAMESPACE_BEGIN
+
+    class FishMidlineData {
+public:
+  const Real length;     // midline length
+  const Real Tperiod;    // tail-beat period
+  const Real phaseShift; // phase shift for tail-beat
+  const Real h;          // grid spacing of grid where midline will be created
+  const Real waveLength =
+      1; // midline (or its curvature) parametrized as wave with this wavelength
+  const Real amplitudeFactor; // midline curvature amplitude
+
+  // Midline discretization parameters
+  // Midline is discretized by more points in first fraction and last fraction:
+  const Real fracRefined = 0.1;
+  const Real fracMid = 1 - 2 * fracRefined;
+  const Real dSmid_tgt = h / std::sqrt(3);
+  const Real dSrefine_tgt = 0.125 * h;
+  const int Nmid = (int)std::ceil(length * fracMid / dSmid_tgt / 8) * 8;
+  const Real dSmid = length * fracMid / Nmid;
+  const int Nend =
+      (int)std::ceil(fracRefined * length * 2 / (dSmid + dSrefine_tgt) / 4) * 4;
+  const Real dSref = fracRefined * length * 2 / Nend - dSmid;
+  const int Nm = Nmid + 2 * Nend + 1; // plus 1 because we contain 0 and L
+
+  Real *const rS; // arclength discretization points
+
+  Real *const rX; // X-coordinate of midline discretization points
+  Real *const rY; // Y-coordinate of midline discretization points
+  Real *const rZ; // Z-coordinate of midline discretization points
+  Real *const vX; // midline discretization velocities (=drX/dt)
+  Real *const vY; // midline discretization velocities (=drY/dt)
+  Real *const vZ; // midline discretization velocities (=drZ/dt)
+
+  Real *const
+      norX; // normal vector to the midline discretization points (X component)
+  Real *const
+      norY; // normal vector to the midline discretization points (Y component)
+  Real *const
+      norZ; // normal vector to the midline discretization points (Z component)
+  Real *const vNorX; // time derivative of normal vector (=dnorX/dt)
+  Real *const vNorY; // time derivative of normal vector (=dnorY/dt)
+  Real *const vNorZ; // time derivative of normal vector (=dnorZ/dt)
+
+  Real *const binX;  // binormal vector to the midline discretization points (X
+                     // component)
+  Real *const binY;  // binormal vector to the midline discretization points (Y
+                     // component)
+  Real *const binZ;  // binormal vector to the midline discretization points (Z
+                     // component)
+  Real *const vBinX; // time derivative of binormal vector (=dbinX/dt)
+  Real *const vBinY; // time derivative of binormal vector (=dbinY/dt)
+  Real *const vBinZ; // time derivative of binormal vector (=dbinZ/dt)
+
+  // fish cross-section is an ellipse with axis 2*width(s) and 2*height(s)
+  // the surface is parametrized by two parameters:
+  // s    : coordinate along midline (discretized by rS), in (0,L)
+  // theta: angle in a cross-section, in (0,2pi)
+  // The parametrization is: x(s,theta) = rS(s) + nor(s)*width(s)*cos(theta) +
+  // bin(s)*height(s)*sin(theta)
+  Real *const width;
+  Real *const height;
+
+  std::array<Real, 9> sensorLocation; // Shear stress sensor locations (for RL)
+
+  // Midline has an orientation in space which is defined from the following
+  // quaternion. When midline is defined, we change the frame of reference so
+  // that its origin is at the midline center of mass and its linear and angular
+  // momentums are zero.
+  Real quaternion_internal[4] = {1, 0, 0, 0};
+  Real angvel_internal[3] = {0, 0, 0};
+
+protected:
+  // computes derivative d/ds of given quantity
+  inline Real _d_ds(const int idx, const Real *const vals,
+                    const int maxidx) const {
+    if (idx == 0)
+      return (vals[idx + 1] - vals[idx]) / (rS[idx + 1] - rS[idx]);
+    else if (idx == maxidx - 1)
+      return (vals[idx] - vals[idx - 1]) / (rS[idx] - rS[idx - 1]);
+    else
+      return 0.5 * ((vals[idx + 1] - vals[idx]) / (rS[idx + 1] - rS[idx]) +
+                    (vals[idx] - vals[idx - 1]) / (rS[idx] - rS[idx - 1]));
+  }
+
+  Real *_alloc(const int N) { return new Real[N]; }
+
+  template <typename T> void _dealloc(T *ptr) {
+    if (ptr not_eq nullptr) {
+      delete[] ptr;
+      ptr = nullptr;
+    }
+  }
+
+public:
+  FishMidlineData(Real L, Real Tp, Real phi, Real _h, Real _ampFac = 1)
+      : length(L), Tperiod(Tp), phaseShift(phi), h(_h),
+        amplitudeFactor(_ampFac), rS(_alloc(Nm)), rX(_alloc(Nm)),
+        rY(_alloc(Nm)), rZ(_alloc(Nm)), vX(_alloc(Nm)), vY(_alloc(Nm)),
+        vZ(_alloc(Nm)), norX(_alloc(Nm)), norY(_alloc(Nm)), norZ(_alloc(Nm)),
+        vNorX(_alloc(Nm)), vNorY(_alloc(Nm)), vNorZ(_alloc(Nm)),
+        binX(_alloc(Nm)), binY(_alloc(Nm)), binZ(_alloc(Nm)), vBinX(_alloc(Nm)),
+        vBinY(_alloc(Nm)), vBinZ(_alloc(Nm)), width(_alloc(Nm)),
+        height(_alloc(Nm)) {
+    // Define points along midline
+    rS[0] = 0;
+    int k = 0;
+    for (int i = 0; i < Nend; ++i, k++) // fish head
+      rS[k + 1] = rS[k] + dSref + (dSmid - dSref) * i / ((Real)Nend - 1.);
+    for (int i = 0; i < Nmid; ++i, k++) // interior points
+      rS[k + 1] = rS[k] + dSmid;
+    for (int i = 0; i < Nend; ++i, k++) // fish tail
+      rS[k + 1] =
+          rS[k] + dSref + (dSmid - dSref) * (Nend - i - 1) / ((Real)Nend - 1.);
+    rS[k] = std::min(rS[k], (Real)L);
+    assert(k + 1 == Nm);
+  }
+
+  virtual ~FishMidlineData() {
+    _dealloc(rS);
+    _dealloc(rX);
+    _dealloc(rY);
+    _dealloc(rZ);
+    _dealloc(vX);
+    _dealloc(vY);
+    _dealloc(vZ);
+    _dealloc(norX);
+    _dealloc(norY);
+    _dealloc(norZ);
+    _dealloc(vNorX);
+    _dealloc(vNorY);
+    _dealloc(vNorZ);
+    _dealloc(binX);
+    _dealloc(binY);
+    _dealloc(binZ);
+    _dealloc(vBinX);
+    _dealloc(vBinY);
+    _dealloc(vBinZ);
+    _dealloc(width);
+    _dealloc(height);
+  }
+
+  void writeMidline2File(const int step_id, std::string filename) {
+    char buf[500];
+    sprintf(buf, "%s_midline_%07d.txt", filename.c_str(), step_id);
+    FILE *f = fopen(buf, "a");
+    fprintf(f, "s x y z vX vY vZ\n");
+    for (int i = 0; i < Nm; i++)
+      fprintf(f, "%g %g %g %g %g %g %g\n", rS[i], rX[i], rY[i], rZ[i], vX[i],
+              vY[i], vZ[i]);
+    fclose(f);
+  }
+
+  void writeMidline2File(const int step_id, std::string filename,
+                         const double q[4], const double position[3]) {
+    const double Rmatrix3D[3][3] = {
+        {1 - 2 * (q[2] * q[2] + q[3] * q[3]), 2 * (q[1] * q[2] - q[3] * q[0]),
+         2 * (q[1] * q[3] + q[2] * q[0])},
+        {2 * (q[1] * q[2] + q[3] * q[0]), 1 - 2 * (q[1] * q[1] + q[3] * q[3]),
+         2 * (q[2] * q[3] - q[1] * q[0])},
+        {2 * (q[1] * q[3] - q[2] * q[0]), 2 * (q[2] * q[3] + q[1] * q[0]),
+         1 - 2 * (q[1] * q[1] + q[2] * q[2])}};
+
+    char buf[500];
+    sprintf(buf, "%s_midline_%07d.txt", filename.c_str(), step_id);
+    FILE *f = fopen(buf, "a");
+    fprintf(f, "x y z s\n");
+    for (int i = 0; i < Nm; i++) {
+      double x[3];
+      x[0] = position[0] + Rmatrix3D[0][0] * rX[i] + Rmatrix3D[0][1] * rY[i] +
+             Rmatrix3D[0][2] * rZ[i];
+      x[1] = position[1] + Rmatrix3D[1][0] * rX[i] + Rmatrix3D[1][1] * rY[i] +
+             Rmatrix3D[1][2] * rZ[i];
+      x[2] = position[2] + Rmatrix3D[2][0] * rX[i] + Rmatrix3D[2][1] * rY[i] +
+             Rmatrix3D[2][2] * rZ[i];
+      fprintf(f, "%g %g %g %g \n", x[0], x[1], x[2], rS[i]);
+    }
+    fclose(f);
+  }
+
+  void SurfaceNormal(const int idx, const Real theta, Real &nx, Real &ny,
+                     Real &nz) {
+    // Surface is given from:
+    // x(s,theta) = rS(s) + nor(s)*width(s)*cos(theta) +
+    // bin(s)*height(s)*sin(theta) Here we compute n := dx/dtheta x dx/ds and we
+    // normalize the result,
+    //                                       to get the unit normal vector to
+    //                                       the fish surface
+
+    // if s = 0 then width = 0, height = 0 and the function is not
+    // differentiable. in this case, we DEFINE the "normal" vector as the
+    // tangent vector dr/ds (i.e. the fish is looking forward)
+    if (idx == 0) {
+      nx = (rX[idx + 1] - rX[idx]) / (rS[idx + 1] - rS[idx]);
+      ny = (rY[idx + 1] - rY[idx]) / (rS[idx + 1] - rS[idx]);
+      nz = (rZ[idx + 1] - rZ[idx]) / (rS[idx + 1] - rS[idx]);
+    } else {
+      const Real costheta = cos(theta);
+      const Real sintheta = sin(theta);
+
+      Real drXds = _d_ds(idx, rX, Nm);
+      Real drYds = _d_ds(idx, rY, Nm);
+      Real drZds = _d_ds(idx, rZ, Nm);
+      Real dnorXds = _d_ds(idx, norX, Nm);
+      Real dnorYds = _d_ds(idx, norY, Nm);
+      Real dnorZds = _d_ds(idx, norZ, Nm);
+      Real dbinXds = _d_ds(idx, binX, Nm);
+      Real dbinYds = _d_ds(idx, binY, Nm);
+      Real dbinZds = _d_ds(idx, binZ, Nm);
+      Real dwds = _d_ds(idx, width, Nm);
+      Real dhds = _d_ds(idx, height, Nm);
+
+      Real dxds = drXds + costheta * (dwds * norX[idx] + dnorXds * width[idx]) +
+                  sintheta * (dhds * binX[idx] + dbinXds * height[idx]);
+      Real dyds = drYds + costheta * (dwds * norY[idx] + dnorYds * width[idx]) +
+                  sintheta * (dhds * binY[idx] + dbinYds * height[idx]);
+      Real dzds = drZds + costheta * (dwds * norZ[idx] + dnorZds * width[idx]) +
+                  sintheta * (dhds * binZ[idx] + dbinZds * height[idx]);
+
+      Real dxdtheta = -sintheta * norX[idx] * width[idx] +
+                      costheta * binX[idx] * height[idx];
+      Real dydtheta = -sintheta * norY[idx] * width[idx] +
+                      costheta * binY[idx] * height[idx];
+      Real dzdtheta = -sintheta * norZ[idx] * width[idx] +
+                      costheta * binZ[idx] * height[idx];
+
+      nx = dydtheta * dzds - dzdtheta * dyds;
+      ny = dzdtheta * dxds - dxdtheta * dzds;
+      nz = dxdtheta * dyds - dydtheta * dxds;
+    }
+    const Real norm = 1.0 / (sqrt(nx * nx + ny * ny + nz * nz) +
+                             std::numeric_limits<Real>::epsilon());
+    nx *= norm;
+    ny *= norm;
+    nz *= norm;
+  }
+
+  void integrateLinearMomentum();
+
+  void integrateAngularMomentum(const Real dt);
+
+  // Derived class should provide the following function, which is responsible
+  // for defining
+  // rX,rY,rZ,norX,norY,norZ,binX,binY,biZ,vX,vY,vZ,vNorX,vNorY,vNorZ,vBinX,vBinY,vBinZ
+  virtual void computeMidline(const Real time, const Real dt) = 0;
+
+  // used in RL
+  virtual void execute(const Real time, const Real l_tnext,
+                       const std::vector<Real> &input) {}
+};
+
+struct VolumeSegment_OBB {
+  Real safe_distance = 0;
+  std::pair<int, int> s_range;
+  Real normalI[3] = {1, 0, 0}; // should be normalized and >=0
+  Real normalJ[3] = {0, 1, 0};
+  Real normalK[3] = {0, 0, 1};
+  Real w[3] = {0, 0, 0}, c[3] = {0, 0, 0}; // halfwidth & center
+  Real objBoxLabFr[3][2] = {{0, 0}, {0, 0}, {0, 0}};
+  Real objBoxObjFr[3][2] = {{0, 0}, {0, 0}, {0, 0}};
+
+  VolumeSegment_OBB() {}
+
+  void prepare(std::pair<int, int> _s_range, const Real bbox[3][2],
+               const Real safe_dist);
+
+  void normalizeNormals();
+
+  void changeToComputationalFrame(const Real position[3],
+                                  const Real quaternion[4]);
+
+  bool isIntersectingWithAABB(const Real start[3], const Real end[3]) const;
+};
+
+struct PutFishOnBlocks {
+  FishMidlineData *cfish;
+  const Real position[3];
+  const Real quaternion[4];
+  const Real Rmatrix3D[3][3];
+
+  PutFishOnBlocks(FishMidlineData *_cfish, const Real p[3], const Real q[4])
+      : cfish(_cfish), position{p[0], p[1], p[2]}, quaternion{q[0], q[1], q[2],
+                                                              q[3]},
+        Rmatrix3D{
+            {1 - 2 * (q[2] * q[2] + q[3] * q[3]),
+             2 * (q[1] * q[2] - q[3] * q[0]), 2 * (q[1] * q[3] + q[2] * q[0])},
+            {2 * (q[1] * q[2] + q[3] * q[0]),
+             1 - 2 * (q[1] * q[1] + q[3] * q[3]),
+             2 * (q[2] * q[3] - q[1] * q[0])},
+            {2 * (q[1] * q[3] - q[2] * q[0]), 2 * (q[2] * q[3] + q[1] * q[0]),
+             1 - 2 * (q[1] * q[1] + q[2] * q[2])}} {}
+
+  virtual ~PutFishOnBlocks() {}
+
+  static inline Real eulerDistSq3D(const Real a[3], const Real b[3]) {
+    return std::pow(a[0] - b[0], 2) + std::pow(a[1] - b[1], 2) +
+           std::pow(a[2] - b[2], 2);
+  }
+  static inline Real eulerDistSq2D(const Real a[3], const Real b[3]) {
+    return std::pow(a[0] - b[0], 2) + std::pow(a[1] - b[1], 2);
+  }
+
+  void changeVelocityToComputationalFrame(Real x[3]) const {
+    const Real p[3] = {x[0], x[1], x[2]};
+    // rotate (around CoM)
+    x[0] = Rmatrix3D[0][0] * p[0] + Rmatrix3D[0][1] * p[1] +
+           Rmatrix3D[0][2] * p[2];
+    x[1] = Rmatrix3D[1][0] * p[0] + Rmatrix3D[1][1] * p[1] +
+           Rmatrix3D[1][2] * p[2];
+    x[2] = Rmatrix3D[2][0] * p[0] + Rmatrix3D[2][1] * p[1] +
+           Rmatrix3D[2][2] * p[2];
+  }
+
+  template <typename T> void changeToComputationalFrame(T x[3]) const {
+    const T p[3] = {x[0], x[1], x[2]};
+    // rotate (around CoM)
+    x[0] = Rmatrix3D[0][0] * p[0] + Rmatrix3D[0][1] * p[1] +
+           Rmatrix3D[0][2] * p[2];
+    x[1] = Rmatrix3D[1][0] * p[0] + Rmatrix3D[1][1] * p[1] +
+           Rmatrix3D[1][2] * p[2];
+    x[2] = Rmatrix3D[2][0] * p[0] + Rmatrix3D[2][1] * p[1] +
+           Rmatrix3D[2][2] * p[2];
+    // translate
+    x[0] += position[0];
+    x[1] += position[1];
+    x[2] += position[2];
+  }
+
+  template <typename T> void changeFromComputationalFrame(T x[3]) const {
+    const T p[3] = {// translate back to CoM
+                    x[0] - (T)position[0], x[1] - (T)position[1],
+                    x[2] - (T)position[2]};
+    // rotate back around CoM
+    x[0] = Rmatrix3D[0][0] * p[0] + Rmatrix3D[1][0] * p[1] +
+           Rmatrix3D[2][0] * p[2];
+    x[1] = Rmatrix3D[0][1] * p[0] + Rmatrix3D[1][1] * p[1] +
+           Rmatrix3D[2][1] * p[2];
+    x[2] = Rmatrix3D[0][2] * p[0] + Rmatrix3D[1][2] * p[1] +
+           Rmatrix3D[2][2] * p[2];
+  }
+
+  void operator()(const Real, const Real, const Real, const Real,
+                  ObstacleBlock *const,
+                  const std::vector<VolumeSegment_OBB *> &) const;
+  virtual void constructSurface(const Real, const Real, const Real, const Real,
+                                ObstacleBlock *const,
+                                const std::vector<VolumeSegment_OBB *> &) const;
+  virtual void constructInternl(const Real, const Real, const Real, const Real,
+                                ObstacleBlock *const,
+                                const std::vector<VolumeSegment_OBB *> &) const;
+  virtual void signedDistanceSqrt(ObstacleBlock *const) const;
+};
+
+struct PutNacaOnBlocks : public PutFishOnBlocks {
+  PutNacaOnBlocks(FishMidlineData *_cfish, const Real p[3], const Real q[4])
+      : PutFishOnBlocks(_cfish, p, q) {}
+
+  Real getSmallerDistToMidLPlanar(const int start_s, const Real x[3],
+                                  int &final_s) const;
+
+  void
+  constructSurface(const Real, const Real, const Real, const Real,
+                   ObstacleBlock *const,
+                   const std::vector<VolumeSegment_OBB *> &) const override;
+  void
+  constructInternl(const Real, const Real, const Real, const Real,
+                   ObstacleBlock *const,
+                   const std::vector<VolumeSegment_OBB *> &) const override;
+};
+
+CubismUP_3D_NAMESPACE_END
+#ifndef CubismUP_3D_FishShapes_h
+#define CubismUP_3D_FishShapes_h
+
+
+CubismUP_3D_NAMESPACE_BEGIN
+
+    namespace MidlineShapes {
+  /*
+  function inputs: xc, yc are n sized arrays which contain the control points of
+  the cubic b spline function outputs onto res: assumed to be either the width
+  or the height
+  */
+  void integrateBSpline(const Real *const xc, const Real *const yc, const int n,
+                        const Real length, Real *const rS, Real *const res,
+                        const int Nm);
+
+  void naca_width(const Real t_ratio, const Real L, Real *const rS,
+                  Real *const res, const int Nm);
+  void stefan_width(const Real L, Real *const rS, Real *const res,
+                    const int Nm);
+  void stefan_height(const Real L, Real *const rS, Real *const res,
+                     const int Nm);
+  void larval_width(const Real L, Real *const rS, Real *const res,
+                    const int Nm);
+  void larval_height(const Real L, Real *const rS, Real *const res,
+                     const int Nm);
+  void danio_width(const Real L, Real *const rS, Real *const res, const int Nm);
+  void danio_height(const Real L, Real *const rS, Real *const res,
+                    const int Nm);
+
+  void computeWidthsHeights(const std::string &heightName,
+                            const std::string &widthName, Real L, Real *rS,
+                            Real *height, Real *width, int nM, int mpirank);
+}
+
+CubismUP_3D_NAMESPACE_END
+#endif // CubismUP_3D_FishShapes_h
+#ifndef CubismUP_3D_ComputeDissipation_h
+#define CubismUP_3D_ComputeDissipation_h
+
+CubismUP_3D_NAMESPACE_BEGIN
+
+    class ComputeDissipation : public Operator {
+public:
+  ComputeDissipation(SimulationData &s) : Operator(s) {}
+  void operator()(const Real dt);
+  std::string getName() { return "Dissipation"; }
+};
+
+CubismUP_3D_NAMESPACE_END
+#endif
+#ifndef CubismUP_3D_Cylinder_h
+#define CubismUP_3D_Cylinder_h
+CubismUP_3D_NAMESPACE_BEGIN
+
+    class Cylinder : public Obstacle {
+public:
+  const Real radius;
+  const Real halflength;
+  std::string section = "circular"; // or whatever
+  Real umax = 0;
+  Real vmax = 0;
+  Real wmax = 0;
+  Real tmax = 1;
+  // special case: startup with unif accel to umax in tmax, and then decel to 0
+  bool accel = false;
+
+public:
+  Cylinder(SimulationData &s, cubism::ArgumentParser &p);
+  void _init(void);
+  void create() override;
+  void finalize() override;
+  void computeVelocities() override;
+};
+
+CubismUP_3D_NAMESPACE_END
+#endif // CubismUP_3D_Cylinder_h
+#ifndef CubismUP_3D_ObstacleLibrary_h
+#define CubismUP_3D_ObstacleLibrary_h
+
+CubismUP_3D_NAMESPACE_BEGIN
+
+    /*
+     * A base class for FillBlocks classes.
+     *
+     * Derived classes should be implemented as (*):
+     *      class FillBlocksFOO : FillBlocksBase<FillBlocksFOO> {
+     *          (...)
+     *      };
+     *
+     * and are required to implement following member functions:
+     *
+     * bool isTouching(const BlockInfo &info, const ScalarBlock &block) const;
+     *      Returns if the given blocks intersects or touches the object.
+     *      False positives are acceptable.
+     *
+     * Real signedDistance(Real x, Real y, Real z) const;
+     *      Returns the signed distance of the given point from the surface of
+     * the object. Positive number stands for inside, negative for outside.
+     *
+     *
+     * (*) That way the base class is able to access functions of the derived
+     * class in compile-time (without using virtual functions). For more info,
+     * see: https://en.wikipedia.org/wiki/Curiously_recurring_template_pattern
+     */
+
+    template <typename Derived>
+    struct FillBlocksBase {
+  using CHIMAT =
+      Real[ScalarBlock::sizeZ][ScalarBlock::sizeY][ScalarBlock::sizeX];
+  void operator()(const cubism::BlockInfo &info, ObstacleBlock *const o) const {
+    // TODO: Remove `isTouching` check and verify that all dependencies are
+    //       using this function properly.
+    ScalarBlock &b = *(ScalarBlock *)info.ptrBlock;
+    if (!derived()->isTouching(info, b))
+      return;
+    auto &SDFLAB = o->sdfLab;
+    for (int iz = -1; iz < ScalarBlock::sizeZ + 1; ++iz)
+      for (int iy = -1; iy < ScalarBlock::sizeY + 1; ++iy)
+        for (int ix = -1; ix < ScalarBlock::sizeX + 1; ++ix) {
+          Real p[3];
+          info.pos(p, ix, iy, iz);
+          const Real dist = derived()->signedDistance(p[0], p[1], p[2]);
+          SDFLAB[iz + 1][iy + 1][ix + 1] = dist;
+        }
+  }
+
+private:
+  const Derived *derived() const noexcept {
+    return static_cast<const Derived *>(this);
+  }
+};
+
+CubismUP_3D_NAMESPACE_END
+#endif // CubismUP_3D_ObstacleLibrary_h
+
+CubismUP_3D_NAMESPACE_BEGIN
+
+    class CylinderNozzle : public Cylinder {
+  std::vector<Real> actuators_prev_value;
+  std::vector<Real> actuators_next_value;
+  const int Nactuators;
+  const Real actuator_theta;
+  Real fx_integral = 0;
+  std::vector<double> action_taken;
+  std::vector<double> t_action_taken;
+  int curr_idx = 0;
+  std::vector<Schedulers::ParameterSchedulerScalar> actuatorSchedulers;
+  Real t_change = 0;
+  const Real regularizer;
+  const Real ccoef;
+
+public:
+  CylinderNozzle(SimulationData &s, cubism::ArgumentParser &p);
+  void finalize() override;
+  void act(std::vector<Real> action, const int agentID);
+  Real reward(const int agentID);
+  std::vector<Real> state(const int agentID);
+  std::vector<Real> actuators;
+  void computeVelocities() override {
+    Obstacle::computeVelocities();
+    constexpr Real t1 = 0.25;
+    constexpr Real t2 = 0.50;
+    angVel[2] = (sim.time > t1 && sim.time < t2)
+                    ? transVel[0] * 2 * radius *
+                          sin(2 * M_PI * (sim.time - t1) / (t2 - t1))
+                    : 0.0;
+  }
+};
+
+CubismUP_3D_NAMESPACE_END
+#ifndef CubismUP_3D_Ellipsoid_h
+#define CubismUP_3D_Ellipsoid_h
+CubismUP_3D_NAMESPACE_BEGIN
+
+    class Ellipsoid : public Obstacle {
+  const Real radius;
+  Real e0, e1, e2;
+  // special case: startup with unif accel to umax in tmax, and then decel to 0
+  bool accel_decel = false;
+  Real umax = 0, tmax = 1;
+
+public:
+  Ellipsoid(SimulationData &s, cubism::ArgumentParser &p);
+
+  void create() override;
+  void finalize() override;
+  void computeVelocities() override;
+};
+
+CubismUP_3D_NAMESPACE_END
+#endif // CubismUP_3D_Ellipsoid_h
+
+CubismUP_3D_NAMESPACE_BEGIN
+
+    class ExternalForcing : public Operator {
+public:
+  ExternalForcing(SimulationData &s) : Operator(s) {}
+
+  void operator()(const double dt);
+
+  std::string getName() { return "ExternalForcing"; }
+};
+
+CubismUP_3D_NAMESPACE_END
+#ifndef CubismUP_3D_ExternalObstacle_h
+#define CubismUP_3D_ExternalObstacle_h
+CubismUP_3D_NAMESPACE_BEGIN
+
+    template <typename T>
+    struct Vector3 {
+  T &operator[](int k) { return x_[k]; }
+  const T &operator[](int k) const { return x_[k]; }
+
+  friend Vector3 operator+(const Vector3 &a, const Vector3 &b) {
+    return {a[0] + b[0], a[1] + b[1], a[2] + b[2]};
+  }
+
+  friend Vector3 operator-(const Vector3 &a, const Vector3 &b) {
+    return {a[0] - b[0], a[1] - b[1], a[2] - b[2]};
+  }
+
+  friend Vector3 operator*(const T &a, const Vector3 &b) {
+    return {a * b[0], a * b[1], a * b[2]};
+  }
+
+  friend Vector3 cross(const Vector3 &a, const Vector3 &b) {
+    return Vector3{
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    };
+  }
+
+  friend auto dot(const Vector3 &a, const Vector3 &b) {
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  }
+
+  T x_[3] = {0};
+};
+
+// Müller-Trumbore algorithm (from
+// https://en.wikipedia.org/wiki/M%C3%B6ller%E2%80%93Trumbore_intersection_algorithm)
+inline int rayIntersectsTriangle(const Vector3<Real> &rayOrigin,
+                                 const Vector3<Real> &rayVector,
+                                 const Vector3<Vector3<Real>> &triangle,
+                                 Vector3<Real> &intersectionPoint) {
+  const Real eps = 1e-6; // 1e-10;
+
+  // compute triangle edges
+  const Vector3<Real> edge1 = triangle[1] - triangle[0];
+  const Vector3<Real> edge2 = triangle[2] - triangle[0];
+
+  // compute determinant
+  const Vector3<Real> h = cross(rayVector, edge2);
+  const Real a = dot(edge1, h);
+
+  // if cos(theta) is close to zero (theta is the angle between edge1 and h,
+  // triangle is parallel
+  if (std::abs(a * a) <= dot(edge1, edge1) * dot(h, h) * eps * eps)
+    return -1;
+
+  // invert determinant
+  const Real f = 1.0 / a;
+
+  // solve for u and return if miss
+  const Vector3<Real> s = rayOrigin - triangle[0];
+  const Real u = f * dot(s, h);
+  if (u < 0.0 || u > 1.0)
+    return 0;
+
+  // solve for v and return if miss
+  const Vector3<Real> q = cross(s, edge1);
+  const Real v = f * dot(rayVector, q);
+  if (v < 0.0 || u + v > 1.0)
+    return 0;
+
+  // check if ray intersects with a vertex or an edge of the triangle (unlikely,
+  // but possible)
+  const Real w = 1.0 - u - v;
+  if (u < eps || v < eps || w < eps)
+    return -3;
+
+  // compute t and intersection point
+  const Real t = f * dot(edge2, q);
+
+  // ray is in back
+  if (t < 0)
+    return -2;
+
+  intersectionPoint = rayOrigin + t * rayVector;
+
+  return 1;
+}
+
+inline Vector3<Real> ProjectToLine(const Vector3<Real> &a,
+                                   const Vector3<Real> &b,
+                                   const Vector3<Real> &p) {
+  const Real norm_ab = (b[0] - a[0]) * (b[0] - a[0]) +
+                       (b[1] - a[1]) * (b[1] - a[1]) +
+                       (b[2] - a[2]) * (b[2] - a[2]);
+  const Real proj_a = std::fabs(dot(p - a, b - a));
+  const Real proj_b = std::fabs(dot(p - b, b - a));
+  if (proj_a <= norm_ab && proj_b <= norm_ab)
+    return a + (proj_a / norm_ab) * (b - a); // point is between a and b
+  else if (proj_a < proj_b)
+    return a;
+  else
+    return b;
+}
+
+inline Real pointTriangleSqrDistance(const Vector3<Real> &a,
+                                     const Vector3<Real> &b,
+                                     const Vector3<Real> &c,
+                                     const Vector3<Real> &r,
+                                     Vector3<Real> &rpt) {
+  // 1. project in 2D plane containing the triangle
+  const auto ac = c - a;
+  const auto ab = b - a;
+  const auto ar = r - a;
+  const auto n = cross(ab, ac);
+  const Real alpha = dot(ar, n) / dot(n, n);
+  const auto rp = r - alpha * n;
+
+  // 2. compute the barycentric coordinates
+  Real u = 0;
+  Real v = 0;
+  Real w = 0;
+  const Vector3<Real> temp = rp - a;
+  const Real d00 = dot(ab, ab);
+  const Real d01 = dot(ab, ac);
+  const Real d11 = dot(ac, ac);
+  const Real d20 = dot(temp, ab);
+  const Real d21 = dot(temp, ac);
+  const Real denom = d00 * d11 - d01 * d01;
+  v = (d11 * d20 - d01 * d21) / denom;
+  w = (d00 * d21 - d01 * d20) / denom;
+  u = 1.0 - v - w;
+
+  if (std::fabs(denom) < 1e-23) // then triangle is a line
+  {
+    const Real ab1 = std::fabs(dot(ab, ab));
+    const Real ac1 = std::fabs(dot(ac, ac));
+    const Real bc1 = std::fabs(dot(b - c, b - c));
+    if (ab1 <= ac1 && ab1 <= bc1)
+      rpt = ProjectToLine(a, c, rp);
+    else if (ac1 <= ab1 && ac1 <= bc1)
+      rpt = ProjectToLine(b, c, rp);
+    else if (bc1 <= ab1 && bc1 <= ac1)
+      rpt = ProjectToLine(a, b, rp);
+    else
+      MPI_Abort(MPI_COMM_WORLD, 666);
+  } else if (u >= 0 && v >= 0 && w >= 0) // point is inside the triangle
+  {
+    rpt = u * a + v * b + w * c; // projected point in real space
+  } else if (u < 0 && v < 0)
+    rpt = c;
+  else if (u < 0 && w < 0)
+    rpt = b;
+  else if (v < 0 && w < 0)
+    rpt = a;
+  else if (u < 0)
+    rpt = ProjectToLine(b, c, rp);
+  else if (v < 0)
+    rpt = ProjectToLine(a, c, rp);
+  else if (w < 0)
+    rpt = ProjectToLine(a, b, rp);
+
+  Real retval = (r[0] - rpt[0]) * (r[0] - rpt[0]) +
+                (r[1] - rpt[1]) * (r[1] - rpt[1]) +
+                (r[2] - rpt[2]) * (r[2] - rpt[2]);
+  return retval;
+}
+
+class ExternalObstacle : public Obstacle {
+  std::string path;
+  std::mt19937 gen;
+  std::normal_distribution<Real> normalDistribution;
+
+public:
+  std::vector<std::vector<int>> BlocksToTriangles;
+  std::vector<std::vector<int>> IJKToTriangles;
+  std::vector<Vector3<Real>> randomNormals;
+  std::vector<Vector3<Real>> x_;
+  std::vector<Vector3<int>> tri_;
+  int nIJK;
+  Real hIJK;
+
+  ExternalObstacle(SimulationData &s, cubism::ArgumentParser &p);
+
+  void create() override;
+
+  void rotate() {
+    const Real w = quaternion[0], x = quaternion[1], y = quaternion[2],
+               z = quaternion[3];
+    const Real Rmatrix[3][3] = {
+        {1 - 2 * (y * y + z * z), 2 * (x * y + z * w), 2 * (x * z - y * w)},
+        {2 * (x * y - z * w), 1 - 2 * (x * x + z * z), 2 * (y * z + x * w)},
+        {2 * (x * z + y * w), 2 * (y * z - x * w), 1 - 2 * (x * x + y * y)}};
+    for (auto &pt : x_) {
+      // rotate point
+      Vector3<Real> pRot = {
+          Rmatrix[0][0] * pt[0] + Rmatrix[1][0] * pt[1] + Rmatrix[2][0] * pt[2],
+          Rmatrix[0][1] * pt[0] + Rmatrix[1][1] * pt[1] + Rmatrix[2][1] * pt[2],
+          Rmatrix[0][2] * pt[0] + Rmatrix[1][2] * pt[1] +
+              Rmatrix[2][2] * pt[2]};
+      // translate point
+      pt = {pRot[0] + position[0], pRot[1] + position[1],
+            pRot[2] + position[2]};
+    }
+  }
+};
+
+CubismUP_3D_NAMESPACE_END
+#endif // CubismUP_3D_ExternalObstacle_
+
+
+/* A header-only implementation of the .ply file format.
+ * https://github.com/nmwsharp/happly
+ * By Nicholas Sharp - nsharp@cs.cmu.edu
+ *
+ * Version 2, July 20, 2019
+ */
+
+/*
+MIT License
+
+Copyright (c) 2018 Nick Sharp
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
+
+// clang-format off
+/*
+
+ === Changelog ===
+
+  Significant changes to the file recorded here.
+
+  - Version 5 (Aug 22, 2020)      Minor: skip blank lines before properties in ASCII files
+  - Version 4 (Sep 11, 2019)      Change internal list format to be flat. Other small perf fixes and cleanup.
+  - Version 3 (Aug 1, 2019)       Add support for big endian and obj_info
+  - Version 2 (July 20, 2019)     Catch exceptions by const reference.
+  - Version 1 (undated)           Initial version. Unnamed changes before version numbering.
+
+*/
+// clang-format on
+
+
+// General namespace wrapping all Happly things.
+namespace happly {
+
+#ifdef _FLOAT_PRECISION_
+using Real = float;
+#endif
+#ifdef _DOUBLE_PRECISION_
+using Real = double;
+#endif
+#ifdef _LONG_DOUBLE_PRECISION_
+using Real = long double;
+#endif
+
+// Enum specifying binary or ASCII filetypes. Binary can be little-endian
+// (default) or big endian.
+enum class DataFormat { ASCII, Binary, BinaryBigEndian };
+
+// Type name strings
+// clang-format off
+template <typename T> std::string typeName()                { return "unknown"; }
+template<> inline std::string typeName<int8_t>()            { return "char";    }
+template<> inline std::string typeName<uint8_t>()           { return "uchar";   }
+template<> inline std::string typeName<int16_t>()           { return "short";   }
+template<> inline std::string typeName<uint16_t>()          { return "ushort";  }
+template<> inline std::string typeName<int32_t>()           { return "int";     }
+template<> inline std::string typeName<uint32_t>()          { return "uint";    }
+template<> inline std::string typeName<float>()             { return "float";   }
+template<> inline std::string typeName<double>()            { return "double";  }
+
+// Template hackery that makes getProperty<T>() and friends pretty while automatically picking up smaller types
+namespace {
+
+// A pointer for the equivalent/smaller equivalent of a type (eg. when a Real is requested a float works too, etc)
+// long int is intentionally absent to avoid platform confusion
+template <class T> struct TypeChain                 { bool hasChildType = false;   typedef T            type; };
+template <> struct TypeChain<int64_t>               { bool hasChildType = true;    typedef int32_t      type; };
+template <> struct TypeChain<int32_t>               { bool hasChildType = true;    typedef int16_t      type; };
+template <> struct TypeChain<int16_t>               { bool hasChildType = true;    typedef int8_t       type; };
+template <> struct TypeChain<uint64_t>              { bool hasChildType = true;    typedef uint32_t     type; };
+template <> struct TypeChain<uint32_t>              { bool hasChildType = true;    typedef uint16_t     type; };
+template <> struct TypeChain<uint16_t>              { bool hasChildType = true;    typedef uint8_t      type; };
+template <> struct TypeChain<Real>                { bool hasChildType = true;    typedef float        type; };
+
+template <class T> struct CanonicalName                     { typedef T         type; };
+template <> struct CanonicalName<char>                      { typedef int8_t    type; };
+template <> struct CanonicalName<unsigned char>             { typedef uint8_t   type; };
+template <> struct CanonicalName<size_t>                    { typedef std::conditional<std::is_same<std::make_signed<size_t>::type, int>::value, uint32_t, uint64_t>::type type; };
+
+// Used to change behavior of >> for 8bit ints, which does not do what we want.
+template <class T> struct SerializeType                 { typedef T         type; };
+template <> struct SerializeType<uint8_t>               { typedef int32_t   type; };
+template <> struct SerializeType< int8_t>               { typedef int32_t   type; };
+
+// Give address only if types are same (used below when conditionally copying data)
+// last int/char arg is to resolve ambiguous overloads, just always pass 0 and the int version will be preferred
+template <typename S, typename T>
+S* addressIfSame(T&, char) {
+  throw std::runtime_error("tried to take address for types that are not same");
+  return nullptr;}
+template <typename S>
+S* addressIfSame(S& t, int) {return &t;}
+
+// clang-format on
+} // namespace
+
+/**
+ * @brief A generic property, which is associated with some element. Can be
+ * plain Property or a ListProperty, of some type.  Generally, the user should
+ * not need to interact with these directly, but they are exposed in case
+ * someone wants to get clever.
+ */
+class Property {
+
+public:
+  /**
+   * @brief Create a new Property with the given name.
+   *
+   * @param name_
+   */
+  Property(const std::string &name_) : name(name_){};
+  virtual ~Property(){};
+
+  std::string name;
+
+  /**
+   * @brief Reserve memory.
+   *
+   * @param capacity Expected number of elements.
+   */
+  virtual void reserve(size_t capacity) = 0;
+
+  /**
+   * @brief (ASCII reading) Parse out the next value of this property from a
+   * list of tokens.
+   *
+   * @param tokens The list of property tokens for the element.
+   * @param currEntry Index in to tokens, updated after this property is read.
+   */
+  virtual void parseNext(const std::vector<std::string> &tokens,
+                         size_t &currEntry) = 0;
+
+  /**
+   * @brief (binary reading) Copy the next value of this property from a stream
+   * of bits.
+   *
+   * @param stream Stream to read from.
+   */
+  virtual void readNext(std::istream &stream) = 0;
+
+  /**
+   * @brief (binary reading) Copy the next value of this property from a stream
+   * of bits.
+   *
+   * @param stream Stream to read from.
+   */
+  virtual void readNextBigEndian(std::istream &stream) = 0;
+
+  /**
+   * @brief (reading) Write a header entry for this property.
+   *
+   * @param outStream Stream to write to.
+   */
+  virtual void writeHeader(std::ostream &outStream) = 0;
+
+  /**
+   * @brief (ASCII writing) write this property for some element to a stream in
+   * plaintext
+   *
+   * @param outStream Stream to write to.
+   * @param iElement index of the element to write.
+   */
+  virtual void writeDataASCII(std::ostream &outStream, size_t iElement) = 0;
+
+  /**
+   * @brief (binary writing) copy the bits of this property for some element to
+   * a stream
+   *
+   * @param outStream Stream to write to.
+   * @param iElement index of the element to write.
+   */
+  virtual void writeDataBinary(std::ostream &outStream, size_t iElement) = 0;
+
+  /**
+   * @brief (binary writing) copy the bits of this property for some element to
+   * a stream
+   *
+   * @param outStream Stream to write to.
+   * @param iElement index of the element to write.
+   */
+  virtual void writeDataBinaryBigEndian(std::ostream &outStream,
+                                        size_t iElement) = 0;
+
+  /**
+   * @brief Number of element entries for this property
+   *
+   * @return
+   */
+  virtual size_t size() = 0;
+
+  /**
+   * @brief A string naming the type of the property
+   *
+   * @return
+   */
+  virtual std::string propertyTypeName() = 0;
+};
+
+namespace {
+
+/**
+ * Check if the platform is little endian.
+ * (not foolproof, but will work on most platforms)
+ *
+ * @return true if little endian
+ */
+bool isLittleEndian() {
+  int32_t oneVal = 0x1;
+  char *numPtr = (char *)&oneVal;
+  return (numPtr[0] == 1);
+}
+
+/**
+ * Swap endianness.
+ *
+ * @param value Value to swap.
+ *
+ * @return Swapped value.
+ */
+template <typename T> T swapEndian(T val) {
+  char *bytes = reinterpret_cast<char *>(&val);
+  for (unsigned int i = 0; i < sizeof(val) / 2; i++) {
+    std::swap(bytes[sizeof(val) - 1 - i], bytes[i]);
+  }
+  return val;
+}
+
+// Unpack flattened list from the convention used in TypedListProperty
+template <typename T>
+std::vector<std::vector<T>>
+unflattenList(const std::vector<T> &flatList,
+              const std::vector<size_t> flatListStarts) {
+  size_t outerCount = flatListStarts.size() - 1;
+
+  // Put the output here
+  std::vector<std::vector<T>> outLists(outerCount);
+
+  if (outerCount == 0) {
+    return outLists; // quick out for empty
+  }
+
+  // Copy each sublist
+  for (size_t iOuter = 0; iOuter < outerCount; iOuter++) {
+    size_t iFlatStart = flatListStarts[iOuter];
+    size_t iFlatEnd = flatListStarts[iOuter + 1];
+    outLists[iOuter].insert(outLists[iOuter].begin(),
+                            flatList.begin() + iFlatStart,
+                            flatList.begin() + iFlatEnd);
+  }
+
+  return outLists;
+}
+
+}; // namespace
+
+/**
+ * @brief A property which takes a single value (not a list).
+ */
+template <class T> class TypedProperty : public Property {
+
+public:
+  /**
+   * @brief Create a new Property with the given name.
+   *
+   * @param name_
+   */
+  TypedProperty(const std::string &name_) : Property(name_) {
+    if (typeName<T>() == "unknown") {
+      // TODO should really be a compile-time error
+      throw std::runtime_error("Attempted property type does not match any "
+                               "type defined by the .ply format.");
+    }
+  };
+
+  /**
+   * @brief Create a new property and initialize with data.
+   *
+   * @param name_
+   * @param data_
+   */
+  TypedProperty(const std::string &name_, const std::vector<T> &data_)
+      : Property(name_), data(data_) {
+    if (typeName<T>() == "unknown") {
+      throw std::runtime_error("Attempted property type does not match any "
+                               "type defined by the .ply format.");
+    }
+  };
+
+  virtual ~TypedProperty() override{};
+
+  /**
+   * @brief Reserve memory.
+   *
+   * @param capacity Expected number of elements.
+   */
+  virtual void reserve(size_t capacity) override { data.reserve(capacity); }
+
+  /**
+   * @brief (ASCII reading) Parse out the next value of this property from a
+   * list of tokens.
+   *
+   * @param tokens The list of property tokens for the element.
+   * @param currEntry Index in to tokens, updated after this property is read.
+   */
+  virtual void parseNext(const std::vector<std::string> &tokens,
+                         size_t &currEntry) override {
+    data.emplace_back();
+    std::istringstream iss(tokens[currEntry]);
+    typename SerializeType<T>::type tmp; // usually the same type as T
+    iss >> tmp;
+    data.back() = tmp;
+    currEntry++;
+  };
+
+  /**
+   * @brief (binary reading) Copy the next value of this property from a stream
+   * of bits.
+   *
+   * @param stream Stream to read from.
+   */
+  virtual void readNext(std::istream &stream) override {
+    data.emplace_back();
+    stream.read((char *)&data.back(), sizeof(T));
+  }
+
+  /**
+   * @brief (binary reading) Copy the next value of this property from a stream
+   * of bits.
+   *
+   * @param stream Stream to read from.
+   */
+  virtual void readNextBigEndian(std::istream &stream) override {
+    data.emplace_back();
+    stream.read((char *)&data.back(), sizeof(T));
+    data.back() = swapEndian(data.back());
+  }
+
+  /**
+   * @brief (reading) Write a header entry for this property.
+   *
+   * @param outStream Stream to write to.
+   */
+  virtual void writeHeader(std::ostream &outStream) override {
+    outStream << "property " << typeName<T>() << " " << name << "\n";
+  }
+
+  /**
+   * @brief (ASCII writing) write this property for some element to a stream in
+   * plaintext
+   *
+   * @param outStream Stream to write to.
+   * @param iElement index of the element to write.
+   */
+  virtual void writeDataASCII(std::ostream &outStream,
+                              size_t iElement) override {
+    outStream.precision(std::numeric_limits<T>::max_digits10);
+    outStream << static_cast<typename SerializeType<T>::type>(
+        data[iElement]); // case is usually a no-op
+  }
+
+  /**
+   * @brief (binary writing) copy the bits of this property for some element to
+   * a stream
+   *
+   * @param outStream Stream to write to.
+   * @param iElement index of the element to write.
+   */
+  virtual void writeDataBinary(std::ostream &outStream,
+                               size_t iElement) override {
+    outStream.write((char *)&data[iElement], sizeof(T));
+  }
+
+  /**
+   * @brief (binary writing) copy the bits of this property for some element to
+   * a stream
+   *
+   * @param outStream Stream to write to.
+   * @param iElement index of the element to write.
+   */
+  virtual void writeDataBinaryBigEndian(std::ostream &outStream,
+                                        size_t iElement) override {
+    auto value = swapEndian(data[iElement]);
+    outStream.write((char *)&value, sizeof(T));
+  }
+
+  /**
+   * @brief Number of element entries for this property
+   *
+   * @return
+   */
+  virtual size_t size() override { return data.size(); }
+
+  /**
+   * @brief A string naming the type of the property
+   *
+   * @return
+   */
+  virtual std::string propertyTypeName() override { return typeName<T>(); }
+
+  /**
+   * @brief The actual data contained in the property
+   */
+  std::vector<T> data;
+};
+
+/**
+ * @brief A property which is a list of value (eg, 3 Reals). Note that lists are
+ * always variable length per-element.
+ */
+template <class T> class TypedListProperty : public Property {
+
+public:
+  /**
+   * @brief Create a new Property with the given name.
+   *
+   * @param name_
+   */
+  TypedListProperty(const std::string &name_, int listCountBytes_)
+      : Property(name_), listCountBytes(listCountBytes_) {
+    if (typeName<T>() == "unknown") {
+      throw std::runtime_error("Attempted property type does not match any "
+                               "type defined by the .ply format.");
+    }
+
+    flattenedIndexStart.push_back(0);
+  };
+
+  /**
+   * @brief Create a new property and initialize with data
+   *
+   * @param name_
+   * @param data_
+   */
+  TypedListProperty(const std::string &name_,
+                    const std::vector<std::vector<T>> &data_)
+      : Property(name_) {
+    if (typeName<T>() == "unknown") {
+      throw std::runtime_error("Attempted property type does not match any "
+                               "type defined by the .ply format.");
+    }
+
+    // Populate list with data
+    flattenedIndexStart.push_back(0);
+    for (const std::vector<T> &vec : data_) {
+      for (const T &val : vec) {
+        flattenedData.emplace_back(val);
+      }
+      flattenedIndexStart.push_back(flattenedData.size());
+    }
+  };
+
+  virtual ~TypedListProperty() override{};
+
+  /**
+   * @brief Reserve memory.
+   *
+   * @param capacity Expected number of elements.
+   */
+  virtual void reserve(size_t capacity) override {
+    flattenedData.reserve(3 * capacity); // optimize for triangle meshes
+    flattenedIndexStart.reserve(capacity + 1);
+  }
+
+  /**
+   * @brief (ASCII reading) Parse out the next value of this property from a
+   * list of tokens.
+   *
+   * @param tokens The list of property tokens for the element.
+   * @param currEntry Index in to tokens, updated after this property is read.
+   */
+  virtual void parseNext(const std::vector<std::string> &tokens,
+                         size_t &currEntry) override {
+
+    std::istringstream iss(tokens[currEntry]);
+    size_t count;
+    iss >> count;
+    currEntry++;
+
+    size_t currSize = flattenedData.size();
+    size_t afterSize = currSize + count;
+    flattenedData.resize(afterSize);
+    for (size_t iFlat = currSize; iFlat < afterSize; iFlat++) {
+      std::istringstream iss(tokens[currEntry]);
+      typename SerializeType<T>::type tmp; // usually the same type as T
+      iss >> tmp;
+      flattenedData[iFlat] = tmp;
+      currEntry++;
+    }
+    flattenedIndexStart.emplace_back(afterSize);
+  }
+
+  /**
+   * @brief (binary reading) Copy the next value of this property from a stream
+   * of bits.
+   *
+   * @param stream Stream to read from.
+   */
+  virtual void readNext(std::istream &stream) override {
+
+    // Read the size of the list
+    size_t count = 0;
+    stream.read(((char *)&count), listCountBytes);
+
+    // Read list elements
+    size_t currSize = flattenedData.size();
+    size_t afterSize = currSize + count;
+    flattenedData.resize(afterSize);
+    if (count > 0) {
+      stream.read((char *)&flattenedData[currSize], count * sizeof(T));
+    }
+    flattenedIndexStart.emplace_back(afterSize);
+  }
+
+  /**
+   * @brief (binary reading) Copy the next value of this property from a stream
+   * of bits.
+   *
+   * @param stream Stream to read from.
+   */
+  virtual void readNextBigEndian(std::istream &stream) override {
+
+    // Read the size of the list
+    size_t count = 0;
+    stream.read(((char *)&count), listCountBytes);
+    if (listCountBytes == 8) {
+      count = (size_t)swapEndian((uint64_t)count);
+    } else if (listCountBytes == 4) {
+      count = (size_t)swapEndian((uint32_t)count);
+    } else if (listCountBytes == 2) {
+      count = (size_t)swapEndian((uint16_t)count);
+    }
+
+    // Read list elements
+    size_t currSize = flattenedData.size();
+    size_t afterSize = currSize + count;
+    flattenedData.resize(afterSize);
+    if (count > 0) {
+      stream.read((char *)&flattenedData[currSize], count * sizeof(T));
+    }
+    flattenedIndexStart.emplace_back(afterSize);
+
+    // Swap endian order of list elements
+    for (size_t iFlat = currSize; iFlat < afterSize; iFlat++) {
+      flattenedData[iFlat] = swapEndian(flattenedData[iFlat]);
+    }
+  }
+
+  /**
+   * @brief (reading) Write a header entry for this property. Note that we
+   * already use "uchar" for the list count type.
+   *
+   * @param outStream Stream to write to.
+   */
+  virtual void writeHeader(std::ostream &outStream) override {
+    // NOTE: We ALWAYS use uchar as the list count output type
+    outStream << "property list uchar " << typeName<T>() << " " << name << "\n";
+  }
+
+  /**
+   * @brief (ASCII writing) write this property for some element to a stream in
+   * plaintext
+   *
+   * @param outStream Stream to write to.
+   * @param iElement index of the element to write.
+   */
+  virtual void writeDataASCII(std::ostream &outStream,
+                              size_t iElement) override {
+    size_t dataStart = flattenedIndexStart[iElement];
+    size_t dataEnd = flattenedIndexStart[iElement + 1];
+
+    // Get the number of list elements as a uchar, and ensure the value fits
+    size_t dataCount = dataEnd - dataStart;
+    if (dataCount > std::numeric_limits<uint8_t>::max()) {
+      throw std::runtime_error("List property has an element with more entries "
+                               "than fit in a uchar. See note in README.");
+    }
+
+    outStream << dataCount;
+    outStream.precision(std::numeric_limits<T>::max_digits10);
+    for (size_t iFlat = dataStart; iFlat < dataEnd; iFlat++) {
+      outStream << " "
+                << static_cast<typename SerializeType<T>::type>(
+                       flattenedData[iFlat]); // cast is usually a no-op
+    }
+  }
+
+  /**
+   * @brief (binary writing) copy the bits of this property for some element to
+   * a stream
+   *
+   * @param outStream Stream to write to.
+   * @param iElement index of the element to write.
+   */
+  virtual void writeDataBinary(std::ostream &outStream,
+                               size_t iElement) override {
+    size_t dataStart = flattenedIndexStart[iElement];
+    size_t dataEnd = flattenedIndexStart[iElement + 1];
+
+    // Get the number of list elements as a uchar, and ensure the value fits
+    size_t dataCount = dataEnd - dataStart;
+    if (dataCount > std::numeric_limits<uint8_t>::max()) {
+      throw std::runtime_error("List property has an element with more entries "
+                               "than fit in a uchar. See note in README.");
+    }
+    uint8_t count = static_cast<uint8_t>(dataCount);
+
+    outStream.write((char *)&count, sizeof(uint8_t));
+    outStream.write((char *)&flattenedData[dataStart], count * sizeof(T));
+  }
+
+  /**
+   * @brief (binary writing) copy the bits of this property for some element to
+   * a stream
+   *
+   * @param outStream Stream to write to.
+   * @param iElement index of the element to write.
+   */
+  virtual void writeDataBinaryBigEndian(std::ostream &outStream,
+                                        size_t iElement) override {
+    size_t dataStart = flattenedIndexStart[iElement];
+    size_t dataEnd = flattenedIndexStart[iElement + 1];
+
+    // Get the number of list elements as a uchar, and ensure the value fits
+    size_t dataCount = dataEnd - dataStart;
+    if (dataCount > std::numeric_limits<uint8_t>::max()) {
+      throw std::runtime_error("List property has an element with more entries "
+                               "than fit in a uchar. See note in README.");
+    }
+    uint8_t count = static_cast<uint8_t>(dataCount);
+
+    outStream.write((char *)&count, sizeof(uint8_t));
+    for (size_t iFlat = dataStart; iFlat < dataEnd; iFlat++) {
+      T value = swapEndian(flattenedData[iFlat]);
+      outStream.write((char *)&value, sizeof(T));
+    }
+  }
+
+  /**
+   * @brief Number of element entries for this property
+   *
+   * @return
+   */
+  virtual size_t size() override { return flattenedIndexStart.size() - 1; }
+
+  /**
+   * @brief A string naming the type of the property
+   *
+   * @return
+   */
+  virtual std::string propertyTypeName() override { return typeName<T>(); }
+
+  /**
+   * @brief The (flattened) data for the property, as formed by concatenating
+   * all of the individual element lists together.
+   */
+  std::vector<T> flattenedData;
+
+  /**
+   * @brief Indices in to flattenedData. The i'th element gives the index in to
+   * flattenedData where the element's data begins. A final entry is included
+   * which is the length of flattenedData. Size is N_elem + 1.
+   */
+  std::vector<size_t> flattenedIndexStart;
+
+  /**
+   * @brief The number of bytes used to store the count for lists of data.
+   */
+  int listCountBytes = -1;
+};
+
+/**
+ * @brief Helper function to construct a new property of the appropriate type.
+ *
+ * @param name The name of the property to construct.
+ * @param typeStr A string naming the type according to the format.
+ * @param isList Is this a plain property, or a list property?
+ * @param listCountTypeStr If a list property, the type of the count varible.
+ *
+ * @return A new Property with the proper type.
+ */
+inline std::unique_ptr<Property>
+createPropertyWithType(const std::string &name, const std::string &typeStr,
+                       bool isList, const std::string &listCountTypeStr) {
+
+  // == Figure out how many bytes the list count field has, if this is a list
+  // type Note: some files seem to use signed types here, we read the width but
+  // always parse as if unsigned
+  int listCountBytes = -1;
+  if (isList) {
+    if (listCountTypeStr == "uchar" || listCountTypeStr == "uint8" ||
+        listCountTypeStr == "char" || listCountTypeStr == "int8") {
+      listCountBytes = 1;
+    } else if (listCountTypeStr == "ushort" || listCountTypeStr == "uint16" ||
+               listCountTypeStr == "short" || listCountTypeStr == "int16") {
+      listCountBytes = 2;
+    } else if (listCountTypeStr == "uint" || listCountTypeStr == "uint32" ||
+               listCountTypeStr == "int" || listCountTypeStr == "int32") {
+      listCountBytes = 4;
+    } else {
+      throw std::runtime_error("Unrecognized list count type: " +
+                               listCountTypeStr);
+    }
+  }
+
+  // = Unsigned int
+
+  // 8 bit unsigned
+  if (typeStr == "uchar" || typeStr == "uint8") {
+    if (isList) {
+      return std::unique_ptr<Property>(
+          new TypedListProperty<uint8_t>(name, listCountBytes));
+    } else {
+      return std::unique_ptr<Property>(new TypedProperty<uint8_t>(name));
+    }
+  }
+
+  // 16 bit unsigned
+  else if (typeStr == "ushort" || typeStr == "uint16") {
+    if (isList) {
+      return std::unique_ptr<Property>(
+          new TypedListProperty<uint16_t>(name, listCountBytes));
+    } else {
+      return std::unique_ptr<Property>(new TypedProperty<uint16_t>(name));
+    }
+  }
+
+  // 32 bit unsigned
+  else if (typeStr == "uint" || typeStr == "uint32") {
+    if (isList) {
+      return std::unique_ptr<Property>(
+          new TypedListProperty<uint32_t>(name, listCountBytes));
+    } else {
+      return std::unique_ptr<Property>(new TypedProperty<uint32_t>(name));
+    }
+  }
+
+  // = Signed int
+
+  // 8 bit signed
+  if (typeStr == "char" || typeStr == "int8") {
+    if (isList) {
+      return std::unique_ptr<Property>(
+          new TypedListProperty<int8_t>(name, listCountBytes));
+    } else {
+      return std::unique_ptr<Property>(new TypedProperty<int8_t>(name));
+    }
+  }
+
+  // 16 bit signed
+  else if (typeStr == "short" || typeStr == "int16") {
+    if (isList) {
+      return std::unique_ptr<Property>(
+          new TypedListProperty<int16_t>(name, listCountBytes));
+    } else {
+      return std::unique_ptr<Property>(new TypedProperty<int16_t>(name));
+    }
+  }
+
+  // 32 bit signed
+  else if (typeStr == "int" || typeStr == "int32") {
+    if (isList) {
+      return std::unique_ptr<Property>(
+          new TypedListProperty<int32_t>(name, listCountBytes));
+    } else {
+      return std::unique_ptr<Property>(new TypedProperty<int32_t>(name));
+    }
+  }
+
+  // = Float
+
+  // 32 bit float
+  else if (typeStr == "float" || typeStr == "float32") {
+    if (isList) {
+      return std::unique_ptr<Property>(
+          new TypedListProperty<float>(name, listCountBytes));
+    } else {
+      return std::unique_ptr<Property>(new TypedProperty<float>(name));
+    }
+  }
+
+  // 64 bit float
+  else if (typeStr == "Real" || typeStr == "float64") {
+    if (isList) {
+      return std::unique_ptr<Property>(
+          new TypedListProperty<Real>(name, listCountBytes));
+    } else {
+      return std::unique_ptr<Property>(new TypedProperty<Real>(name));
+    }
+  }
+
+  else {
+    throw std::runtime_error("Data type: " + typeStr +
+                             " cannot be mapped to .ply format");
+  }
+}
+
+/**
+ * @brief An element (more properly an element type) in the .ply object. Tracks
+ * the name of the elemnt type (eg, "vertices"), the number of elements of that
+ * type (eg, 1244), and any properties associated with that element (eg,
+ * "position", "color").
+ */
+class Element {
+
+public:
+  /**
+   * @brief Create a new element type.
+   *
+   * @param name_ Name of the element type (eg, "vertices")
+   * @param count_ Number of instances of this element.
+   */
+  Element(const std::string &name_, size_t count_)
+      : name(name_), count(count_) {}
+
+  std::string name;
+  size_t count;
+  std::vector<std::unique_ptr<Property>> properties;
+
+  /**
+   * @brief Check if a property exists.
+   *
+   * @param target The name of the property to get.
+   *
+   * @return Whether the target property exists.
+   */
+  bool hasProperty(const std::string &target) {
+    for (std::unique_ptr<Property> &prop : properties) {
+      if (prop->name == target) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * @brief Check if a property exists with the requested type.
+   *
+   * @tparam T The type of the property
+   * @param target The name of the property to get.
+   *
+   * @return Whether the target property exists.
+   */
+  template <class T> bool hasPropertyType(const std::string &target) {
+    for (std::unique_ptr<Property> &prop : properties) {
+      if (prop->name == target) {
+        TypedProperty<T> *castedProp =
+            dynamic_cast<TypedProperty<T> *>(prop.get());
+        if (castedProp) {
+          return true;
+        }
+        return false;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * @brief A list of the names of all properties
+   *
+   * @return Property names
+   */
+  std::vector<std::string> getPropertyNames() {
+    std::vector<std::string> names;
+    for (std::unique_ptr<Property> &p : properties) {
+      names.push_back(p->name);
+    }
+    return names;
+  }
+
+  /**
+   * @brief Low-level method to get a pointer to a property. Users probably
+   * don't need to call this.
+   *
+   * @param target The name of the property to get.
+   *
+   * @return A (unique_ptr) pointer to the property.
+   */
+  std::unique_ptr<Property> &getPropertyPtr(const std::string &target) {
+    for (std::unique_ptr<Property> &prop : properties) {
+      if (prop->name == target) {
+        return prop;
+      }
+    }
+    throw std::runtime_error("PLY parser: element " + name +
+                             " does not have property " + target);
+  }
+
+  /**
+   * @brief Add a new (plain, not list) property for this element type.
+   *
+   * @tparam T The type of the property
+   * @param propertyName The name of the property
+   * @param data The data for the property. Must have the same length as the
+   * number of elements.
+   */
+  template <class T>
+  void addProperty(const std::string &propertyName,
+                   const std::vector<T> &data) {
+
+    if (data.size() != count) {
+      throw std::runtime_error("PLY write: new property " + propertyName +
+                               " has size which does not match element");
+    }
+
+    // If there is already some property with this name, remove it
+    for (size_t i = 0; i < properties.size(); i++) {
+      if (properties[i]->name == propertyName) {
+        properties.erase(properties.begin() + i);
+        i--;
+      }
+    }
+
+    // Copy to canonical type. Often a no-op, but takes care of standardizing
+    // widths across platforms.
+    std::vector<typename CanonicalName<T>::type> canonicalVec(data.begin(),
+                                                              data.end());
+
+    properties.push_back(std::unique_ptr<Property>(
+        new TypedProperty<typename CanonicalName<T>::type>(propertyName,
+                                                           canonicalVec)));
+  }
+
+  /**
+   * @brief Add a new list property for this element type.
+   *
+   * @tparam T The type of the property (eg, "Real" for a list of Reals)
+   * @param propertyName The name of the property
+   * @param data The data for the property. Outer vector must have the same
+   * length as the number of elements.
+   */
+  template <class T>
+  void addListProperty(const std::string &propertyName,
+                       const std::vector<std::vector<T>> &data) {
+
+    if (data.size() != count) {
+      throw std::runtime_error("PLY write: new property " + propertyName +
+                               " has size which does not match element");
+    }
+
+    // If there is already some property with this name, remove it
+    for (size_t i = 0; i < properties.size(); i++) {
+      if (properties[i]->name == propertyName) {
+        properties.erase(properties.begin() + i);
+        i--;
+      }
+    }
+
+    // Copy to canonical type. Often a no-op, but takes care of standardizing
+    // widths across platforms.
+    std::vector<std::vector<typename CanonicalName<T>::type>> canonicalListVec;
+    for (const std::vector<T> &subList : data) {
+      canonicalListVec.emplace_back(subList.begin(), subList.end());
+    }
+
+    properties.push_back(std::unique_ptr<Property>(
+        new TypedListProperty<typename CanonicalName<T>::type>(
+            propertyName, canonicalListVec)));
+  }
+
+  /**
+   * @brief Get a vector of a data from a property for this element.
+   * Automatically promotes to larger types. Throws if requested data is
+   * unavailable.
+   *
+   * @tparam T The type of data requested
+   * @param propertyName The name of the property to get.
+   *
+   * @return The data.
+   */
+  template <class T>
+  std::vector<T> getProperty(const std::string &propertyName) {
+
+    // Find the property
+    std::unique_ptr<Property> &prop = getPropertyPtr(propertyName);
+
+    // Get a copy of the data with auto-promoting type magic
+    return getDataFromPropertyRecursive<T, T>(prop.get());
+  }
+
+  /**
+   * @brief Get a vector of a data from a property for this element. Unlike
+   * getProperty(), only returns if the ply record contains a type that matches
+   * T exactly. Throws if * requested data is unavailable.
+   *
+   * @tparam T The type of data requested
+   * @param propertyName The name of the property to get.
+   *
+   * @return The data.
+   */
+  template <class T>
+  std::vector<T> getPropertyType(const std::string &propertyName) {
+
+    // Find the property
+    std::unique_ptr<Property> &prop = getPropertyPtr(propertyName);
+    TypedProperty<T> *castedProp = dynamic_cast<TypedProperty<T> *>(prop);
+    if (castedProp) {
+      return castedProp->data;
+    }
+
+    // No match, failure
+    throw std::runtime_error("PLY parser: property " + prop->name +
+                             " is not of type type " + typeName<T>() +
+                             ". Has type " + prop->propertyTypeName());
+  }
+
+  /**
+   * @brief Get a vector of lists of data from a property for this element.
+   * Automatically promotes to larger types. Throws if requested data is
+   * unavailable.
+   *
+   * @tparam T The type of data requested
+   * @param propertyName The name of the property to get.
+   *
+   * @return The data.
+   */
+  template <class T>
+  std::vector<std::vector<T>> getListProperty(const std::string &propertyName) {
+
+    // Find the property
+    std::unique_ptr<Property> &prop = getPropertyPtr(propertyName);
+
+    // Get a copy of the data with auto-promoting type magic
+    return getDataFromListPropertyRecursive<T, T>(prop.get());
+  }
+
+  /**
+   * @brief Get a vector of a data from a property for this element. Unlike
+   * getProperty(), only returns if the ply record contains a type that matches
+   * T exactly. Throws if * requested data is unavailable.
+   *
+   * @tparam T The type of data requested
+   * @param propertyName The name of the property to get.
+   *
+   * @return The data.
+   */
+  template <class T>
+  std::vector<std::vector<T>>
+  getListPropertyType(const std::string &propertyName) {
+
+    // Find the property
+    std::unique_ptr<Property> &prop = getPropertyPtr(propertyName);
+    TypedListProperty<T> *castedProp =
+        dynamic_cast<TypedListProperty<T> *>(prop);
+    if (castedProp) {
+      return unflattenList(castedProp->flattenedData,
+                           castedProp->flattenedIndexStart);
+    }
+
+    // No match, failure
+    throw std::runtime_error("PLY parser: list property " + prop->name +
+                             " is not of type " + typeName<T>() +
+                             ". Has type " + prop->propertyTypeName());
+  }
+
+  /**
+   * @brief Get a vector of lists of data from a property for this element.
+   * Automatically promotes to larger types. Unlike getListProperty(), this
+   * method will additionally convert between types of different sign (eg,
+   * requesting and int32 would get data from a uint32); doing so naively
+   * converts between signed and unsigned types. This is typically useful for
+   * data representing indices, which might be stored as signed or unsigned
+   * numbers.
+   *
+   * @tparam T The type of data requested
+   * @param propertyName The name of the property to get.
+   *
+   * @return The data.
+   */
+  template <class T>
+  std::vector<std::vector<T>>
+  getListPropertyAnySign(const std::string &propertyName) {
+
+    // Find the property
+    std::unique_ptr<Property> &prop = getPropertyPtr(propertyName);
+
+    // Get a copy of the data with auto-promoting type magic
+    try {
+      // First, try the usual approach, looking for a version of the property
+      // with the same signed-ness and possibly smaller size
+      return getDataFromListPropertyRecursive<T, T>(prop.get());
+    } catch (const std::runtime_error &orig_e) {
+
+      // If the usual approach fails, look for a version with opposite
+      // signed-ness
+      try {
+
+        // This type has the oppopsite signeness as the input type
+        typedef typename CanonicalName<T>::type Tcan;
+        typedef typename std::conditional<
+            std::is_signed<Tcan>::value,
+            typename std::make_unsigned<Tcan>::type,
+            typename std::make_signed<Tcan>::type>::type OppsignType;
+
+        return getDataFromListPropertyRecursive<T, OppsignType>(prop.get());
+
+      } catch (const std::runtime_error &) {
+        throw orig_e;
+      }
+
+      throw orig_e;
+    }
+  }
+
+  /**
+   * @brief Performs sanity checks on the element, throwing if any fail.
+   */
+  void validate() {
+
+    // Make sure no properties have duplicate names, and no names have
+    // whitespace
+    for (size_t iP = 0; iP < properties.size(); iP++) {
+      for (char c : properties[iP]->name) {
+        if (std::isspace(c)) {
+          throw std::runtime_error("Ply validate: illegal whitespace in name " +
+                                   properties[iP]->name);
+        }
+      }
+      for (size_t jP = iP + 1; jP < properties.size(); jP++) {
+        if (properties[iP]->name == properties[jP]->name) {
+          throw std::runtime_error(
+              "Ply validate: multiple properties with name " +
+              properties[iP]->name);
+        }
+      }
+    }
+
+    // Make sure all properties have right length
+    for (size_t iP = 0; iP < properties.size(); iP++) {
+      if (properties[iP]->size() != count) {
+        throw std::runtime_error("Ply validate: property has wrong size. " +
+                                 properties[iP]->name +
+                                 " does not match element size.");
+      }
+    }
+  }
+
+  /**
+   * @brief Writes out this element's information to the file header.
+   *
+   * @param outStream The stream to use.
+   */
+  void writeHeader(std::ostream &outStream) {
+
+    outStream << "element " << name << " " << count << "\n";
+
+    for (std::unique_ptr<Property> &p : properties) {
+      p->writeHeader(outStream);
+    }
+  }
+
+  /**
+   * @brief (ASCII writing) Writes out all of the data for every element of this
+   * element type to the stream, including all contained properties.
+   *
+   * @param outStream The stream to write to.
+   */
+  void writeDataASCII(std::ostream &outStream) {
+    // Question: what is the proper output for an element with no properties?
+    // Here, we write a blank line, so there is one line per element no matter
+    // what.
+    for (size_t iE = 0; iE < count; iE++) {
+      for (size_t iP = 0; iP < properties.size(); iP++) {
+        properties[iP]->writeDataASCII(outStream, iE);
+        if (iP < properties.size() - 1) {
+          outStream << " ";
+        }
+      }
+      outStream << "\n";
+    }
+  }
+
+  /**
+   * @brief (binary writing) Writes out all of the data for every element of
+   * this element type to the stream, including all contained properties.
+   *
+   * @param outStream The stream to write to.
+   */
+  void writeDataBinary(std::ostream &outStream) {
+    for (size_t iE = 0; iE < count; iE++) {
+      for (size_t iP = 0; iP < properties.size(); iP++) {
+        properties[iP]->writeDataBinary(outStream, iE);
+      }
+    }
+  }
+
+  /**
+   * @brief (binary writing) Writes out all of the data for every element of
+   * this element type to the stream, including all contained properties.
+   *
+   * @param outStream The stream to write to.
+   */
+  void writeDataBinaryBigEndian(std::ostream &outStream) {
+    for (size_t iE = 0; iE < count; iE++) {
+      for (size_t iP = 0; iP < properties.size(); iP++) {
+        properties[iP]->writeDataBinaryBigEndian(outStream, iE);
+      }
+    }
+  }
+
+  /**
+   * @brief Helper function which does the hard work to implement type promotion
+   * for data getters. Throws if type conversion fails.
+   *
+   * @tparam D The desired output type
+   * @tparam T The current attempt for the actual type of the property
+   * @param prop The property to get (does not delete nor share pointer)
+   *
+   * @return The data, with the requested type
+   */
+  template <class D, class T>
+  std::vector<D> getDataFromPropertyRecursive(Property *prop) {
+
+    typedef typename CanonicalName<T>::type Tcan;
+
+    { // Try to return data of type D from a property of type T
+      TypedProperty<Tcan> *castedProp =
+          dynamic_cast<TypedProperty<Tcan> *>(prop);
+      if (castedProp) {
+        // Succeeded, return a buffer of the data (copy while converting type)
+        std::vector<D> castedVec;
+        castedVec.reserve(castedProp->data.size());
+        for (Tcan &v : castedProp->data) {
+          castedVec.push_back(static_cast<D>(v));
+        }
+        return castedVec;
+      }
+    }
+
+    TypeChain<Tcan> chainType;
+    if (chainType.hasChildType) {
+      return getDataFromPropertyRecursive<D, typename TypeChain<Tcan>::type>(
+          prop);
+    } else {
+      // No smaller type to try, failure
+      throw std::runtime_error("PLY parser: property " + prop->name +
+                               " cannot be coerced to requested type " +
+                               typeName<D>() + ". Has type " +
+                               prop->propertyTypeName());
+    }
+  }
+
+  /**
+   * @brief Helper function which does the hard work to implement type promotion
+   * for list data getters. Throws if type conversion fails.
+   *
+   * @tparam D The desired output type
+   * @tparam T The current attempt for the actual type of the property
+   * @param prop The property to get (does not delete nor share pointer)
+   *
+   * @return The data, with the requested type
+   */
+  template <class D, class T>
+  std::vector<std::vector<D>> getDataFromListPropertyRecursive(Property *prop) {
+    typedef typename CanonicalName<T>::type Tcan;
+
+    TypedListProperty<Tcan> *castedProp =
+        dynamic_cast<TypedListProperty<Tcan> *>(prop);
+    if (castedProp) {
+      // Succeeded, return a buffer of the data (copy while converting type)
+
+      // Convert to flat buffer of new type
+      std::vector<D> *castedFlatVec = nullptr;
+      std::vector<D> castedFlatVecCopy; // we _might_ make a copy here,
+                                        // depending on is_same below
+
+      if (std::is_same<std::vector<D>, std::vector<Tcan>>::value) {
+        // just use the array we already have
+        castedFlatVec = addressIfSame<std::vector<D>>(
+            castedProp->flattenedData, 0 /* dummy arg to disambiguate */);
+      } else {
+        // make a copy
+        castedFlatVecCopy.reserve(castedProp->flattenedData.size());
+        for (Tcan &v : castedProp->flattenedData) {
+          castedFlatVecCopy.push_back(static_cast<D>(v));
+        }
+        castedFlatVec = &castedFlatVecCopy;
+      }
+
+      // Unflatten and return
+      return unflattenList(*castedFlatVec, castedProp->flattenedIndexStart);
+    }
+
+    TypeChain<Tcan> chainType;
+    if (chainType.hasChildType) {
+      return getDataFromListPropertyRecursive<D,
+                                              typename TypeChain<Tcan>::type>(
+          prop);
+    } else {
+      // No smaller type to try, failure
+      throw std::runtime_error("PLY parser: list property " + prop->name +
+                               " cannot be coerced to requested type list " +
+                               typeName<D>() + ". Has type list " +
+                               prop->propertyTypeName());
+    }
+  }
+};
+
+// Some string helpers
+namespace {
+
+inline std::string trimSpaces(const std::string &input) {
+  size_t start = 0;
+  while (start < input.size() && input[start] == ' ')
+    start++;
+  size_t end = input.size();
+  while (end > start && (input[end - 1] == ' ' || input[end - 1] == '\n' ||
+                         input[end - 1] == '\r'))
+    end--;
+  return input.substr(start, end - start);
+}
+
+inline std::vector<std::string> tokenSplit(const std::string &input) {
+  std::vector<std::string> result;
+  size_t curr = 0;
+  size_t found = 0;
+  while ((found = input.find_first_of(' ', curr)) != std::string::npos) {
+    std::string token = input.substr(curr, found - curr);
+    token = trimSpaces(token);
+    if (token.size() > 0) {
+      result.push_back(token);
+    }
+    curr = found + 1;
+  }
+  std::string token = input.substr(curr);
+  token = trimSpaces(token);
+  if (token.size() > 0) {
+    result.push_back(token);
+  }
+
+  return result;
+}
+
+inline bool startsWith(const std::string &input, const std::string &query) {
+  return input.compare(0, query.length(), query) == 0;
+}
+}; // namespace
+
+/**
+ * @brief Primary class; represents a set of data in the .ply format.
+ */
+class PLYData {
+
+public:
+  /**
+   * @brief Create an empty PLYData object.
+   */
+  PLYData(){};
+
+  /**
+   * @brief Initialize a PLYData by reading from a file. Throws if any failures
+   * occur.
+   *
+   * @param filename The file to read from.
+   * @param verbose If true, print useful info about the file to stdout
+   */
+  PLYData(const std::string &filename, bool verbose = false) {
+
+    using std::cout;
+    using std::endl;
+    using std::string;
+    using std::vector;
+
+    if (verbose)
+      cout << "PLY parser: Reading ply file: " << filename << endl;
+
+    // Open a file in binary always, in case it turns out to have binary data.
+    std::ifstream inStream(filename, std::ios::binary);
+    if (inStream.fail()) {
+      throw std::runtime_error("PLY parser: Could not open file " + filename);
+    }
+
+    parsePLY(inStream, verbose);
+
+    if (verbose) {
+      cout << "  - Finished parsing file." << endl;
+    }
+  }
+
+  /**
+   * @brief Initialize a PLYData by reading from a stringstream. Throws if any
+   * failures occur.
+   *
+   * @param inStream The stringstream to read from.
+   * @param verbose If true, print useful info about the file to stdout
+   */
+  PLYData(std::istream &inStream, bool verbose = false) {
+
+    using std::cout;
+    using std::endl;
+
+    if (verbose)
+      cout << "PLY parser: Reading ply file from stream" << endl;
+
+    parsePLY(inStream, verbose);
+
+    if (verbose) {
+      cout << "  - Finished parsing stream." << endl;
+    }
+  }
+
+  /**
+   * @brief Perform sanity checks on the file, throwing if any fail.
+   */
+  void validate() {
+
+    for (size_t iE = 0; iE < elements.size(); iE++) {
+      for (char c : elements[iE].name) {
+        if (std::isspace(c)) {
+          throw std::runtime_error(
+              "Ply validate: illegal whitespace in element name " +
+              elements[iE].name);
+        }
+      }
+      for (size_t jE = iE + 1; jE < elements.size(); jE++) {
+        if (elements[iE].name == elements[jE].name) {
+          throw std::runtime_error("Ply validate: duplcate element name " +
+                                   elements[iE].name);
+        }
+      }
+    }
+
+    // Do a quick validation sanity check
+    for (Element &e : elements) {
+      e.validate();
+    }
+  }
+
+  /**
+   * @brief Write this data to a .ply file.
+   *
+   * @param filename The file to write to.
+   * @param format The format to use (binary or ascii?)
+   */
+  void write(const std::string &filename,
+             DataFormat format = DataFormat::ASCII) {
+    outputDataFormat = format;
+
+    validate();
+
+    // Open stream for writing
+    std::ofstream outStream(filename, std::ios::out | std::ios::binary);
+    if (!outStream.good()) {
+      throw std::runtime_error("Ply writer: Could not open output file " +
+                               filename + " for writing");
+    }
+
+    writePLY(outStream);
+  }
+
+  /**
+   * @brief Write this data to an output stream
+   *
+   * @param outStream The output stream to write to.
+   * @param format The format to use (binary or ascii?)
+   */
+  void write(std::ostream &outStream, DataFormat format = DataFormat::ASCII) {
+    outputDataFormat = format;
+
+    validate();
+
+    writePLY(outStream);
+  }
+
+  /**
+   * @brief Get an element type by name ("vertices")
+   *
+   * @param target The name of the element type to get
+   *
+   * @return A reference to the element type.
+   */
+  Element &getElement(const std::string &target) {
+    for (Element &e : elements) {
+      if (e.name == target)
+        return e;
+    }
+    throw std::runtime_error("PLY parser: no element with name: " + target);
+  }
+
+  /**
+   * @brief Check if an element type exists
+   *
+   * @param target The name to check for.
+   *
+   * @return True if exists.
+   */
+  bool hasElement(const std::string &target) {
+    for (Element &e : elements) {
+      if (e.name == target)
+        return true;
+    }
+    return false;
+  }
+
+  /**
+   * @brief A list of the names of all elements
+   *
+   * @return Element names
+   */
+  std::vector<std::string> getElementNames() {
+    std::vector<std::string> names;
+    for (Element &e : elements) {
+      names.push_back(e.name);
+    }
+    return names;
+  }
+
+  /**
+   * @brief Add a new element type to the object
+   *
+   * @param name The name of the new element type ("vertices").
+   * @param count The number of elements of this type.
+   */
+  void addElement(const std::string &name, size_t count) {
+    elements.emplace_back(name, count);
+  }
+
+  // === Common-case helpers
+
+  /**
+   * @brief Common-case helper get mesh vertex positions
+   *
+   * @param vertexElementName The element name to use (default: "vertex")
+   *
+   * @return A vector of vertex positions.
+   */
+  std::vector<std::array<Real, 3>>
+  getVertexPositions(const std::string &vertexElementName = "vertex") {
+
+    std::vector<Real> xPos =
+        getElement(vertexElementName).getProperty<Real>("x");
+    std::vector<Real> yPos =
+        getElement(vertexElementName).getProperty<Real>("y");
+    std::vector<Real> zPos =
+        getElement(vertexElementName).getProperty<Real>("z");
+
+    std::vector<std::array<Real, 3>> result(xPos.size());
+    for (size_t i = 0; i < result.size(); i++) {
+      result[i][0] = xPos[i];
+      result[i][1] = yPos[i];
+      result[i][2] = zPos[i];
+    }
+
+    return result;
+  }
+
+  /**
+   * @brief Common-case helper get mesh vertex colors
+   *
+   * @param vertexElementName The element name to use (default: "vertex")
+   *
+   * @return A vector of vertex colors (unsigned chars [0,255]).
+   */
+  std::vector<std::array<unsigned char, 3>>
+  getVertexColors(const std::string &vertexElementName = "vertex") {
+
+    std::vector<unsigned char> r =
+        getElement(vertexElementName).getProperty<unsigned char>("red");
+    std::vector<unsigned char> g =
+        getElement(vertexElementName).getProperty<unsigned char>("green");
+    std::vector<unsigned char> b =
+        getElement(vertexElementName).getProperty<unsigned char>("blue");
+
+    std::vector<std::array<unsigned char, 3>> result(r.size());
+    for (size_t i = 0; i < result.size(); i++) {
+      result[i][0] = r[i];
+      result[i][1] = g[i];
+      result[i][2] = b[i];
+    }
+
+    return result;
+  }
+
+  /**
+   * @brief Common-case helper to get face indices for a mesh. If not template
+   * type is given, size_t is used. Naively converts to requested signedness,
+   * which may lead to unexpected values if an unsigned type is used and file
+   * contains negative values.
+   *
+   * @return The indices into the vertex elements for each face. Usually
+   * 0-based, though there are no formal rules.
+   */
+  template <typename T = size_t> std::vector<std::vector<T>> getFaceIndices() {
+
+    for (const std::string &f : std::vector<std::string>{"face"}) {
+      for (const std::string &p :
+           std::vector<std::string>{"vertex_indices", "vertex_index"}) {
+        try {
+          return getElement(f).getListPropertyAnySign<T>(p);
+        } catch (const std::runtime_error &) {
+          // that's fine
+        }
+      }
+    }
+    throw std::runtime_error("PLY parser: could not find face vertex indices "
+                             "attribute under any common name.");
+  }
+
+  /**
+   * @brief Common-case helper set mesh vertex positons. Creates vertex element,
+   * if necessary.
+   *
+   * @param vertexPositions A vector of vertex positions
+   */
+  void addVertexPositions(std::vector<std::array<Real, 3>> &vertexPositions) {
+
+    std::string vertexName = "vertex";
+    size_t N = vertexPositions.size();
+
+    // Create the element
+    if (!hasElement(vertexName)) {
+      addElement(vertexName, N);
+    }
+
+    // De-interleave
+    std::vector<Real> xPos(N);
+    std::vector<Real> yPos(N);
+    std::vector<Real> zPos(N);
+    for (size_t i = 0; i < vertexPositions.size(); i++) {
+      xPos[i] = vertexPositions[i][0];
+      yPos[i] = vertexPositions[i][1];
+      zPos[i] = vertexPositions[i][2];
+    }
+
+    // Store
+    getElement(vertexName).addProperty<Real>("x", xPos);
+    getElement(vertexName).addProperty<Real>("y", yPos);
+    getElement(vertexName).addProperty<Real>("z", zPos);
+  }
+
+  /**
+   * @brief Common-case helper set mesh vertex colors. Creates a vertex element,
+   * if necessary.
+   *
+   * @param colors A vector of vertex colors (unsigned chars [0,255]).
+   */
+  void addVertexColors(std::vector<std::array<unsigned char, 3>> &colors) {
+
+    std::string vertexName = "vertex";
+    size_t N = colors.size();
+
+    // Create the element
+    if (!hasElement(vertexName)) {
+      addElement(vertexName, N);
+    }
+
+    // De-interleave
+    std::vector<unsigned char> r(N);
+    std::vector<unsigned char> g(N);
+    std::vector<unsigned char> b(N);
+    for (size_t i = 0; i < colors.size(); i++) {
+      r[i] = colors[i][0];
+      g[i] = colors[i][1];
+      b[i] = colors[i][2];
+    }
+
+    // Store
+    getElement(vertexName).addProperty<unsigned char>("red", r);
+    getElement(vertexName).addProperty<unsigned char>("green", g);
+    getElement(vertexName).addProperty<unsigned char>("blue", b);
+  }
+
+  /**
+   * @brief Common-case helper set mesh vertex colors. Creates a vertex element,
+   * if necessary.
+   *
+   * @param colors A vector of vertex colors as floating point [0,1] values.
+   * Internally converted to [0,255] chars.
+   */
+  void addVertexColors(std::vector<std::array<Real, 3>> &colors) {
+
+    std::string vertexName = "vertex";
+    size_t N = colors.size();
+
+    // Create the element
+    if (!hasElement(vertexName)) {
+      addElement(vertexName, N);
+    }
+
+    auto toChar = [](Real v) {
+      if (v < 0.0)
+        v = 0.0;
+      if (v > 1.0)
+        v = 1.0;
+      return static_cast<unsigned char>(v * 255.);
+    };
+
+    // De-interleave
+    std::vector<unsigned char> r(N);
+    std::vector<unsigned char> g(N);
+    std::vector<unsigned char> b(N);
+    for (size_t i = 0; i < colors.size(); i++) {
+      r[i] = toChar(colors[i][0]);
+      g[i] = toChar(colors[i][1]);
+      b[i] = toChar(colors[i][2]);
+    }
+
+    // Store
+    getElement(vertexName).addProperty<unsigned char>("red", r);
+    getElement(vertexName).addProperty<unsigned char>("green", g);
+    getElement(vertexName).addProperty<unsigned char>("blue", b);
+  }
+
+  /**
+   * @brief Common-case helper to set face indices. Creates a face element if
+   * needed. The input type will be casted to a 32 bit integer of the same
+   * signedness.
+   *
+   * @param indices The indices into the vertex list around each face.
+   */
+  template <typename T>
+  void addFaceIndices(std::vector<std::vector<T>> &indices) {
+
+    std::string faceName = "face";
+    size_t N = indices.size();
+
+    // Create the element
+    if (!hasElement(faceName)) {
+      addElement(faceName, N);
+    }
+
+    // Cast to 32 bit
+    typedef typename std::conditional<std::is_signed<T>::value, int32_t,
+                                      uint32_t>::type IndType;
+    std::vector<std::vector<IndType>> intInds;
+    for (std::vector<T> &l : indices) {
+      std::vector<IndType> thisInds;
+      for (T &val : l) {
+        IndType valConverted = static_cast<IndType>(val);
+        if (valConverted != val) {
+          throw std::runtime_error("Index value " + std::to_string(val) +
+                                   " could not be converted to a .ply integer "
+                                   "without loss of data. Note that .ply "
+                                   "only supports 32-bit ints.");
+        }
+        thisInds.push_back(valConverted);
+      }
+      intInds.push_back(thisInds);
+    }
+
+    // Store
+    getElement(faceName).addListProperty<IndType>("vertex_indices", intInds);
+  }
+
+  /**
+   * @brief Comments for the file. When writing, each entry will be written as a
+   * sequential comment line.
+   */
+  std::vector<std::string> comments;
+
+  /**
+   * @brief obj_info comments for the file. When writing, each entry will be
+   * written as a sequential comment line.
+   */
+  std::vector<std::string> objInfoComments;
+
+private:
+  std::vector<Element> elements;
+  const int majorVersion = 1; // I'll buy you a drink if these ever get bumped
+  const int minorVersion = 0;
+
+  DataFormat inputDataFormat =
+      DataFormat::ASCII; // set when reading from a file
+  DataFormat outputDataFormat = DataFormat::ASCII; // option for writing files
+
+  // === Reading ===
+
+  /**
+   * @brief Parse a PLY file from an input stream
+   *
+   * @param inStream
+   * @param verbose
+   */
+  void parsePLY(std::istream &inStream, bool verbose) {
+
+    // == Process the header
+    parseHeader(inStream, verbose);
+
+    // === Parse data from a binary file
+    if (inputDataFormat == DataFormat::Binary) {
+      parseBinary(inStream, verbose);
+    }
+    // === Parse data from an binary file
+    else if (inputDataFormat == DataFormat::BinaryBigEndian) {
+      parseBinaryBigEndian(inStream, verbose);
+    }
+    // === Parse data from an ASCII file
+    else if (inputDataFormat == DataFormat::ASCII) {
+      parseASCII(inStream, verbose);
+    }
+  }
+
+  /**
+   * @brief Read the header for a file
+   *
+   * @param inStream
+   * @param verbose
+   */
+  void parseHeader(std::istream &inStream, bool verbose) {
+
+    using std::cout;
+    using std::endl;
+    using std::string;
+    using std::vector;
+
+    // First two lines are predetermined
+    { // First line is magic constant
+      string plyLine;
+      std::getline(inStream, plyLine);
+      if (trimSpaces(plyLine) != "ply") {
+        throw std::runtime_error("PLY parser: File does not appear to be ply "
+                                 "file. First line should be 'ply'");
+      }
+    }
+
+    { // second line is version
+      string styleLine;
+      std::getline(inStream, styleLine);
+      vector<string> tokens = tokenSplit(styleLine);
+      if (tokens.size() != 3)
+        throw std::runtime_error("PLY parser: bad format line");
+      std::string formatStr = tokens[0];
+      std::string typeStr = tokens[1];
+      std::string versionStr = tokens[2];
+
+      // "format"
+      if (formatStr != "format")
+        throw std::runtime_error("PLY parser: bad format line");
+
+      // ascii/binary
+      if (typeStr == "ascii") {
+        inputDataFormat = DataFormat::ASCII;
+        if (verbose)
+          cout << "  - Type: ascii" << endl;
+      } else if (typeStr == "binary_little_endian") {
+        inputDataFormat = DataFormat::Binary;
+        if (verbose)
+          cout << "  - Type: binary" << endl;
+      } else if (typeStr == "binary_big_endian") {
+        inputDataFormat = DataFormat::BinaryBigEndian;
+        if (verbose)
+          cout << "  - Type: binary big endian" << endl;
+      } else {
+        throw std::runtime_error("PLY parser: bad format line");
+      }
+
+      // version
+      if (versionStr != "1.0") {
+        throw std::runtime_error("PLY parser: encountered file with version != "
+                                 "1.0. Don't know how to parse that");
+      }
+      if (verbose)
+        cout << "  - Version: " << versionStr << endl;
+    }
+
+    // Consume header line by line
+    while (inStream.good()) {
+      string line;
+      std::getline(inStream, line);
+
+      // Parse a comment
+      if (startsWith(line, "comment")) {
+        string comment = line.substr(8);
+        if (verbose)
+          cout << "  - Comment: " << comment << endl;
+        comments.push_back(comment);
+        continue;
+      }
+
+      // Parse an obj_info comment
+      if (startsWith(line, "obj_info")) {
+        string infoComment = line.substr(9);
+        if (verbose)
+          cout << "  - obj_info: " << infoComment << endl;
+        objInfoComments.push_back(infoComment);
+        continue;
+      }
+
+      // Parse an element
+      else if (startsWith(line, "element")) {
+        vector<string> tokens = tokenSplit(line);
+        if (tokens.size() != 3)
+          throw std::runtime_error("PLY parser: Invalid element line");
+        string name = tokens[1];
+        size_t count;
+        std::istringstream iss(tokens[2]);
+        iss >> count;
+        elements.emplace_back(name, count);
+        if (verbose)
+          cout << "  - Found element: " << name << " (count = " << count << ")"
+               << endl;
+        continue;
+      }
+
+      // Parse a property list
+      else if (startsWith(line, "property list")) {
+        vector<string> tokens = tokenSplit(line);
+        if (tokens.size() != 5)
+          throw std::runtime_error("PLY parser: Invalid property list line");
+        if (elements.size() == 0)
+          throw std::runtime_error(
+              "PLY parser: Found property list without previous element");
+        string countType = tokens[2];
+        string type = tokens[3];
+        string name = tokens[4];
+        elements.back().properties.push_back(
+            createPropertyWithType(name, type, true, countType));
+        if (verbose)
+          cout << "    - Found list property: " << name
+               << " (count type = " << countType << ", data type = " << type
+               << ")" << endl;
+        continue;
+      }
+
+      // Parse a property
+      else if (startsWith(line, "property")) {
+        vector<string> tokens = tokenSplit(line);
+        if (tokens.size() != 3)
+          throw std::runtime_error("PLY parser: Invalid property line");
+        if (elements.size() == 0)
+          throw std::runtime_error(
+              "PLY parser: Found property without previous element");
+        string type = tokens[1];
+        string name = tokens[2];
+        elements.back().properties.push_back(
+            createPropertyWithType(name, type, false, ""));
+        if (verbose)
+          cout << "    - Found property: " << name << " (type = " << type << ")"
+               << endl;
+        continue;
+      }
+
+      // Parse end of header
+      else if (startsWith(line, "end_header")) {
+        break;
+      }
+
+      // Error!
+      else {
+        throw std::runtime_error("Unrecognized header line: " + line);
+      }
+    }
+  }
+
+  /**
+   * @brief Read the actual data for a file, in ASCII
+   *
+   * @param inStream
+   * @param verbose
+   */
+  void parseASCII(std::istream &inStream, bool verbose) {
+
+    using std::string;
+    using std::vector;
+
+    // Read all elements
+    for (Element &elem : elements) {
+
+      if (verbose) {
+        std::cout << "  - Processing element: " << elem.name << std::endl;
+      }
+
+      for (size_t iP = 0; iP < elem.properties.size(); iP++) {
+        elem.properties[iP]->reserve(elem.count);
+      }
+      for (size_t iEntry = 0; iEntry < elem.count; iEntry++) {
+
+        string line;
+        std::getline(inStream, line);
+
+        // Some .ply files seem to include empty lines before the start of
+        // property data (though this is not specified in the format
+        // description). We attempt to recover and parse such files by skipping
+        // any empty lines.
+        if (!elem.properties.empty()) { // if the element has no properties, the
+                                        // line _should_ be blank, presumably
+          while (line.empty()) { // skip lines until we hit something nonempty
+            std::getline(inStream, line);
+          }
+        }
+
+        vector<string> tokens = tokenSplit(line);
+        size_t iTok = 0;
+        for (size_t iP = 0; iP < elem.properties.size(); iP++) {
+          elem.properties[iP]->parseNext(tokens, iTok);
+        }
+      }
+    }
+  }
+
+  /**
+   * @brief Read the actual data for a file, in binary.
+   *
+   * @param inStream
+   * @param verbose
+   */
+  void parseBinary(std::istream &inStream, bool verbose) {
+
+    if (!isLittleEndian()) {
+      throw std::runtime_error("binary reading assumes little endian system");
+    }
+
+    using std::string;
+    using std::vector;
+
+    // Read all elements
+    for (Element &elem : elements) {
+
+      if (verbose) {
+        std::cout << "  - Processing element: " << elem.name << std::endl;
+      }
+
+      for (size_t iP = 0; iP < elem.properties.size(); iP++) {
+        elem.properties[iP]->reserve(elem.count);
+      }
+      for (size_t iEntry = 0; iEntry < elem.count; iEntry++) {
+        for (size_t iP = 0; iP < elem.properties.size(); iP++) {
+          elem.properties[iP]->readNext(inStream);
+        }
+      }
+    }
+  }
+
+  /**
+   * @brief Read the actual data for a file, in binary.
+   *
+   * @param inStream
+   * @param verbose
+   */
+  void parseBinaryBigEndian(std::istream &inStream, bool verbose) {
+
+    if (!isLittleEndian()) {
+      throw std::runtime_error("binary reading assumes little endian system");
+    }
+
+    using std::string;
+    using std::vector;
+
+    // Read all elements
+    for (Element &elem : elements) {
+
+      if (verbose) {
+        std::cout << "  - Processing element: " << elem.name << std::endl;
+      }
+
+      for (size_t iP = 0; iP < elem.properties.size(); iP++) {
+        elem.properties[iP]->reserve(elem.count);
+      }
+      for (size_t iEntry = 0; iEntry < elem.count; iEntry++) {
+        for (size_t iP = 0; iP < elem.properties.size(); iP++) {
+          elem.properties[iP]->readNextBigEndian(inStream);
+        }
+      }
+    }
+  }
+
+  // === Writing ===
+
+  /**
+   * @brief write a PLY file to an output stream
+   *
+   * @param outStream
+   */
+  void writePLY(std::ostream &outStream) {
+
+    writeHeader(outStream);
+
+    // Write all elements
+    for (Element &e : elements) {
+      if (outputDataFormat == DataFormat::Binary) {
+        if (!isLittleEndian()) {
+          throw std::runtime_error(
+              "binary writing assumes little endian system");
+        }
+        e.writeDataBinary(outStream);
+      } else if (outputDataFormat == DataFormat::BinaryBigEndian) {
+        if (!isLittleEndian()) {
+          throw std::runtime_error(
+              "binary writing assumes little endian system");
+        }
+        e.writeDataBinaryBigEndian(outStream);
+      } else if (outputDataFormat == DataFormat::ASCII) {
+        e.writeDataASCII(outStream);
+      }
+    }
+  }
+
+  /**
+   * @brief Write out a header for a file
+   *
+   * @param outStream
+   */
+  void writeHeader(std::ostream &outStream) {
+
+    // Magic line
+    outStream << "ply\n";
+
+    // Type line
+    outStream << "format ";
+    if (outputDataFormat == DataFormat::Binary) {
+      outStream << "binary_little_endian ";
+    } else if (outputDataFormat == DataFormat::BinaryBigEndian) {
+      outStream << "binary_big_endian ";
+    } else if (outputDataFormat == DataFormat::ASCII) {
+      outStream << "ascii ";
+    }
+
+    // Version number
+    outStream << majorVersion << "." << minorVersion << "\n";
+
+    // Write comments
+    bool hasHapplyComment = false;
+    std::string happlyComment =
+        "Written with hapPLY (https://github.com/nmwsharp/happly)";
+    for (const std::string &comment : comments) {
+      if (comment == happlyComment)
+        hasHapplyComment = true;
+      outStream << "comment " << comment << "\n";
+    }
+    if (!hasHapplyComment) {
+      outStream << "comment " << happlyComment << "\n";
+    }
+
+    // Write obj_info comments
+    for (const std::string &comment : objInfoComments) {
+      outStream << "obj_info " << comment << "\n";
+    }
+
+    // Write elements (and their properties)
+    for (Element &e : elements) {
+      e.writeHeader(outStream);
+    }
+
+    // End header
+    outStream << "end_header\n";
+  }
+};
+
+} // namespace happly
+
+CubismUP_3D_NAMESPACE_BEGIN
+
+    class FixMassFlux : public Operator {
+public:
+  FixMassFlux(SimulationData &s);
+
+  void operator()(const double dt);
+
+  std::string getName() { return "FixMassFlux"; }
+};
+
+CubismUP_3D_NAMESPACE_END
+
+CubismUP_3D_NAMESPACE_BEGIN
+
+    class ObstacleVector : public Obstacle {
+public:
+  typedef std::vector<std::shared_ptr<Obstacle>> VectorType;
+
+  ObstacleVector(SimulationData &s) : Obstacle(s) {}
+
+  Obstacle *operator()(const size_t ind) const { return obstacles[ind].get(); }
+  int nObstacles() const { return obstacles.size(); }
+
+  void addObstacle(std::shared_ptr<Obstacle> obstacle) {
+    obstacle->obstacleID = obstacles.size();
+    obstacles.emplace_back(std::move(obstacle));
+  }
+
+  void update() override {
+    for (const auto &obstacle_ptr : obstacles)
+      obstacle_ptr->update();
+  }
+
+  void create() override {
+    for (const auto &obstacle_ptr : obstacles)
+      obstacle_ptr->create();
+  }
+
+  void finalize() override {
+    for (const auto &obstacle_ptr : obstacles)
+      obstacle_ptr->finalize();
+  }
+
+  void computeVelocities() override {
+    for (const auto &obstacle_ptr : obstacles)
+      obstacle_ptr->computeVelocities();
+  }
+
+  void computeForces() override {
+    for (const auto &obstacle_ptr : obstacles)
+      obstacle_ptr->computeForces();
+  }
+
+  const VectorType &getObstacleVector() const { return obstacles; }
+
+  std::vector<std::vector<ObstacleBlock *> *> getAllObstacleBlocks() const {
+    const size_t Nobs = obstacles.size();
+    std::vector<std::vector<ObstacleBlock *> *> ret(Nobs, nullptr);
+    for (size_t i = 0; i < Nobs; i++)
+      ret[i] = obstacles[i]->getObstacleBlocksPtr();
+    return ret;
+  }
+
+  std::array<Real, 3> updateUinf() const {
+    std::array<int, 3> nSum = {0, 0, 0};
+    std::array<Real, 3> uSum = {0, 0, 0};
+    for (const auto &obstacle_ptr : obstacles)
+      obstacle_ptr->updateLabVelocity(&nSum[0], &uSum[0]);
+    if (nSum[0] > 0)
+      uSum[0] = uSum[0] / nSum[0];
+    if (nSum[1] > 0)
+      uSum[1] = uSum[1] / nSum[1];
+    if (nSum[2] > 0)
+      uSum[2] = uSum[2] / nSum[2];
+    return uSum;
+  }
+
+protected:
+  VectorType obstacles;
+};
+
+CubismUP_3D_NAMESPACE_END
+
+CubismUP_3D_NAMESPACE_BEGIN
+
+    class ComputeForces : public Operator {
+public:
+  ComputeForces(SimulationData &s) : Operator(s) {}
+
+  void operator()(const Real dt);
+
+  std::string getName() { return "ComputeForces"; }
+};
+
+CubismUP_3D_NAMESPACE_END
+#ifndef CubismUP_3D_InitialConditions_h
+#define CubismUP_3D_InitialConditions_h
+CubismUP_3D_NAMESPACE_BEGIN
+
+    class InitialConditions : public Operator {
+public:
+  InitialConditions(SimulationData &s) : Operator(s) {}
+
+  template <typename K> inline void run(const K kernel) {
+    std::vector<cubism::BlockInfo> &vInfo = sim.velInfo();
+#pragma omp parallel for schedule(static)
+    for (size_t i = 0; i < vInfo.size(); i++)
+      kernel(vInfo[i], *(VectorBlock *)vInfo[i].ptrBlock);
+  }
+
+  void operator()(const Real dt);
+
+  std::string getName() { return "IC"; }
+};
+
+CubismUP_3D_NAMESPACE_END
+#endif
+
+using namespace cubism;
+
+CubismUP_3D_NAMESPACE_BEGIN
+
+    // used for mesh refinement
+    struct GradChiOnTmp {
+  GradChiOnTmp(const SimulationData &s) : sim(s) {}
+  const SimulationData &sim;
+  const StencilInfo stencil{-2, -2, -2, 3, 3, 3, true, {0}};
+  void operator()(ScalarLab &lab, const BlockInfo &info) const {
+    auto &__restrict__ TMP = (*sim.tmpV)(info.blockID);
+    if (info.level == sim.levelMaxVorticity - 1 &&
+        sim.levelMaxVorticity <
+            sim.levelMax) // allow for refinement up to levelMaxVorticity for
+                          // vorticity (and up to levelMax-1 for grad chi)
+      for (int z = 0; z < VectorBlock::sizeZ; ++z)
+        for (int y = 0; y < VectorBlock::sizeY; ++y)
+          for (int x = 0; x < VectorBlock::sizeX; ++x) {
+            if (TMP(x, y, z).magnitude() >= sim.Rtol) {
+              // set to a value that will not cause refinement or compression
+              TMP(x, y, z).u[0] = 0.5 * (sim.Rtol + sim.Ctol);
+              TMP(x, y, z).u[1] = 0.0;
+              TMP(x, y, z).u[2] = 0.0;
+            }
+          }
+
+    bool done = false;
+    const int offset = (info.level == sim.chi->getlevelMax() - 1) ? 2 : 1;
+    for (int z = -offset; z < VectorBlock::sizeZ + offset; ++z)
+      for (int y = -offset; y < VectorBlock::sizeY + offset; ++y)
+        for (int x = -offset; x < VectorBlock::sizeX + offset; ++x) {
+          if (done)
+            break;
+          lab(x, y, z).s = std::min(lab(x, y, z).s, (Real)1.0);
+          lab(x, y, z).s = std::max(lab(x, y, z).s, (Real)0.0);
+          if (lab(x, y, z).s > 0.00001 && lab(x, y, z).s < 0.9) {
+            TMP(VectorBlock::sizeX / 2 - 1, VectorBlock::sizeY / 2 - 1,
+                VectorBlock::sizeZ / 2 - 1)
+                .u[0] = 1e10;
+            TMP(VectorBlock::sizeX / 2, VectorBlock::sizeY / 2 - 1,
+                VectorBlock::sizeZ / 2 - 1)
+                .u[0] = 1e10;
+            TMP(VectorBlock::sizeX / 2 - 1, VectorBlock::sizeY / 2,
+                VectorBlock::sizeZ / 2 - 1)
+                .u[0] = 1e10;
+            TMP(VectorBlock::sizeX / 2, VectorBlock::sizeY / 2 - 1,
+                VectorBlock::sizeZ / 2 - 1)
+                .u[0] = 1e10;
+            TMP(VectorBlock::sizeX / 2 - 1, VectorBlock::sizeY / 2 - 1,
+                VectorBlock::sizeZ / 2)
+                .u[0] = 1e10;
+            TMP(VectorBlock::sizeX / 2, VectorBlock::sizeY / 2,
+                VectorBlock::sizeZ / 2)
+                .u[0] = 1e10;
+            TMP(VectorBlock::sizeX / 2 - 1, VectorBlock::sizeY / 2 - 1,
+                VectorBlock::sizeZ / 2)
+                .u[0] = 1e10;
+            TMP(VectorBlock::sizeX / 2, VectorBlock::sizeY / 2 - 1,
+                VectorBlock::sizeZ / 2)
+                .u[0] = 1e10;
+            done = true;
+            break;
+          } else if (lab(x, y, z).s > 0.9 && z >= 0 && z < VectorBlock::sizeZ &&
+                     y >= 0 && y < VectorBlock::sizeY && x >= 0 &&
+                     x < VectorBlock::sizeX) // compress the grid if inside an
+                                             // obstacle
+          {
+            TMP(x, y, z).u[0] = 0.0;
+            TMP(x, y, z).u[1] = 0.0;
+            TMP(x, y, z).u[2] = 0.0;
+          }
+        }
+  }
+};
+
+inline Real findMaxU(SimulationData &sim) {
+  const std::vector<BlockInfo> &myInfo = sim.velInfo();
+  const Real uinf[3] = {sim.uinf[0], sim.uinf[1], sim.uinf[2]};
+  Real maxU = 0;
+#pragma omp parallel for schedule(static) reduction(max : maxU)
+  for (size_t i = 0; i < myInfo.size(); i++) {
+    const VectorBlock &b = *(const VectorBlock *)myInfo[i].ptrBlock;
+    for (int z = 0; z < VectorBlock::sizeZ; ++z)
+      for (int y = 0; y < VectorBlock::sizeY; ++y)
+        for (int x = 0; x < VectorBlock::sizeX; ++x) {
+          const Real advu = std::fabs(b(x, y, z).u[0] + uinf[0]);
+          const Real advv = std::fabs(b(x, y, z).u[1] + uinf[1]);
+          const Real advw = std::fabs(b(x, y, z).u[2] + uinf[2]);
+          const Real maxUl = std::max({advu, advv, advw});
+          maxU = std::max(maxU, maxUl);
+        }
+  }
+  MPI_Allreduce(MPI_IN_PLACE, &maxU, 1, MPI_Real, MPI_MAX, sim.comm);
+  assert(maxU >= 0);
+  return maxU;
+}
+
+struct KernelVorticity {
+  SimulationData &sim;
+  KernelVorticity(SimulationData &s) : sim(s){};
+  const StencilInfo stencil{-1, -1, -1, 2, 2, 2, false, {0, 1, 2}};
+  const std::vector<BlockInfo> &vInfo = sim.tmpVInfo();
+  const int Nx = VectorBlock::sizeX;
+  const int Ny = VectorBlock::sizeY;
+  const int Nz = VectorBlock::sizeZ;
+
+  void operator()(const VectorLab &lab, const BlockInfo &info) const {
+    const cubism::BlockInfo &info2 = vInfo[info.blockID];
+    VectorBlock &o = *(VectorBlock *)info2.ptrBlock;
+    const Real inv2h = .5 * info.h * info.h;
+    for (int z = 0; z < Nz; ++z)
+      for (int y = 0; y < Ny; ++y)
+        for (int x = 0; x < Nx; ++x) {
+          const VectorElement &LW = lab(x - 1, y, z), &LE = lab(x + 1, y, z);
+          const VectorElement &LS = lab(x, y - 1, z), &LN = lab(x, y + 1, z);
+          const VectorElement &LF = lab(x, y, z - 1), &LB = lab(x, y, z + 1);
+          o(x, y, z).u[0] = inv2h * ((LN.u[2] - LS.u[2]) - (LB.u[1] - LF.u[1]));
+          o(x, y, z).u[1] = inv2h * ((LB.u[0] - LF.u[0]) - (LE.u[2] - LW.u[2]));
+          o(x, y, z).u[2] = inv2h * ((LE.u[1] - LW.u[1]) - (LN.u[0] - LS.u[0]));
+        }
+    BlockCase<VectorBlock> *tempCase =
+        (BlockCase<VectorBlock> *)(info.auxiliary);
+
+    if (tempCase == nullptr)
+      return;
+
+    VectorElement *const faceXm =
+        tempCase->storedFace[0] ? &tempCase->m_pData[0][0] : nullptr;
+    VectorElement *const faceXp =
+        tempCase->storedFace[1] ? &tempCase->m_pData[1][0] : nullptr;
+    VectorElement *const faceYm =
+        tempCase->storedFace[2] ? &tempCase->m_pData[2][0] : nullptr;
+    VectorElement *const faceYp =
+        tempCase->storedFace[3] ? &tempCase->m_pData[3][0] : nullptr;
+    VectorElement *const faceZm =
+        tempCase->storedFace[4] ? &tempCase->m_pData[4][0] : nullptr;
+    VectorElement *const faceZp =
+        tempCase->storedFace[5] ? &tempCase->m_pData[5][0] : nullptr;
+    if (faceXm != nullptr) {
+      const int x = 0;
+      for (int z = 0; z < Nz; ++z)
+        for (int y = 0; y < Ny; ++y) {
+          const VectorElement &LW = lab(x - 1, y, z);
+          const VectorElement &LC = lab(x, y, z);
+          faceXm[y + Ny * z].u[1] = -inv2h * (LW.u[2] + LC.u[2]);
+          faceXm[y + Ny * z].u[2] = +inv2h * (LW.u[1] + LC.u[1]);
+        }
+    }
+    if (faceXp != nullptr) {
+      const int x = Nx - 1;
+      for (int z = 0; z < Nz; ++z)
+        for (int y = 0; y < Ny; ++y) {
+          const VectorElement &LE = lab(x + 1, y, z);
+          const VectorElement &LC = lab(x, y, z);
+          faceXp[y + Ny * z].u[1] = +inv2h * (LE.u[2] + LC.u[2]);
+          faceXp[y + Ny * z].u[2] = -inv2h * (LE.u[1] + LC.u[1]);
+        }
+    }
+    if (faceYm != nullptr) {
+      const int y = 0;
+      for (int z = 0; z < Nz; ++z)
+        for (int x = 0; x < Nx; ++x) {
+          const VectorElement &LS = lab(x, y - 1, z);
+          const VectorElement &LC = lab(x, y, z);
+          faceYm[x + Nx * z].u[0] = +inv2h * (LS.u[2] + LC.u[2]);
+          faceYm[x + Nx * z].u[2] = -inv2h * (LS.u[0] + LC.u[0]);
+        }
+    }
+    if (faceYp != nullptr) {
+      const int y = Ny - 1;
+      for (int z = 0; z < Nz; ++z)
+        for (int x = 0; x < Nx; ++x) {
+          const VectorElement &LN = lab(x, y + 1, z);
+          const VectorElement &LC = lab(x, y, z);
+          faceYp[x + Nx * z].u[0] = -inv2h * (LN.u[2] + LC.u[2]);
+          faceYp[x + Nx * z].u[2] = +inv2h * (LN.u[0] + LC.u[0]);
+        }
+    }
+    if (faceZm != nullptr) {
+      const int z = 0;
+      for (int y = 0; y < Ny; ++y)
+        for (int x = 0; x < Nx; ++x) {
+          const VectorElement &LF = lab(x, y, z - 1);
+          const VectorElement &LC = lab(x, y, z);
+          faceZm[x + Nx * y].u[0] = -inv2h * (LF.u[1] + LC.u[1]);
+          faceZm[x + Nx * y].u[1] = +inv2h * (LF.u[0] + LC.u[0]);
+        }
+    }
+    if (faceZp != nullptr) {
+      const int z = Nz - 1;
+      for (int y = 0; y < Ny; ++y)
+        for (int x = 0; x < Nx; ++x) {
+          const VectorElement &LB = lab(x, y, z + 1);
+          const VectorElement &LC = lab(x, y, z);
+          faceZp[x + Nx * y].u[0] = +inv2h * (LB.u[1] + LC.u[1]);
+          faceZp[x + Nx * y].u[1] = -inv2h * (LB.u[0] + LC.u[0]);
+        }
+    }
+  }
+};
+
+class ComputeVorticity : public Operator {
+public:
+  ComputeVorticity(SimulationData &s) : Operator(s) {}
+  void operator()(const Real dt) {
+    const KernelVorticity K(sim);
+    compute<VectorLab>(K, sim.vel, sim.tmpV);
+    const std::vector<BlockInfo> &myInfo = sim.tmpVInfo();
+#ifdef PRESERVE_SYMMETRY
+    Real omega_max_min[6] = {0.};
+#pragma omp parallel for reduction(max : omega_max_min[:6])
+#else
+#pragma omp parallel for
+#endif
+    for (size_t i = 0; i < myInfo.size(); i++) {
+      const BlockInfo &info = myInfo[i];
+      VectorBlock &b = *(VectorBlock *)info.ptrBlock;
+      const Real fac = 1.0 / (info.h * info.h * info.h);
+      for (int z = 0; z < VectorBlock::sizeZ; ++z)
+        for (int y = 0; y < VectorBlock::sizeY; ++y)
+          for (int x = 0; x < VectorBlock::sizeX; ++x) {
+            b(x, y, z).u[0] *= fac;
+            b(x, y, z).u[1] *= fac;
+            b(x, y, z).u[2] *= fac;
+#ifdef PRESERVE_SYMMETRY
+            omega_max_min[0] = std::max(omega_max_min[0], b(x, y, z).u[0]);
+            omega_max_min[1] = std::max(omega_max_min[1], b(x, y, z).u[1]);
+            omega_max_min[2] = std::max(omega_max_min[2], b(x, y, z).u[2]);
+            omega_max_min[3] = std::max(omega_max_min[3], -b(x, y, z).u[0]);
+            omega_max_min[4] = std::max(omega_max_min[4], -b(x, y, z).u[1]);
+            omega_max_min[5] = std::max(omega_max_min[5], -b(x, y, z).u[2]);
+#endif
+          }
+    }
+#ifdef PRESERVE_SYMMETRY
+    MPI_Reduce(sim.rank == 0 ? MPI_IN_PLACE : omega_max_min, omega_max_min, 6,
+               MPI_Real, MPI_MAX, 0, sim.comm);
+    if (sim.rank == 0 && sim.verbose) {
+      std::cout << "Vorticity (x): max=" << omega_max_min[0]
+                << " min=" << -omega_max_min[3]
+                << " difference: " << omega_max_min[0] - omega_max_min[3]
+                << std::endl;
+      std::cout << "Vorticity (y): max=" << omega_max_min[1]
+                << " min=" << -omega_max_min[4]
+                << " difference: " << omega_max_min[1] - omega_max_min[4]
+                << std::endl;
+      std::cout << "Vorticity (z): max=" << omega_max_min[2]
+                << " min=" << -omega_max_min[5]
+                << " difference: " << omega_max_min[2] - omega_max_min[5]
+                << std::endl;
+    }
+#endif
+  }
+  std::string getName() { return "Vorticity"; }
+};
+
+class KernelQcriterion {
+public:
+  SimulationData &sim;
+  KernelQcriterion(SimulationData &s) : sim(s){};
+  const std::array<int, 3> stencil_start = {-1, -1, -1},
+                           stencil_end = {2, 2, 2};
+  const cubism::StencilInfo stencil{-1, -1, -1, 2, 2, 2, false, {0, 1, 2}};
+  const std::vector<cubism::BlockInfo> &vInfo = sim.presInfo();
+
+  void operator()(VectorLab &lab, const cubism::BlockInfo &info) const {
+    ScalarBlock &o = *(ScalarBlock *)vInfo[info.blockID].ptrBlock;
+    const Real inv2h = .5 / info.h;
+    for (int iz = 0; iz < ScalarBlock::sizeZ; ++iz)
+      for (int iy = 0; iy < ScalarBlock::sizeY; ++iy)
+        for (int ix = 0; ix < ScalarBlock::sizeX; ++ix) {
+          const VectorElement &LW = lab(ix - 1, iy, iz),
+                              &LE = lab(ix + 1, iy, iz);
+          const VectorElement &LS = lab(ix, iy - 1, iz),
+                              &LN = lab(ix, iy + 1, iz);
+          const VectorElement &LF = lab(ix, iy, iz - 1),
+                              &LB = lab(ix, iy, iz + 1);
+          const Real WX = inv2h * ((LN.u[2] - LS.u[2]) - (LB.u[1] - LF.u[1]));
+          const Real WY = inv2h * ((LB.u[0] - LF.u[0]) - (LE.u[2] - LW.u[2]));
+          const Real WZ = inv2h * ((LE.u[1] - LW.u[1]) - (LN.u[0] - LS.u[0]));
+          const Real D11 = inv2h * (LE.u[0] - LW.u[0]); // shear stresses
+          const Real D22 = inv2h * (LN.u[1] - LS.u[1]); // shear stresses
+          const Real D33 = inv2h * (LB.u[2] - LF.u[2]); // shear stresses
+          const Real D12 =
+              inv2h * (LN.u[0] - LS.u[0] + LE.u[1] - LW.u[1]); // shear stresses
+          const Real D13 =
+              inv2h * (LE.u[2] - LW.u[2] + LB.u[0] - LF.u[0]); // shear stresses
+          const Real D23 =
+              inv2h * (LB.u[1] - LF.u[1] + LN.u[2] - LS.u[2]); // shear stresses
+          // trace( S S^t ) where S is the sym part of the vel gradient:
+          const Real SS = D11 * D11 + D22 * D22 + D33 * D33 +
+                          (D12 * D12 + D13 * D13 + D23 * D23) / 2;
+          o(ix, iy, iz).s = ((WX * WX + WY * WY + WZ * WZ) / 2 - SS) / 2;
+        }
+  }
+};
+
+class ComputeQcriterion : public Operator {
+public:
+  ComputeQcriterion(SimulationData &s) : Operator(s) {}
+  void operator()(const Real dt) {
+    const KernelQcriterion K(sim);
+    cubism::compute<VectorLab>(K, sim.vel);
+  }
+  std::string getName() { return "Qcriterion"; }
+};
+
+class KernelDivergence {
+public:
+  SimulationData &sim;
+  KernelDivergence(SimulationData &s) : sim(s) {}
+  const std::array<int, 3> stencil_start = {-1, -1, -1},
+                           stencil_end = {2, 2, 2};
+  const cubism::StencilInfo stencil{-1, -1, -1, 2, 2, 2, false, {0, 1, 2}};
+  const std::vector<cubism::BlockInfo> &vInfo = sim.tmpVInfo();
+  const std::vector<cubism::BlockInfo> &chiInfo = sim.chiInfo();
+
+  void operator()(VectorLab &lab, const cubism::BlockInfo &info) const {
+    VectorBlock &o = *(VectorBlock *)vInfo[info.blockID].ptrBlock;
+    ScalarBlock &c = *(ScalarBlock *)chiInfo[info.blockID].ptrBlock;
+    const Real fac = 0.5 * info.h * info.h;
+    for (int iz = 0; iz < VectorBlock::sizeZ; ++iz)
+      for (int iy = 0; iy < VectorBlock::sizeY; ++iy)
+        for (int ix = 0; ix < VectorBlock::sizeX; ++ix) {
+          o(ix, iy, iz).u[0] =
+              (1.0 - c(ix, iy, iz).s) * fac *
+              (lab(ix + 1, iy, iz).u[0] - lab(ix - 1, iy, iz).u[0] +
+               lab(ix, iy + 1, iz).u[1] - lab(ix, iy - 1, iz).u[1] +
+               lab(ix, iy, iz + 1).u[2] - lab(ix, iy, iz - 1).u[2]);
+        }
+
+    BlockCase<VectorBlock> *tempCase =
+        (BlockCase<VectorBlock> *)(info.auxiliary);
+    typename VectorBlock::ElementType *faceXm = nullptr;
+    typename VectorBlock::ElementType *faceXp = nullptr;
+    typename VectorBlock::ElementType *faceYm = nullptr;
+    typename VectorBlock::ElementType *faceYp = nullptr;
+    typename VectorBlock::ElementType *faceZp = nullptr;
+    typename VectorBlock::ElementType *faceZm = nullptr;
+    if (tempCase != nullptr) {
+      faceXm = tempCase->storedFace[0] ? &tempCase->m_pData[0][0] : nullptr;
+      faceXp = tempCase->storedFace[1] ? &tempCase->m_pData[1][0] : nullptr;
+      faceYm = tempCase->storedFace[2] ? &tempCase->m_pData[2][0] : nullptr;
+      faceYp = tempCase->storedFace[3] ? &tempCase->m_pData[3][0] : nullptr;
+      faceZm = tempCase->storedFace[4] ? &tempCase->m_pData[4][0] : nullptr;
+      faceZp = tempCase->storedFace[5] ? &tempCase->m_pData[5][0] : nullptr;
+    }
+    if (faceXm != nullptr) {
+      int ix = 0;
+      for (int iz = 0; iz < ScalarBlock::sizeZ; ++iz)
+        for (int iy = 0; iy < ScalarBlock::sizeY; ++iy) {
+          faceXm[iy + ScalarBlock::sizeY * iz].clear();
+          faceXm[iy + ScalarBlock::sizeY * iz].u[0] =
+              (1.0 - c(ix, iy, iz).s) * fac *
+              (lab(ix - 1, iy, iz).u[0] + lab(ix, iy, iz).u[0]);
+        }
+    }
+    if (faceXp != nullptr) {
+      int ix = ScalarBlock::sizeX - 1;
+      for (int iz = 0; iz < ScalarBlock::sizeZ; ++iz)
+        for (int iy = 0; iy < ScalarBlock::sizeY; ++iy) {
+          faceXp[iy + ScalarBlock::sizeY * iz].clear();
+          faceXp[iy + ScalarBlock::sizeY * iz].u[0] =
+              -(1.0 - c(ix, iy, iz).s) * fac *
+              (lab(ix + 1, iy, iz).u[0] + lab(ix, iy, iz).u[0]);
+        }
+    }
+    if (faceYm != nullptr) {
+      int iy = 0;
+      for (int iz = 0; iz < ScalarBlock::sizeZ; ++iz)
+        for (int ix = 0; ix < ScalarBlock::sizeX; ++ix) {
+          faceYm[ix + ScalarBlock::sizeX * iz].clear();
+          faceYm[ix + ScalarBlock::sizeX * iz].u[0] =
+              (1.0 - c(ix, iy, iz).s) * fac *
+              (lab(ix, iy - 1, iz).u[1] + lab(ix, iy, iz).u[1]);
+        }
+    }
+    if (faceYp != nullptr) {
+      int iy = ScalarBlock::sizeY - 1;
+      for (int iz = 0; iz < ScalarBlock::sizeZ; ++iz)
+        for (int ix = 0; ix < ScalarBlock::sizeX; ++ix) {
+          faceYp[ix + ScalarBlock::sizeX * iz].clear();
+          faceYp[ix + ScalarBlock::sizeX * iz].u[0] =
+              -(1.0 - c(ix, iy, iz).s) * fac *
+              (lab(ix, iy + 1, iz).u[1] + lab(ix, iy, iz).u[1]);
+        }
+    }
+    if (faceZm != nullptr) {
+      int iz = 0;
+      for (int iy = 0; iy < ScalarBlock::sizeY; ++iy)
+        for (int ix = 0; ix < ScalarBlock::sizeX; ++ix) {
+          faceZm[ix + ScalarBlock::sizeX * iy].clear();
+          faceZm[ix + ScalarBlock::sizeX * iy].u[0] =
+              (1.0 - c(ix, iy, iz).s) * fac *
+              (lab(ix, iy, iz - 1).u[2] + lab(ix, iy, iz).u[2]);
+        }
+    }
+    if (faceZp != nullptr) {
+      int iz = ScalarBlock::sizeZ - 1;
+      for (int iy = 0; iy < ScalarBlock::sizeY; ++iy)
+        for (int ix = 0; ix < ScalarBlock::sizeX; ++ix) {
+          faceZp[ix + ScalarBlock::sizeX * iy].clear();
+          faceZp[ix + ScalarBlock::sizeX * iy].u[0] =
+              -(1.0 - c(ix, iy, iz).s) * fac *
+              (lab(ix, iy, iz + 1).u[2] + lab(ix, iy, iz).u[2]);
+        }
+    }
+  }
+};
+
+class ComputeDivergence : public Operator {
+public:
+  ComputeDivergence(SimulationData &s) : Operator(s) {}
+  void operator()(const Real dt) {
+    const KernelDivergence K(sim);
+    cubism::compute<VectorLab>(K, sim.vel, sim.chi);
+
+    Real div_loc = 0.0;
+    const std::vector<cubism::BlockInfo> &myInfo = sim.tmpVInfo();
+#pragma omp parallel for schedule(static) reduction(+ : div_loc)
+    for (size_t i = 0; i < myInfo.size(); i++) {
+      const cubism::BlockInfo &info = myInfo[i];
+      const VectorBlock &b = *(const VectorBlock *)info.ptrBlock;
+      for (int iz = 0; iz < VectorBlock::sizeZ; ++iz)
+        for (int iy = 0; iy < VectorBlock::sizeY; ++iy)
+          for (int ix = 0; ix < VectorBlock::sizeX; ++ix)
+            div_loc += std::fabs(b(ix, iy, iz).u[0]);
+    }
+    Real div_tot = 0.0;
+    MPI_Reduce(&div_loc, &div_tot, 1, MPI_Real, MPI_SUM, 0, sim.comm);
+
+    size_t loc = myInfo.size();
+    size_t tot;
+    MPI_Reduce(&loc, &tot, 1, MPI_LONG, MPI_SUM, 0, sim.comm);
+    if (sim.rank == 0) {
+      std::cout << "Total div = " << div_tot << std::endl;
+      std::ofstream outfile;
+      outfile.open("div.txt", std::ios_base::app);
+      outfile << sim.time << " " << div_tot << " " << tot << "\n";
+      outfile.close();
+    }
+  }
+  std::string getName() { return "Divergence"; }
+};
+
+CubismUP_3D_NAMESPACE_END
+
+namespace cubismup3d {
+
+struct SimulationData;
+
+class PoissonSolverBase {
+public:
+  virtual ~PoissonSolverBase() = default;
+  virtual void solve() = 0;
+
+protected:
+  typedef typename ScalarGrid::BlockType BlockType;
+};
+
+std::shared_ptr<PoissonSolverBase> makePoissonSolver(SimulationData &s);
+} // namespace cubismup3d
+#ifndef CubismUP_3D_Pipe_h
+#define CubismUP_3D_Pipe_h
+CubismUP_3D_NAMESPACE_BEGIN
+
+    class Pipe : public Obstacle {
+  const Real radius;
+  const Real halflength;
+  std::string section = "circular"; // or whatever
+  Real umax = 0;
+  Real vmax = 0;
+  Real wmax = 0;
+  Real tmax = 1;
+  // special case: startup with unif accel to umax in tmax, and then decel to 0
+  bool accel = false;
+
+public:
+  Pipe(SimulationData &s, cubism::ArgumentParser &p);
+  void _init(void);
+  void create() override;
+  void finalize() override;
+  void computeVelocities() override;
+};
+
+CubismUP_3D_NAMESPACE_END
+#endif // CubismUP_3D_Pipe_h
+
+CubismUP_3D_NAMESPACE_BEGIN
+
+    class Naca : public Fish {
+  /*
+   Hydrofoil motion is defined as:
+
+      Rotation:
+      a(t) = Mpitch + Apitch*sin(2*pi*Fpitch*t), where:
+             a(t)   :pitching angle
+             Mpitch :mean pitch angle
+             Fpitch :pitching frequency
+      omega(t) = da/dt
+      Rotation can be defined around a point that is located at a distance of
+      d = fixedCenterDist*length for the hydrofoil's center of mass.
+      In this case, we add the following velocity to the motion:
+        u_rot = - d*omega(t)*sin(a(t))
+        v_rot = + d*omega(t)*cos(a(t))
+
+      Heaving motion:
+      y(t) = Aheave*cos(2*pi*Fheave*t)
+      v(t) = dy/dt = -2.0*pi*Fheave*Aheave*sin(2*pi*Fheave*t)
+
+      It is also possible to add a constant velocity (uforced,vforced) to the
+   motion.
+  */
+  Real Apitch, Fpitch, Mpitch, Fheave, Aheave;
+  Real tAccel;          // time to accelerate to target velocity
+  Real fixedCenterDist; // distance s/L from CoM where hydrofoil is fixed
+
+public:
+  Naca(SimulationData &s, cubism::ArgumentParser &p);
+  void update() override;
+  void computeVelocities() override;
+  using intersect_t = std::vector<std::vector<VolumeSegment_OBB *>>;
+  void writeSDFOnBlocks(std::vector<VolumeSegment_OBB> &vSegments) override;
+  void updateLabVelocity(int mSum[3], Real uSum[3]) override;
+};
+
+CubismUP_3D_NAMESPACE_END
+#ifndef CubismUP_3D_ObstacleFactory_h
+#define CubismUP_3D_ObstacleFactory_h
+namespace cubism {
+class ArgumentParser;
+}
+
+CubismUP_3D_NAMESPACE_BEGIN
+
+    class ObstacleFactory {
+  SimulationData &sim;
+
+public:
+  ObstacleFactory(SimulationData &s) : sim(s) {}
+
+  /* Add obstacles defined with `-factory` and `-factory-content` arguments. */
+  void addObstacles(cubism::ArgumentParser &parser);
+
+  /* Add obstacles specified with a given string. */
+  void addObstacles(const std::string &factoryContent);
+};
+
+CubismUP_3D_NAMESPACE_END
+#endif // CubismUP_3D_ObstacleFactory_h
+#ifndef CubismUP_3D_FactoryFileLineParser_h
+#define CubismUP_3D_FactoryFileLineParser_h
+
+CubismUP_3D_NAMESPACE_BEGIN
+
+    class FactoryFileLineParser : public cubism::ArgumentParser {
+protected:
+  // from stackoverflow
+
+  // trim from start
+  inline std::string &ltrim(std::string &s) {
+    s.erase(s.begin(),
+            std::find_if(s.begin(), s.end(),
+                         std::not1(std::ptr_fun<int, int>(std::isspace))));
+    return s;
+  }
+
+  // trim from end
+  inline std::string &rtrim(std::string &s) {
+    s.erase(std::find_if(s.rbegin(), s.rend(),
+                         std::not1(std::ptr_fun<int, int>(std::isspace)))
+                .base(),
+            s.end());
+    return s;
+  }
+
+  // trim from both ends
+  inline std::string &trim(std::string &s) { return ltrim(rtrim(s)); }
+
+public:
+  FactoryFileLineParser(std::istringstream &is_line)
+      : cubism::ArgumentParser(0, NULL, '#') // last char is comment leader
+  {
+    std::string key, value;
+    while (std::getline(is_line, key, '=')) {
+      if (std::getline(is_line, value, ' ')) {
+        // add "-" because then we can use the same code for parsing factory as
+        // command lines
+        // mapArguments["-"+trim(key)] = Value(trim(value));
+        mapArguments[trim(key)] = cubism::Value(trim(value));
+      }
+    }
+
+    mute();
+  }
+};
+
+CubismUP_3D_NAMESPACE_END
+#endif // CubismUP_3D_FactoryFileLineParser_h
+
+CubismUP_3D_NAMESPACE_BEGIN
+
+    class SmartNaca : public Naca {
+  std::vector<Real> actuators_prev_value;
+  std::vector<Real> actuators_next_value;
+  const int Nactuators;
+  const Real actuator_ds;
+  Real fx_integral = 0;
+  std::vector<Schedulers::ParameterSchedulerScalar> actuatorSchedulers;
+  Real t_change = 0;
+  const Real thickness;
+
+public:
+  SmartNaca(SimulationData &s, cubism::ArgumentParser &p);
+  void finalize() override;
+  void act(std::vector<Real> action, const int agentID);
+  Real reward(const int agentID);
+  std::vector<Real> state(const int agentID);
+  std::vector<Real> actuators;
+};
+
+CubismUP_3D_NAMESPACE_END
+#ifndef CubismUP_3D_Plate_h
+#define CubismUP_3D_Plate_h
+CubismUP_3D_NAMESPACE_BEGIN
+
+    /*
+     * Plate operator.
+     *
+     * Defined by center location, side lengths and inclination angle
+     *      OR by center location, side lengths, normal vector
+     *            and the vector of direction of one of the edges.
+     *
+     * Factory example:
+     *     IF3D_PlateObstacle L=0.1 xpos=0.25 ypos=0.25 zpos=0.25 a=0.1 b=0.2
+     * thickness=0.02 alpha=30 IF3D_PlateObstacle L=0.1 xpos=0.25 ypos=0.25
+     * zpos=0.25 a=0.1 b=0.2 thickness=0.02 nx=-1 ny=0 nz=0 ax=0 ay=1 az=0
+     *
+     * Factory arguments:
+     *     xpos, ypos, zpos - Position of the center.
+     *     a                - Half-size in the direction of A.
+     *     b                - Half-size in the direction of B.
+     *     thickness        - MUST be at least few cell sizes.
+     *     alpha            - Inclination angle. (*)
+     *     nx, ny, nz       - Normal vector (automatically normalized).
+     *     ax, ay, az       - Direction vector of one of the edges. (**)
+     *
+     * (*) If specified, vectors (nx, ny, nz) and (ax, ay, az) are automatically
+     * computed. For alpha=0,  (nx, ny, nz) = (1, 0, 0) and (ax, ay, az) = (0,
+     * 1, 0). For alpha=45, (nx, ny, nz) = (0.71, 0.71, 0) and (ax, ay, az) =
+     * (-0.71, 0.71, 0).
+     *
+     * (**) Doesn't have to be normalized or perpendicular to n. It's
+     * automatically adjusted to n. Namely, the exact algorithm of fixing n, A
+     * and B is: N = normalized(N) B = cross(N, A) A = cross(B, N)
+     */
+
+    class Plate : public Obstacle {
+  // Vectors n, a and b are unit vectors and mutually orthogonal.
+  Real nx, ny, nz; // Normal.
+  Real ax, ay, az; // A-side vector.
+  Real bx, by, bz; // B-side vector.
+  Real half_a;     // Half-size in A direction.
+  Real half_b;     // Half-size in B direction.
+  Real half_thickness;
+
+  void _from_alpha(Real alpha); // Alpha in radians.
+  void _init(void);
+
+public:
+  Plate(SimulationData &s, cubism::ArgumentParser &p);
+  void create() override;
+  void finalize() override;
+};
+
+CubismUP_3D_NAMESPACE_END
+#endif // CubismUP_3D_Plate_h
+#ifndef CubismUP_3D_Sphere_h
+#define CubismUP_3D_Sphere_h
+CubismUP_3D_NAMESPACE_BEGIN
+
+    class Sphere : public Obstacle {
+public:
+  const Real radius;
+  Real umax = 0;
+  Real tmax = 1;
+  // special case: startup with unif accel to umax in tmax, and then decel to 0
+  bool accel_decel = false;
+  bool bHemi = false;
+
+  Sphere(SimulationData &s, cubism::ArgumentParser &p);
+  void create() override;
+  void finalize() override;
+  void computeVelocities() override;
+};
+
+CubismUP_3D_NAMESPACE_END
+#endif // CubismUP_3D_Sphere_h
+
+CubismUP_3D_NAMESPACE_BEGIN
+
+    class StefanFish : public Fish {
+public:
+  StefanFish(SimulationData &s, cubism::ArgumentParser &p);
+
+  // PID controller options
+  bool bCorrectPosition;  // control yaw angle and position in x-y plane
+  bool bCorrectPositionZ; // control pitch angle and position in z
+  bool bCorrectRoll;      // prevent rolling angle
+  Real origC[3];          // initial location for PID controller
+  Real wyp;               // weight for y-control
+  Real wzp;               // weight for z-control
+
+  std::deque<std::array<Real, 4>> r_axis;
+
+  void create() override;
+  virtual void computeVelocities() override;
+  virtual void saveRestart(FILE *f) override;
+  virtual void loadRestart(FILE *f) override;
+
+  // Reinforcement Learning functions
+  void act(const Real lTact, const std::vector<Real> &a)
+      const; // get vector of actions that will be taken at time lTact
+  std::vector<Real> state() const; // return vector of state
+  Real getPhase(const Real time) const;
+  Real
+  getLearnTPeriod() const; // take actions once every 0.5*getLearnTPeriod() time
+  //// Helpers for state function
+  ssize_t holdingBlockID(const std::array<Real, 3> pos) const;
+  std::array<Real, 3> getShear(const std::array<Real, 3> pSurf) const;
+};
+
+class CurvatureDefinedFishData : public FishMidlineData {
+public:
+  // stored past action for RL state:
+  Real lastTact = 0;
+  Real lastCurv = 0;
+  Real oldrCurv = 0;
+  // quantities needed to correctly control the speed of the midline maneuvers:
+  Real periodPIDval = Tperiod;
+  Real periodPIDdif = 0;
+  bool TperiodPID = false;
+  Real lastTime = 0;
+  // quantities needed for rl:
+  Real time0 = 0;
+  Real timeshift = 0;
+
+  // next scheduler is used to ramp-up the curvature from 0 during first period:
+  Schedulers::ParameterSchedulerVector<6> curvatureScheduler;
+  // next scheduler is used for midline-bending control points for RL:
+  Schedulers::ParameterSchedulerLearnWave<7> rlBendingScheduler;
+
+  // pitching can be performed either by controling the midline torsion OR
+  // by performing a pitching motion by wrapping the fish around a cylinder
+  bool control_torsion{false};
+  //
+  // I.Torsion control parameters: torsion is a natural cubic spline passing
+  // through
+  //   six points. Actions modify the torsion values directly.
+  Schedulers::ParameterSchedulerVector<3> torsionScheduler;
+  std::array<Real, 3> torsionValues = {0, 0, 0};
+  std::array<Real, 3> torsionValues_previous = {0, 0, 0};
+  Real Ttorsion_start = 0.0;
+
+  Real alpha = 1;
+  Real dalpha = 0;
+  Real beta = 0;
+  Real dbeta = 0;
+  Real gamma = 0;
+  Real dgamma = 0;
+
+  // next scheduler is used to ramp-up the period
+  Schedulers::ParameterSchedulerScalar periodScheduler;
+  Real current_period = Tperiod;
+  Real next_period = Tperiod;
+  Real transition_start = 0.0;
+  Real transition_duration = 0.1 * Tperiod;
+
+protected:
+  Real *const rK; // curvature kappa(s,t) of midline
+  Real *const vK; // time derivative of curvature
+  Real *const rC; // control parameters of curvature/bending
+  Real *const vC; // control parameters of curvature/bending (=drC/dt)
+  Real *const rB; // control parameters of curvature/bending
+  Real *const vB; // control parameters of curvature/bending (=drB/dt)
+
+  Real *const rT;   // torsion tau(s,t) of midline
+  Real *const vT;   // time derivative of torsion
+  Real *const rC_T; // control parameters of torsion
+  Real *const vC_T; // control parameters of torsion (=drC_T/dt)
+  Real *const rB_T; // control parameters of torsion
+  Real *const vB_T; // control parameters of torsion (=drB_T/dt)
+
+public:
+  CurvatureDefinedFishData(Real L, Real T, Real phi, Real _h,
+                           const Real _ampFac)
+      : FishMidlineData(L, T, phi, _h, _ampFac), rK(_alloc(Nm)), vK(_alloc(Nm)),
+        rC(_alloc(Nm)), vC(_alloc(Nm)), rB(_alloc(Nm)), vB(_alloc(Nm)),
+        rT(_alloc(Nm)), vT(_alloc(Nm)), rC_T(_alloc(Nm)), vC_T(_alloc(Nm)),
+        rB_T(_alloc(Nm)), vB_T(_alloc(Nm)) {}
+
+  void correctTailPeriod(const Real periodFac, const Real periodVel,
+                         const Real t, const Real dt) {
+    assert(periodFac > 0 && periodFac < 2); // would be crazy
+
+    const Real lastArg = (lastTime - time0) / periodPIDval + timeshift;
+    time0 = lastTime;
+    timeshift = lastArg;
+    // so that new arg is only constant (prev arg) + dt / periodPIDval
+    // with the new l_Tp:
+    periodPIDval = Tperiod * periodFac;
+    periodPIDdif = Tperiod * periodVel;
+    lastTime = t;
+    TperiodPID = true;
+  }
+
+  void execute(const Real time, const Real l_tnext,
+               const std::vector<Real> &input) override;
+
+  ~CurvatureDefinedFishData() override {
+    _dealloc(rK);
+    _dealloc(vK);
+    _dealloc(rC);
+    _dealloc(vC);
+    _dealloc(rB);
+    _dealloc(vB);
+    _dealloc(rT);
+    _dealloc(vT);
+    _dealloc(rC_T);
+    _dealloc(vC_T);
+    _dealloc(rB_T);
+    _dealloc(vB_T);
+  }
+
+  void computeMidline(const Real time, const Real dt) override;
+
+  void performPitchingMotion(const Real time);
+
+  void recomputeNormalVectors();
+
+  // Actions available to StefanFish (for Reinforcement Learning)
+  void action_curvature(const Real time, const Real l_tnext,
+                        const Real action) {
+    rlBendingScheduler.Turn(action, l_tnext);
+  }
+  void action_period(const Real time, const Real l_tnext, const Real action) {
+    if (TperiodPID)
+      std::cout << "Warning: PID controller should not be used with RL."
+                << std::endl;
+    current_period = periodPIDval;
+    next_period = Tperiod * (1 + action);
+    transition_start = l_tnext;
+  }
+  void action_torsion(const Real time, const Real l_tnext, const Real *action) {
+    for (int i = 0; i < 3; i++) {
+      torsionValues_previous[i] = torsionValues[i];
+      torsionValues[i] = action[i];
+    }
+    Ttorsion_start = time;
+  }
+  void action_torsion_pitching_radius(const Real time, const Real l_tnext,
+                                      const Real action) {
+    // Set torsion values so that a pitching motion is performed. This is
+    // similar to pitching for a given cylinder radius R (as in
+    // action_pitching), but what is specified here is the midline torsion. The
+    // 'action' parameter is proportional to 1/R.
+    const Real sq = 1.0 / pow(2.0, 0.5);
+    const Real ar[3] = {action * (norX[0] * 0.000 + norZ[0] * 1.000),
+                        action *
+                            (norX[Nm / 2 - 1] * sq + norZ[Nm / 2 - 1] * sq),
+                        action * (norX[Nm - 1] * 1.000 + norZ[Nm - 1] * 0.000)};
+    action_torsion(time, l_tnext, ar);
+  }
+};
+
+CubismUP_3D_NAMESPACE_END
+CubismUP_3D_NAMESPACE_BEGIN
+
+    using SymM = std::array<Real, 6>;
+using GenM = std::array<Real, 9>;
+using GenV = std::array<Real, 3>;
+
+static inline SymM invertSym(const SymM J) {
+  const Real detJ = J[0] * (J[1] * J[2] - J[5] * J[5]) +
+                    J[3] * (J[4] * J[5] - J[2] * J[3]) +
+                    J[4] * (J[3] * J[5] - J[1] * J[4]);
+  if (std::fabs(detJ) <= std::numeric_limits<Real>::min()) // really zero
+  {
+    return SymM{{0, 0, 0, 0, 0, 0}};
+  } else {
+    return SymM{
+        {(J[1] * J[2] - J[5] * J[5]) / detJ, (J[0] * J[2] - J[4] * J[4]) / detJ,
+         (J[0] * J[1] - J[3] * J[3]) / detJ, (J[4] * J[5] - J[2] * J[3]) / detJ,
+         (J[3] * J[5] - J[1] * J[4]) / detJ,
+         (J[3] * J[4] - J[0] * J[5]) / detJ}};
+  }
+}
+
+static inline GenV multSymVec(const SymM J, const GenV V) {
+  return GenV{{J[0] * V[0] + J[3] * V[1] + J[4] * V[2],
+               J[3] * V[0] + J[1] * V[1] + J[5] * V[2],
+               J[4] * V[0] + J[5] * V[1] + J[2] * V[2]}};
+}
+
+static inline GenV multGenVec(const GenM J, const GenV V) {
+  return GenV{{J[0] * V[0] + J[1] * V[1] + J[2] * V[2],
+               J[3] * V[0] + J[4] * V[1] + J[5] * V[2],
+               J[6] * V[0] + J[7] * V[1] + J[8] * V[2]}};
+}
+
+static inline GenM multSyms(const SymM J, const SymM G) {
+  return GenM{{G[0] * J[0] + G[3] * J[3] + G[4] * J[4],
+               G[0] * J[3] + G[3] * J[1] + G[4] * J[5],
+               G[0] * J[4] + G[4] * J[2] + G[3] * J[5],
+               G[3] * J[0] + G[1] * J[3] + G[5] * J[4],
+               G[1] * J[1] + G[3] * J[3] + G[5] * J[5],
+               G[1] * J[5] + G[3] * J[4] + G[5] * J[2],
+               G[4] * J[0] + G[2] * J[4] + G[5] * J[3],
+               G[5] * J[1] + G[2] * J[5] + G[4] * J[3],
+               G[2] * J[2] + G[4] * J[4] + G[5] * J[5]}};
+}
+
+static inline GenM invertGen(const GenM S) {
+  const Real detS = S[0] * S[4] * S[8] - S[0] * S[5] * S[7] +
+                    S[1] * S[5] * S[6] - S[1] * S[3] * S[8] +
+                    S[2] * S[3] * S[7] - S[2] * S[4] * S[6];
+  if (std::fabs(detS) <= std::numeric_limits<Real>::min()) // really zero
+  {
+    return GenM{{0, 0, 0, 0, 0, 0, 0, 0, 0}};
+  } else {
+    return GenM{{(S[4] * S[8] - S[5] * S[7]) / detS,
+                 -(S[1] * S[8] - S[2] * S[7]) / detS,
+                 (S[1] * S[5] - S[2] * S[4]) / detS,
+                 -(S[3] * S[8] - S[5] * S[6]) / detS,
+                 (S[0] * S[8] - S[2] * S[6]) / detS,
+                 -(S[0] * S[5] - S[2] * S[3]) / detS,
+                 (S[3] * S[7] - S[4] * S[6]) / detS,
+                 -(S[0] * S[7] - S[1] * S[6]) / detS,
+                 (S[0] * S[4] - S[1] * S[3]) / detS}};
+  }
+}
+
+static inline GenM multGens(const GenM S, const GenM G) {
+  return GenM{{G[0] * S[0] + G[3] * S[1] + G[6] * S[2],
+               G[1] * S[0] + G[4] * S[1] + G[7] * S[2],
+               G[2] * S[0] + G[5] * S[1] + G[8] * S[2],
+               G[0] * S[3] + G[3] * S[4] + G[6] * S[5],
+               G[1] * S[3] + G[4] * S[4] + G[7] * S[5],
+               G[2] * S[3] + G[5] * S[4] + G[8] * S[5],
+               G[0] * S[6] + G[3] * S[7] + G[6] * S[8],
+               G[1] * S[6] + G[4] * S[7] + G[7] * S[8],
+               G[2] * S[6] + G[5] * S[7] + G[8] * S[8]}};
+}
+CubismUP_3D_NAMESPACE_END
+
+
+CubismUP_3D_NAMESPACE_BEGIN
+
+    class CreateObstacles : public Operator {
+public:
+  CreateObstacles(SimulationData &s) : Operator(s) {}
+
+  void operator()(const Real dt);
+
+  std::string getName() { return "CreateObstacles"; }
+};
+
+CubismUP_3D_NAMESPACE_END
+#ifndef CubismUP_3D_ObstaclesUpdate_h
+#define CubismUP_3D_ObstaclesUpdate_h
+
+CubismUP_3D_NAMESPACE_BEGIN
+
+    class UpdateObstacles : public Operator {
+public:
+  UpdateObstacles(SimulationData &s) : Operator(s) {}
+
+  void operator()(const Real dt);
+
+  std::string getName() { return "UpdateObstacles Vel"; }
+};
+
+CubismUP_3D_NAMESPACE_END
+#endif // CubismUP_3D_ObstaclesUpdate_h
+#ifndef CubismUP_3D_Penalization_h
+#define CubismUP_3D_Penalization_h
+CubismUP_3D_NAMESPACE_BEGIN
+
+    class Penalization : public Operator {
+public:
+  Penalization(SimulationData &s);
+
+  void operator()(const Real dt);
+
+  void preventCollidingObstacles() const;
+
+  std::string getName() { return "Penalization"; }
+};
+
+CubismUP_3D_NAMESPACE_END
+#endif // CubismUP_3D_Penalization_h
+
+namespace cubismup3d {
+namespace poisson_kernels {
+
+static constexpr int NX = ScalarBlock::sizeX;
+static constexpr int NY = ScalarBlock::sizeY;
+static constexpr int NZ = ScalarBlock::sizeZ;
+static constexpr int N = NX * NY * NZ;
+using Block = Real[NZ][NY][NX];
+
+// Assuming NX == 8, pad not with +/-1 but with +/-4 to reduce the number of
+// unaligned memory accesses, which are up to 2x slower than aligned ones.
+static constexpr int xPad = 4;
+using PaddedBlock = Real[NZ + 2][NY + 2][NX + 2 * xPad];
+
+template <int N> static inline Real sum(const Real (&a)[N]) {
+  Real s = 0;
+  for (int ix = 0; ix < N; ++ix)
+    s += a[ix];
+  return s;
+}
+
+// Simple implementation of the kernel.
+Real kernelPoissonGetZInnerReference(PaddedBlock &__restrict__ p_,
+                                     Block &__restrict__ Ax_,
+                                     Block &__restrict__ r_,
+                                     Block &__restrict__ block_,
+                                     const Real sqrNorm0, const Real rr);
+
+// Optimized implementation. See the alignment requirements in the code!
+Real kernelPoissonGetZInner(PaddedBlock &p, const Real *pW, const Real *pE,
+                            Block &__restrict__ Ax, Block &__restrict__ r,
+                            Block &__restrict__ block, Real sqrNorm0, Real rr);
+
+void getZImplParallel(const std::vector<cubism::BlockInfo> &vInfo);
+
+} // namespace poisson_kernels
+} // namespace cubismup3d
+
+namespace cubismup3d {
+
+class ComputeLHS : public Operator {
+  struct KernelLHSPoisson {
+    const SimulationData &sim;
+    KernelLHSPoisson(const SimulationData &s) : sim(s) {}
+    const std::vector<BlockInfo> &lhsInfo = sim.lhsInfo();
+    const int Nx = ScalarBlock::sizeX;
+    const int Ny = ScalarBlock::sizeY;
+    const int Nz = ScalarBlock::sizeZ;
+    const StencilInfo stencil{-1, -1, -1, 2, 2, 2, false, {0}};
+
+    void operator()(const ScalarLab &lab, const BlockInfo &info) const {
+      ScalarBlock &__restrict__ o = (*sim.lhs)(info.blockID);
+      const Real h = info.h;
+      for (int z = 0; z < Nz; ++z)
+        for (int y = 0; y < Ny; ++y)
+          for (int x = 0; x < Nx; ++x) {
+#ifdef PRESERVE_SYMMETRY
+            o(x, y, z).s =
+                h * (ConsistentSum(lab(x - 1, y, z).s + lab(x + 1, y, z).s,
+                                   lab(x, y - 1, z).s + lab(x, y + 1, z).s,
+                                   lab(x, y, z - 1).s + lab(x, y, z + 1).s) -
+                     6.0 * lab(x, y, z).s);
+#else
+            o(x, y, z) =
+                h * (lab(x - 1, y, z) + lab(x + 1, y, z) + lab(x, y - 1, z) +
+                     lab(x, y + 1, z) + lab(x, y, z - 1) + lab(x, y, z + 1) -
+                     6.0 * lab(x, y, z));
+#endif
+          }
+
+      BlockCase<ScalarBlock> *tempCase =
+          (BlockCase<ScalarBlock> *)(lhsInfo[info.blockID].auxiliary);
+
+      if (tempCase == nullptr)
+        return; // no flux corrections needed for this block
+
+      ScalarElement *const faceXm =
+          tempCase->storedFace[0] ? &tempCase->m_pData[0][0] : nullptr;
+      ScalarElement *const faceXp =
+          tempCase->storedFace[1] ? &tempCase->m_pData[1][0] : nullptr;
+      ScalarElement *const faceYm =
+          tempCase->storedFace[2] ? &tempCase->m_pData[2][0] : nullptr;
+      ScalarElement *const faceYp =
+          tempCase->storedFace[3] ? &tempCase->m_pData[3][0] : nullptr;
+      ScalarElement *const faceZm =
+          tempCase->storedFace[4] ? &tempCase->m_pData[4][0] : nullptr;
+      ScalarElement *const faceZp =
+          tempCase->storedFace[5] ? &tempCase->m_pData[5][0] : nullptr;
+
+      if (faceXm != nullptr) {
+        const int x = 0;
+        for (int z = 0; z < Nz; ++z)
+          for (int y = 0; y < Ny; ++y)
+            faceXm[y + Ny * z] = h * (lab(x, y, z) - lab(x - 1, y, z));
+      }
+      if (faceXp != nullptr) {
+        const int x = Nx - 1;
+        for (int z = 0; z < Nz; ++z)
+          for (int y = 0; y < Ny; ++y)
+            faceXp[y + Ny * z] = h * (lab(x, y, z) - lab(x + 1, y, z));
+      }
+      if (faceYm != nullptr) {
+        const int y = 0;
+        for (int z = 0; z < Nz; ++z)
+          for (int x = 0; x < Nx; ++x)
+            faceYm[x + Nx * z] = h * (lab(x, y, z) - lab(x, y - 1, z));
+      }
+      if (faceYp != nullptr) {
+        const int y = Ny - 1;
+        for (int z = 0; z < Nz; ++z)
+          for (int x = 0; x < Nx; ++x)
+            faceYp[x + Nx * z] = h * (lab(x, y, z) - lab(x, y + 1, z));
+      }
+      if (faceZm != nullptr) {
+        const int z = 0;
+        for (int y = 0; y < Ny; ++y)
+          for (int x = 0; x < Nx; ++x)
+            faceZm[x + Nx * y] = h * (lab(x, y, z) - lab(x, y, z - 1));
+      }
+      if (faceZp != nullptr) {
+        const int z = Nz - 1;
+        for (int y = 0; y < Ny; ++y)
+          for (int x = 0; x < Nx; ++x)
+            faceZp[x + Nx * y] = h * (lab(x, y, z) - lab(x, y, z + 1));
+      }
+    }
+  };
+
+public:
+  ComputeLHS(SimulationData &s) : Operator(s) {}
+  void operator()(const Real dt) {
+    Real avgP = 0;
+    int index = -1;
+    MPI_Request request;
+
+    const std::vector<BlockInfo> &vInfo_lhs = sim.lhsInfo();
+    const std::vector<BlockInfo> &vInfo_z = sim.presInfo();
+    const int Nx = ScalarBlock::sizeX;
+    const int Ny = ScalarBlock::sizeY;
+    const int Nz = ScalarBlock::sizeZ;
+
+    if (sim.bMeanConstraint <= 2 && sim.bMeanConstraint > 0) {
+#pragma omp parallel for reduction(+ : avgP)
+      for (size_t i = 0; i < vInfo_z.size(); ++i) {
+        const ScalarBlock &__restrict__ Z = (*sim.pres)(i);
+        const Real h3 = vInfo_z[i].h * vInfo_z[i].h * vInfo_z[i].h;
+        if (vInfo_z[i].index[0] == 0 && vInfo_z[i].index[1] == 0 &&
+            vInfo_z[i].index[2] == 0)
+          index = i;
+        for (int z = 0; z < Nz; ++z)
+          for (int y = 0; y < Ny; ++y)
+            for (int x = 0; x < Nx; ++x)
+              avgP += Z(x, y, z).s * h3;
+      }
+      MPI_Iallreduce(MPI_IN_PLACE, &avgP, 1, MPI_Real, MPI_SUM, sim.comm,
+                     &request);
+    }
+
+    compute<ScalarLab>(KernelLHSPoisson(sim), sim.pres, sim.lhs);
+
+    if (sim.bMeanConstraint == 0)
+      return;
+
+    if (sim.bMeanConstraint <= 2 && sim.bMeanConstraint > 0) {
+      MPI_Waitall(1, &request, MPI_STATUSES_IGNORE);
+      if (sim.bMeanConstraint == 1 && index != -1) {
+        ScalarBlock &__restrict__ LHS = (*sim.lhs)(index);
+        LHS(0, 0, 0).s = avgP;
+      } else if (sim.bMeanConstraint == 2) {
+#pragma omp parallel for
+        for (size_t i = 0; i < vInfo_lhs.size(); ++i) {
+          ScalarBlock &__restrict__ LHS = (*sim.lhs)(i);
+          const Real h3 = vInfo_lhs[i].h * vInfo_lhs[i].h * vInfo_lhs[i].h;
+          for (int z = 0; z < Nz; ++z)
+            for (int y = 0; y < Ny; ++y)
+              for (int x = 0; x < Nx; ++x)
+                LHS(x, y, z).s += avgP * h3;
+        }
+      }
+    } else // > 2
+    {
+#pragma omp parallel for
+      for (size_t i = 0; i < vInfo_lhs.size(); ++i) {
+        ScalarBlock &__restrict__ LHS = (*sim.lhs)(i);
+        const ScalarBlock &__restrict__ Z = (*sim.pres)(i);
+        if (vInfo_lhs[i].index[0] == 0 && vInfo_lhs[i].index[1] == 0 &&
+            vInfo_lhs[i].index[2] == 0)
+          LHS(0, 0, 0).s = Z(0, 0, 0).s;
+      }
+    }
+  }
+  std::string getName() { return "ComputeLHS"; }
+};
+
+class PoissonSolverAMR : public PoissonSolverBase {
+protected:
+  SimulationData &sim;
+  ComputeLHS findLHS;
+
+#if 1
+  void _preconditioner(const std::vector<Real> &input,
+                       std::vector<Real> &output) {
+    auto &zInfo = sim.pres->getBlocksInfo(); // used for preconditioning
+    const size_t Nblocks = zInfo.size();
+    const int BSX = VectorBlock::sizeX;
+    const int BSY = VectorBlock::sizeY;
+    const int BSZ = VectorBlock::sizeZ;
+
+#pragma omp parallel for
+    for (size_t i = 0; i < Nblocks; i++) {
+      ScalarBlock &__restrict__ bb = (*sim.pres)(i);
+      for (int iz = 0; iz < BSZ; iz++)
+        for (int iy = 0; iy < BSY; iy++)
+          for (int ix = 0; ix < BSX; ix++) {
+            const int j = i * BSX * BSY * BSZ + iz * BSX * BSY + iy * BSX + ix;
+            bb(ix, iy, iz).s = input[j];
+          }
+    }
+
+#pragma omp parallel
+    { cubismup3d::poisson_kernels::getZImplParallel(sim.presInfo()); }
+
+#pragma omp parallel for
+    for (size_t i = 0; i < Nblocks; i++) {
+      const ScalarBlock &__restrict__ bb = (*sim.pres)(i);
+      for (int iz = 0; iz < BSZ; iz++)
+        for (int iy = 0; iy < BSY; iy++)
+          for (int ix = 0; ix < BSX; ix++) {
+            const int j = i * BSX * BSY * BSZ + iz * BSX * BSY + iy * BSX + ix;
+            output[j] = bb(ix, iy, iz).s;
+            ;
+          }
+    }
+  }
+
+  void _lhs(std::vector<Real> &input, std::vector<Real> &output) {
+    auto &zInfo = sim.pres->getBlocksInfo(); // used for preconditioning
+    auto &AxInfo = sim.lhs->getBlocksInfo(); // will store the LHS result
+    const size_t Nblocks = zInfo.size();
+    const int BSX = VectorBlock::sizeX;
+    const int BSY = VectorBlock::sizeY;
+    const int BSZ = VectorBlock::sizeZ;
+
+#pragma omp parallel for
+    for (size_t i = 0; i < Nblocks; i++) {
+      ScalarBlock &__restrict__ zz = *(ScalarBlock *)zInfo[i].ptrBlock;
+      for (int iz = 0; iz < BSZ; iz++)
+        for (int iy = 0; iy < BSY; iy++)
+          for (int ix = 0; ix < BSX; ix++) {
+            const int j = i * BSX * BSY * BSZ + iz * BSX * BSY + iy * BSX + ix;
+            zz(ix, iy, iz).s = input[j];
+          }
+    }
+
+    findLHS(0);
+
+#pragma omp parallel for
+    for (size_t i = 0; i < Nblocks; i++) {
+      ScalarBlock &__restrict__ Ax = *(ScalarBlock *)AxInfo[i].ptrBlock;
+      for (int iz = 0; iz < BSZ; iz++)
+        for (int iy = 0; iy < BSY; iy++)
+          for (int ix = 0; ix < BSX; ix++) {
+            const int j = i * BSX * BSY * BSZ + iz * BSX * BSY + iy * BSX + ix;
+            output[j] = Ax(ix, iy, iz).s;
+          }
+    }
+  }
+
+  std::vector<Real> b;
+  std::vector<Real> phat;
+  std::vector<Real> rhat;
+  std::vector<Real> shat;
+  std::vector<Real> what;
+  std::vector<Real> zhat;
+  std::vector<Real> qhat;
+  std::vector<Real> s;
+  std::vector<Real> w;
+  std::vector<Real> z;
+  std::vector<Real> t;
+  std::vector<Real> v;
+  std::vector<Real> q;
+  std::vector<Real> r;
+  std::vector<Real> y;
+  std::vector<Real> x;
+  std::vector<Real> r0;
+  std::vector<Real> x_opt;
+
+#else // non-pipelined version
+
+  void getZ() {
+#pragma omp parallel
+    { cubismup3d::poisson_kernels::getZImplParallel(sim.presInfo()); }
+  }
+  std::vector<Real> x;
+  std::vector<Real> r;
+  std::vector<Real> p;
+  std::vector<Real> v;
+  std::vector<Real> s;
+  std::vector<Real> rhat;
+
+  size_t _dest(const BlockInfo &info, const int iz, const int iy,
+               const int ix) const {
+    return BlockType::sizeX *
+               (BlockType::sizeY * (info.blockID * BlockType::sizeZ + iz) +
+                iy) +
+           ix;
+  }
+
+#endif
+
+public:
+  PoissonSolverAMR(SimulationData &ss) : sim(ss), findLHS(ss) {}
+  PoissonSolverAMR(const PoissonSolverAMR &c) = delete;
+  void solve();
+};
+
+} // namespace cubismup3d
+
+
+
+CubismUP_3D_NAMESPACE_BEGIN
+
+    class PoissonSolverBase;
+
+class PressureProjection : public Operator {
+protected:
+  // Alias of sim.pressureSolver.
+  std::shared_ptr<PoissonSolverBase> pressureSolver;
+  std::vector<Real> pOld;
+
+public:
+  PressureProjection(SimulationData &s);
+  ~PressureProjection() = default;
+
+  void operator()(Real dt) override;
+
+  std::string getName() { return "PressureProjection"; }
+};
+
+CubismUP_3D_NAMESPACE_END
+
+
+
+namespace cubism {
+
+const bool bVerboseProfiling = false;
+
+class ProfileAgent {
+  //	typedef tbb::tick_count ClockTime;
+  typedef timeval ClockTime;
+
+  enum ProfileAgentState {
+    ProfileAgentState_Created,
+    ProfileAgentState_Started,
+    ProfileAgentState_Stopped
+  };
+
+  ClockTime m_tStart, m_tEnd;
+  ProfileAgentState m_state;
+  long double m_dAccumulatedTime;
+  int m_nMeasurements;
+  int m_nMoney;
+
+  static void _getTime(ClockTime &time) {
+    // time = tick_count::now();
+    gettimeofday(&time, NULL);
+  }
+
+  static double _getElapsedTime(const ClockTime &tS, const ClockTime &tE) {
+    return (tE.tv_sec - tS.tv_sec) + 1e-6 * (tE.tv_usec - tS.tv_usec);
+    // return (tE - tS).seconds();
+  }
+
+  void _reset() {
+    m_tStart = ClockTime();
+    m_tEnd = ClockTime();
+    m_dAccumulatedTime = 0;
+    m_nMeasurements = 0;
+    m_nMoney = 0;
+    m_state = ProfileAgentState_Created;
+  }
+
+public:
+  ProfileAgent()
+      : m_tStart(), m_tEnd(), m_state(ProfileAgentState_Created),
+        m_dAccumulatedTime(0), m_nMeasurements(0), m_nMoney(0) {}
+
+  void start() {
+    assert(m_state == ProfileAgentState_Created ||
+           m_state == ProfileAgentState_Stopped);
+
+    if (bVerboseProfiling) {
+      printf("start\n");
+    }
+
+    _getTime(m_tStart);
+
+    m_state = ProfileAgentState_Started;
+  }
+
+  void stop(int nMoney = 0) {
+    assert(m_state == ProfileAgentState_Started);
+
+    if (bVerboseProfiling) {
+      printf("stop\n");
+    }
+
+    _getTime(m_tEnd);
+    m_dAccumulatedTime += _getElapsedTime(m_tStart, m_tEnd);
+    m_nMeasurements++;
+    m_nMoney += nMoney;
+    m_state = ProfileAgentState_Stopped;
+  }
+
+  friend class Profiler;
+};
+
+struct ProfileSummaryItem {
+  std::string sName;
+  double dTime;
+  int nMoney;
+  int nSamples;
+  double dAverageTime;
+
+  ProfileSummaryItem(std::string sName_, double dTime_, int nMoney_,
+                     int nSamples_)
+      : sName(sName_), dTime(dTime_), nMoney(nMoney_), nSamples(nSamples_),
+        dAverageTime(dTime_ / nSamples_) {}
+};
+
+class Profiler {
+protected:
+  std::map<std::string, ProfileAgent *> m_mapAgents;
+  std::stack<std::string> m_mapStoppedAgents;
+
+public:
+  void push_start(std::string sAgentName) {
+    if (m_mapStoppedAgents.size() > 0)
+      getAgent(m_mapStoppedAgents.top()).stop();
+
+    m_mapStoppedAgents.push(sAgentName);
+    getAgent(sAgentName).start();
+  }
+
+  void pop_stop() {
+    std::string sCurrentAgentName = m_mapStoppedAgents.top();
+    getAgent(sCurrentAgentName).stop();
+    m_mapStoppedAgents.pop();
+
+    if (m_mapStoppedAgents.size() == 0)
+      return;
+
+    getAgent(m_mapStoppedAgents.top()).start();
+  }
+
+  void clear() {
+    for (std::map<std::string, ProfileAgent *>::iterator it =
+             m_mapAgents.begin();
+         it != m_mapAgents.end(); it++) {
+      delete it->second;
+
+      it->second = NULL;
+    }
+
+    m_mapAgents.clear();
+  }
+
+  Profiler() : m_mapAgents() {}
+
+  ~Profiler() { clear(); }
+
+  void printSummary(FILE *outFile = NULL) const {
+    std::vector<ProfileSummaryItem> v = createSummary();
+
+    double dTotalTime = 0;
+    double dTotalTime2 = 0;
+    for (std::vector<ProfileSummaryItem>::const_iterator it = v.begin();
+         it != v.end(); it++)
+      dTotalTime += it->dTime;
+
+    for (std::vector<ProfileSummaryItem>::const_iterator it = v.begin();
+         it != v.end(); it++)
+      dTotalTime2 += it->dTime - it->nSamples * 1.30e-6;
+
+    for (std::vector<ProfileSummaryItem>::const_iterator it = v.begin();
+         it != v.end(); it++) {
+      const ProfileSummaryItem &item = *it;
+      const double avgTime = item.dAverageTime;
+
+      printf("[%15s]: \t%02.0f-%02.0f%%\t%03.3e (%03.3e) s\t%03.3f (%03.3f) "
+             "s\t(%d samples)\n",
+             item.sName.data(), 100 * item.dTime / dTotalTime,
+             100 * (item.dTime - item.nSamples * 1.3e-6) / dTotalTime2, avgTime,
+             avgTime - 1.30e-6, item.dTime,
+             item.dTime - item.nSamples * 1.30e-6, item.nSamples);
+      if (outFile)
+        fprintf(outFile, "[%15s]: \t%02.2f%%\t%03.3f s\t(%d samples)\n",
+
+                item.sName.data(), 100 * item.dTime / dTotalTime, avgTime,
+                item.nSamples);
+    }
+
+    printf("[Total time]: \t%f\n", dTotalTime);
+    if (outFile)
+      fprintf(outFile, "[Total time]: \t%f\n", dTotalTime);
+    if (outFile)
+      fflush(outFile);
+    if (outFile)
+      fclose(outFile);
+  }
+
+  std::vector<ProfileSummaryItem>
+  createSummary(bool bSkipIrrelevantEntries = true) const {
+    std::vector<ProfileSummaryItem> result;
+    result.reserve(m_mapAgents.size());
+
+    for (std::map<std::string, ProfileAgent *>::const_iterator it =
+             m_mapAgents.begin();
+         it != m_mapAgents.end(); it++) {
+      const ProfileAgent &agent = *it->second;
+      if (!bSkipIrrelevantEntries || agent.m_dAccumulatedTime > 1e-3)
+        result.push_back(ProfileSummaryItem(it->first, agent.m_dAccumulatedTime,
+                                            agent.m_nMoney,
+                                            agent.m_nMeasurements));
+    }
+
+    return result;
+  }
+
+  void reset() {
+    // printf("reset\n");
+    for (std::map<std::string, ProfileAgent *>::const_iterator it =
+             m_mapAgents.begin();
+         it != m_mapAgents.end(); it++)
+      it->second->_reset();
+  }
+
+  ProfileAgent &getAgent(std::string sName) {
+    if (bVerboseProfiling) {
+      printf("%s ", sName.data());
+    }
+
+    std::map<std::string, ProfileAgent *>::const_iterator it =
+        m_mapAgents.find(sName);
+
+    const bool bFound = it != m_mapAgents.end();
+
+    if (bFound)
+      return *it->second;
+
+    ProfileAgent *agent = new ProfileAgent();
+
+    m_mapAgents[sName] = agent;
+
+    return *agent;
+  }
+
+  friend class ProfileAgent;
+};
+
+} // namespace cubism
 
 namespace fs = std::filesystem;
 
