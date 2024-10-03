@@ -10173,8 +10173,6 @@ public:
   void computeVorticity();
   void insertOperator(std::shared_ptr<Operator> op);
 };
-std::shared_ptr<Simulation>
-createSimulation(MPI_Comm comm, const std::vector<std::string> &argv);
 } // namespace cubismup3d
 namespace cubismup3d {
 struct KernelAdvectDiffuse {
@@ -17619,15 +17617,6 @@ void PressureProjection::operator()(const Real dt) {
 } // namespace cubismup3d
 namespace cubismup3d {
 using namespace cubism;
-std::shared_ptr<Simulation>
-createSimulation(const MPI_Comm comm, const std::vector<std::string> &argv) {
-  std::vector<char *> cargv(argv.size() + 1);
-  char cmd[] = "prg";
-  cargv[0] = cmd;
-  for (size_t i = 0; i < argv.size(); ++i)
-    cargv[i + 1] = const_cast<char *>(argv[i].data());
-  return std::make_shared<Simulation>((int)cargv.size(), cargv.data(), comm);
-}
 Simulation::Simulation(int argc, char **argv, MPI_Comm comm)
     : parser(argc, argv), sim(comm, parser) {
   if (sim.verbose) {
