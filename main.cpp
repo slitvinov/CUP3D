@@ -311,8 +311,6 @@ public:
     return retval;
   }
 };
-
-namespace cubism {
 enum State : signed char { Leave = 0, Refine = 1, Compress = -1 };
 struct TreePosition {
   int position{-3};
@@ -421,7 +419,6 @@ struct BlockInfo {
     return Znei[1 + i][1 + j][1 + k];
   }
 };
-} // namespace cubism
 namespace cubism {
 template <typename BlockType,
           typename ElementType = typename BlockType::ElementType>
@@ -5502,8 +5499,8 @@ void compute(Kernel &&kernel, TGrid *g, TGrid_corr *g_corr = nullptr) {
     g_corr->Corrector.prepare(*g_corr);
   cubism::SynchronizerMPI_AMR<typename TGrid::Real, TGrid> &Synch =
       *(g->sync(kernel.stencil));
-  std::vector<cubism::BlockInfo *> *inner = &Synch.avail_inner();
-  std::vector<cubism::BlockInfo *> *halo_next;
+  std::vector<BlockInfo *> *inner = &Synch.avail_inner();
+  std::vector<BlockInfo *> *halo_next;
   bool done = false;
 #pragma omp parallel
   {
@@ -5531,14 +5528,14 @@ void compute(Kernel &&kernel, TGrid *g, TGrid_corr *g_corr = nullptr) {
       }
     }
 #else
-    std::vector<cubism::BlockInfo> &blk = g->getBlocksInfo();
+    std::vector<BlockInfo> &blk = g->getBlocksInfo();
     std::vector<bool> ready(blk.size(), false);
-    std::vector<cubism::BlockInfo *> &avail1 = Synch.avail_halo_nowait();
+    std::vector<BlockInfo *> &avail1 = Synch.avail_halo_nowait();
     const int Nhalo = avail1.size();
     while (done == false) {
       done = true;
       for (int i = 0; i < Nhalo; i++) {
-        const cubism::BlockInfo &I = *avail1[i];
+        const BlockInfo &I = *avail1[i];
         if (ready[I.blockID] == false) {
           if (Synch.isready(I)) {
             ready[I.blockID] = true;
@@ -5579,13 +5576,13 @@ static void compute(const Kernel &kernel, TGrid &grid, TGrid2 &grid2,
       *grid2.sync(kernel2.stencil);
   const StencilInfo &stencil = Synch.getstencil();
   const StencilInfo &stencil2 = Synch2.getstencil();
-  std::vector<cubism::BlockInfo> &blk = grid.getBlocksInfo();
+  std::vector<BlockInfo> &blk = grid.getBlocksInfo();
   std::vector<bool> ready(blk.size(), false);
   std::vector<BlockInfo *> &avail0 = Synch.avail_inner();
   std::vector<BlockInfo *> &avail02 = Synch2.avail_inner();
   const int Ninner = avail0.size();
-  std::vector<cubism::BlockInfo *> avail1;
-  std::vector<cubism::BlockInfo *> avail12;
+  std::vector<BlockInfo *> avail1;
+  std::vector<BlockInfo *> avail12;
 #pragma omp parallel
   {
     LabMPI lab;
@@ -5611,8 +5608,8 @@ static void compute(const Kernel &kernel, TGrid &grid, TGrid2 &grid2,
     const int Nhalo = avail1.size();
 #pragma omp for
     for (int i = 0; i < Nhalo; i++) {
-      const cubism::BlockInfo &I = *avail1[i];
-      const cubism::BlockInfo &I2 = *avail12[i];
+      const BlockInfo &I = *avail1[i];
+      const BlockInfo &I2 = *avail12[i];
       lab.load(I, 0);
       lab2.load(I2, 0);
       kernel(lab, lab2, I, I2);
@@ -5631,8 +5628,8 @@ static void compute(const Kernel &kernel, TGrid &grid, TGrid2 &grid2,
       done = true;
 #pragma omp for
       for (int i = 0; i < Nhalo; i++) {
-        const cubism::BlockInfo &I = *avail1[i];
-        const cubism::BlockInfo &I2 = *avail12[i];
+        const BlockInfo &I = *avail1[i];
+        const BlockInfo &I2 = *avail12[i];
         if (ready[I.blockID] == false) {
           bool blockready;
 #pragma omp critical
@@ -5965,7 +5962,7 @@ public:
   BlockLabNeumann() = default;
   BlockLabNeumann(const BlockLabNeumann &) = delete;
   BlockLabNeumann &operator=(const BlockLabNeumann &) = delete;
-  void _apply_bc(const cubism::BlockInfo &info, const Real t = 0,
+  void _apply_bc(const BlockInfo &info, const Real t = 0,
                  const bool coarse = false) override {
     if (DIM == 2) {
       if (info.index[0] == 0)
@@ -6432,7 +6429,7 @@ public:
   BlockLabBC() = default;
   BlockLabBC(const BlockLabBC &) = delete;
   BlockLabBC &operator=(const BlockLabBC &) = delete;
-  void _apply_bc(const cubism::BlockInfo &info, const Real t = 0,
+  void _apply_bc(const BlockInfo &info, const Real t = 0,
                  const bool coarse = false) {
     const BCflag BCX = cubismBCX;
     const BCflag BCY = cubismBCY;
@@ -6480,7 +6477,7 @@ public:
   virtual bool is_xperiodic() override { return cubismBCX == periodic; }
   virtual bool is_yperiodic() override { return cubismBCY == periodic; }
   virtual bool is_zperiodic() override { return cubismBCZ == periodic; }
-  void _apply_bc(const cubism::BlockInfo &info, const Real t = 0,
+  void _apply_bc(const BlockInfo &info, const Real t = 0,
                  const bool coarse = false) override {
     if (is_xperiodic() == false) {
       if (info.index[0] == 0)
@@ -6571,19 +6568,19 @@ struct SimulationData {
   VectorAMR *vel_amr;
   VectorAMR *tmpV_amr;
   ScalarAMR *lhs_amr;
-  inline std::vector<cubism::BlockInfo> &chiInfo() const {
+  inline std::vector<BlockInfo> &chiInfo() const {
     return chi->getBlocksInfo();
   }
-  inline std::vector<cubism::BlockInfo> &presInfo() const {
+  inline std::vector<BlockInfo> &presInfo() const {
     return pres->getBlocksInfo();
   }
-  inline std::vector<cubism::BlockInfo> &velInfo() const {
+  inline std::vector<BlockInfo> &velInfo() const {
     return vel->getBlocksInfo();
   }
-  inline std::vector<cubism::BlockInfo> &tmpVInfo() const {
+  inline std::vector<BlockInfo> &tmpVInfo() const {
     return tmpV->getBlocksInfo();
   }
-  inline std::vector<cubism::BlockInfo> &lhsInfo() const {
+  inline std::vector<BlockInfo> &lhsInfo() const {
     return lhs->getBlocksInfo();
   }
   ObstacleVector *obstacle_vector = nullptr;
@@ -6696,7 +6693,7 @@ Real kernelDiffusionGetZInner(PaddedBlock &p, const Real *pW, const Real *pE,
                               Block &__restrict__ Ax, Block &__restrict__ r,
                               Block &__restrict__ block, Real sqrNorm0, Real rr,
                               const Real coefficient);
-void getZImplParallel(const std::vector<cubism::BlockInfo> &vInfo,
+void getZImplParallel(const std::vector<BlockInfo> &vInfo,
                       const Real nu, const Real dt);
 } // namespace diffusion_kernels
 } // namespace cubismup3d
@@ -7565,11 +7562,11 @@ public:
       delete entry;
       entry = nullptr;
     }
-    std::vector<cubism::BlockInfo> &chiInfo = sim.chiInfo();
+    std::vector<BlockInfo> &chiInfo = sim.chiInfo();
     obstacleBlocks.resize(chiInfo.size(), nullptr);
 #pragma omp parallel for schedule(dynamic, 1)
     for (size_t i = 0; i < chiInfo.size(); i++) {
-      const cubism::BlockInfo &info = chiInfo[i];
+      const BlockInfo &info = chiInfo[i];
       const ScalarBlock &b = *(ScalarBlock *)info.ptrBlock;
       if (kernel.isTouching(info, b)) {
         assert(obstacleBlocks[info.blockID] == nullptr);
@@ -8338,7 +8335,7 @@ namespace cubismup3d {
 template <typename Derived> struct FillBlocksBase {
   using CHIMAT =
       Real[ScalarBlock::sizeZ][ScalarBlock::sizeY][ScalarBlock::sizeX];
-  void operator()(const cubism::BlockInfo &info, ObstacleBlock *const o) const {
+  void operator()(const BlockInfo &info, ObstacleBlock *const o) const {
     ScalarBlock &b = *(ScalarBlock *)info.ptrBlock;
     if (!derived()->isTouching(info, b))
       return;
@@ -8570,7 +8567,7 @@ class InitialConditions : public Operator {
 public:
   InitialConditions(SimulationData &s) : Operator(s) {}
   template <typename K> inline void run(const K kernel) {
-    std::vector<cubism::BlockInfo> &vInfo = sim.velInfo();
+    std::vector<BlockInfo> &vInfo = sim.velInfo();
 #pragma omp parallel for schedule(static)
     for (size_t i = 0; i < vInfo.size(); i++)
       kernel(vInfo[i], *(VectorBlock *)vInfo[i].ptrBlock);
@@ -8674,7 +8671,7 @@ struct KernelVorticity {
   const int Ny = VectorBlock::sizeY;
   const int Nz = VectorBlock::sizeZ;
   void operator()(const VectorLab &lab, const BlockInfo &info) const {
-    const cubism::BlockInfo &info2 = vInfo[info.blockID];
+    const BlockInfo &info2 = vInfo[info.blockID];
     VectorBlock &o = *(VectorBlock *)info2.ptrBlock;
     const Real inv2h = .5 * info.h * info.h;
     for (int z = 0; z < Nz; ++z)
@@ -8795,8 +8792,8 @@ public:
   const std::array<int, 3> stencil_start = {-1, -1, -1},
                            stencil_end = {2, 2, 2};
   const cubism::StencilInfo stencil{-1, -1, -1, 2, 2, 2, false, {0, 1, 2}};
-  const std::vector<cubism::BlockInfo> &vInfo = sim.presInfo();
-  void operator()(VectorLab &lab, const cubism::BlockInfo &info) const {
+  const std::vector<BlockInfo> &vInfo = sim.presInfo();
+  void operator()(VectorLab &lab, const BlockInfo &info) const {
     ScalarBlock &o = *(ScalarBlock *)vInfo[info.blockID].ptrBlock;
     const Real inv2h = .5 / info.h;
     for (int iz = 0; iz < ScalarBlock::sizeZ; ++iz)
@@ -8839,9 +8836,9 @@ public:
   const std::array<int, 3> stencil_start = {-1, -1, -1},
                            stencil_end = {2, 2, 2};
   const cubism::StencilInfo stencil{-1, -1, -1, 2, 2, 2, false, {0, 1, 2}};
-  const std::vector<cubism::BlockInfo> &vInfo = sim.tmpVInfo();
-  const std::vector<cubism::BlockInfo> &chiInfo = sim.chiInfo();
-  void operator()(VectorLab &lab, const cubism::BlockInfo &info) const {
+  const std::vector<BlockInfo> &vInfo = sim.tmpVInfo();
+  const std::vector<BlockInfo> &chiInfo = sim.chiInfo();
+  void operator()(VectorLab &lab, const BlockInfo &info) const {
     VectorBlock &o = *(VectorBlock *)vInfo[info.blockID].ptrBlock;
     ScalarBlock &c = *(ScalarBlock *)chiInfo[info.blockID].ptrBlock;
     const Real fac = 0.5 * info.h * info.h;
@@ -8939,10 +8936,10 @@ public:
     const KernelDivergence K(sim);
     cubism::compute<VectorLab>(K, sim.vel, sim.chi);
     Real div_loc = 0.0;
-    const std::vector<cubism::BlockInfo> &myInfo = sim.tmpVInfo();
+    const std::vector<BlockInfo> &myInfo = sim.tmpVInfo();
 #pragma omp parallel for schedule(static) reduction(+ : div_loc)
     for (size_t i = 0; i < myInfo.size(); i++) {
-      const cubism::BlockInfo &info = myInfo[i];
+      const BlockInfo &info = myInfo[i];
       const VectorBlock &b = *(const VectorBlock *)info.ptrBlock;
       for (int iz = 0; iz < VectorBlock::sizeZ; ++iz)
         for (int iy = 0; iy < VectorBlock::sizeY; ++iy)
@@ -9269,7 +9266,7 @@ Real kernelPoissonGetZInnerReference(PaddedBlock &__restrict__ p_,
 Real kernelPoissonGetZInner(PaddedBlock &p, const Real *pW, const Real *pE,
                             Block &__restrict__ Ax, Block &__restrict__ r,
                             Block &__restrict__ block, Real sqrNorm0, Real rr);
-void getZImplParallel(const std::vector<cubism::BlockInfo> &vInfo);
+void getZImplParallel(const std::vector<BlockInfo> &vInfo);
 } // namespace poisson_kernels
 } // namespace cubismup3d
 namespace cubismup3d {
@@ -10451,7 +10448,7 @@ public:
   StencilInfo stencil{-1, -1, -1, 2, 2, 2, false, {0, 1, 2}};
   StencilInfo stencil2{-1, -1, -1, 2, 2, 2, false, {0}};
   SimulationData &sim;
-  const std::vector<cubism::BlockInfo> &chiInfo = sim.chiInfo();
+  const std::vector<BlockInfo> &chiInfo = sim.chiInfo();
   KernelDissipation(Real _dt, const Real ext[3], Real _nu, Real *RDX,
                     SimulationData &s)
       : dt(_dt), nu(_nu), center{ext[0] / 2, ext[1] / 2, ext[2] / 2}, QOI(RDX),
@@ -10635,7 +10632,7 @@ Real kernelDiffusionGetZInner(PaddedBlock &p_, const Real *pW_, const Real *pE_,
   const Real rrNew = sqrSum;
   return rrNew;
 }
-void getZImplParallel(const std::vector<cubism::BlockInfo> &vInfo,
+void getZImplParallel(const std::vector<BlockInfo> &vInfo,
                       const Real nu, const Real dt) {
   const size_t Nblocks = vInfo.size();
   struct Tmp {
@@ -10789,7 +10786,7 @@ intersect_t Fish::prepare_segPerBlock(vecsegm_t &vSegments) {
   for (size_t j = 0; j < MySegments.size(); j++)
     MySegments[j].clear();
   MySegments.clear();
-  const std::vector<cubism::BlockInfo> &chiInfo = sim.chiInfo();
+  const std::vector<BlockInfo> &chiInfo = sim.chiInfo();
   std::vector<std::vector<VolumeSegment_OBB *>> ret(chiInfo.size());
   for (auto &entry : obstacleBlocks) {
     if (entry == nullptr)
@@ -12390,7 +12387,7 @@ struct KernelComputeForces {
   StencilInfo stencil{small, small, small, big, big, big, true, {0, 1, 2}};
   StencilInfo stencil2{small, small, small, big, big, big, true, {0}};
   SimulationData &sim;
-  const std::vector<cubism::BlockInfo> &presInfo = sim.presInfo();
+  const std::vector<BlockInfo> &presInfo = sim.presInfo();
   KernelComputeForces(SimulationData &s) : sim(s) {}
   void operator()(VectorLab &lab, ScalarLab &chiLab, const BlockInfo &info,
                   const BlockInfo &info2) const {
@@ -12858,7 +12855,7 @@ void InitialConditions::operator()(const Real dt) {
     ic_vorticity.run();
   }
   {
-    std::vector<cubism::BlockInfo> &chiInfo = sim.chiInfo();
+    std::vector<BlockInfo> &chiInfo = sim.chiInfo();
 #pragma omp parallel for schedule(static)
     for (unsigned i = 0; i < chiInfo.size(); i++) {
       ScalarBlock &PRES = (*sim.pres)(i);
@@ -13631,7 +13628,7 @@ static void _kernelIntegrateUdefMomenta(SimulationData &sim,
   }
 }
 static void kernelIntegrateUdefMomenta(SimulationData &sim) {
-  const std::vector<cubism::BlockInfo> &chiInfo = sim.chiInfo();
+  const std::vector<BlockInfo> &chiInfo = sim.chiInfo();
 #pragma omp parallel for schedule(dynamic, 1)
   for (size_t i = 0; i < chiInfo.size(); ++i)
     _kernelIntegrateUdefMomenta(sim, chiInfo[i]);
@@ -13777,7 +13774,7 @@ template <bool implicitPenalization> struct KernelIntegrateFluidMomenta {
   }
   KernelIntegrateFluidMomenta(Real _dt, Real _lambda, ObstacleVector *ov)
       : lambda(_lambda), dt(_dt), obstacle_vector(ov) {}
-  void operator()(const cubism::BlockInfo &info) const {
+  void operator()(const BlockInfo &info) const {
     for (const auto &obstacle : obstacle_vector->getObstacleVector())
       visit(info, obstacle.get());
   }
@@ -13960,7 +13957,7 @@ void UpdateObstacles::operator()(const Real dt) {
   if (sim.obstacle_vector->nObstacles() == 0)
     return;
   {
-    std::vector<cubism::BlockInfo> &velInfo = sim.velInfo();
+    std::vector<BlockInfo> &velInfo = sim.velInfo();
 #pragma omp parallel
     {
       if (sim.bImplicitPenalization) {
@@ -13996,7 +13993,7 @@ struct KernelPenalization {
                      const bool _implicitPenalization, ObstacleVector *ov)
       : dt(_dt), lambda(_lambda), implicitPenalization(_implicitPenalization),
         obstacle_vector(ov) {}
-  void operator()(const cubism::BlockInfo &info,
+  void operator()(const BlockInfo &info,
                   const BlockInfo &ChiInfo) const {
     for (const auto &obstacle : obstacle_vector->getObstacleVector())
       visit(info, ChiInfo, obstacle.get());
@@ -14478,8 +14475,8 @@ void Penalization::operator()(const Real dt) {
   if (sim.obstacle_vector->nObstacles() == 0)
     return;
   preventCollidingObstacles();
-  std::vector<cubism::BlockInfo> &chiInfo = sim.chiInfo();
-  std::vector<cubism::BlockInfo> &velInfo = sim.velInfo();
+  std::vector<BlockInfo> &chiInfo = sim.chiInfo();
+  std::vector<BlockInfo> &velInfo = sim.velInfo();
 #pragma omp parallel
   {
     KernelPenalization K(dt, sim.lambda, sim.bImplicitPenalization,
@@ -14857,7 +14854,7 @@ Real kernelPoissonGetZInner(PaddedBlock &p_, const Real *pW_, const Real *pE_,
   const Real rrNew = sqrSum;
   return rrNew;
 }
-void getZImplParallel(const std::vector<cubism::BlockInfo> &vInfo) {
+void getZImplParallel(const std::vector<BlockInfo> &vInfo) {
   const size_t Nblocks = vInfo.size();
   struct Tmp {
     Block r;
@@ -16116,7 +16113,7 @@ std::vector<Real> StefanFish::state() const {
   return S;
 }
 ssize_t StefanFish::holdingBlockID(const std::array<Real, 3> pos) const {
-  const std::vector<cubism::BlockInfo> &velInfo = sim.velInfo();
+  const std::vector<BlockInfo> &velInfo = sim.velInfo();
   for (size_t i = 0; i < velInfo.size(); ++i) {
     std::array<Real, 3> MIN = velInfo[i].pos<Real>(0, 0, 0);
     std::array<Real, 3> MAX = velInfo[i].pos<Real>(
@@ -16136,7 +16133,7 @@ ssize_t StefanFish::holdingBlockID(const std::array<Real, 3> pos) const {
 };
 std::array<Real, 3>
 StefanFish::getShear(const std::array<Real, 3> pSurf) const {
-  const std::vector<cubism::BlockInfo> &velInfo = sim.velInfo();
+  const std::vector<BlockInfo> &velInfo = sim.velInfo();
   Real myF[3] = {0, 0, 0};
   ssize_t blockIdSurf = holdingBlockID(pSurf);
   if (blockIdSurf >= 0) {
