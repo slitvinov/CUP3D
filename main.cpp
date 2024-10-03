@@ -9447,7 +9447,6 @@ public:
 struct Simulation {
   ArgumentParser parser;
   SimulationData sim;
-  void initialGridRefinement();
   void setupOperators();
   void setupGrid();
   void _ic();
@@ -15168,9 +15167,6 @@ void Simulation::init() {
   sim.obstacle_vector = new ObstacleVector(sim);
   ObstacleFactory(sim).addObstacles(parser);
   (*sim.pipeline[0])(0);
-  initialGridRefinement();
-}
-void Simulation::initialGridRefinement() {
   (*sim.pipeline[0])(0);
   _ic();
   const int lmax = sim.StaticObstacles ? sim.levelMax : 3 * sim.levelMax;
