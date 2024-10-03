@@ -16340,7 +16340,6 @@ void PoissonSolverAMR::solve() {
   Real norm_1 = 0.0;
   Real norm_2 = 0.0;
   const MPI_Comm m_comm = sim.comm;
-  const bool verbose = sim.rank == 0;
   phat.resize(N);
   rhat.resize(N);
   shat.resize(N);
@@ -16528,9 +16527,6 @@ void PoissonSolverAMR::solve() {
     serious_breakdown = r0r * r0r < 1e-16 * norm_1 * norm_2;
     if (serious_breakdown && restarts < max_restarts) {
       restarts++;
-      if (verbose)
-        std::cout << "  [Poisson solver]: Restart at iteration: " << k
-                  << " norm: " << norm << std::endl;
 #pragma omp parallel for
       for (size_t i = 0; i < N; i++)
         r0[i] = r[i];
