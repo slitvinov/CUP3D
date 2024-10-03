@@ -1,10 +1,3 @@
-/*
- *  GridMPI.h
- *
- *  Created by Michalis Chatzimanolakis
- *  Copyright 2020 ETH Zurich. All rights reserved.
- *
- */
 #pragma once
 
 #include <map>

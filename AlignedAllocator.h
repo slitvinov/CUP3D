@@ -1,8 +1,6 @@
 #ifndef CubismUP_3D_aligned_allocator_h
 #define CubismUP_3D_aligned_allocator_h
 
-#include <cstdlib>
-#include <memory>
 
 CubismUP_3D_NAMESPACE_BEGIN
 

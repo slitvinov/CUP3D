@@ -39,9 +39,15 @@
 #include <fstream>
 #include <filesystem>
 #include <sys/stat.h>
+#include <cstdlib>
+#include <memory>
+#include <algorithm>
+#include <unordered_map>
 
 #include "Base.h"
 #include "AlignedAllocator.h"
+#include "BlockInfo.h"
+#include "FluxCorrection.h"
 #include "Grid.h"
 #include "GridMPI.h"
 #include "BlockInfo.h"
