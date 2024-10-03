@@ -7539,8 +7539,6 @@ public:
   virtual void computeVelocities();
   virtual void computeForces();
   virtual void update();
-  virtual void saveRestart(FILE *f);
-  virtual void loadRestart(FILE *f);
   virtual void create();
   virtual void finalize();
   std::array<Real, 3> getTranslationVelocity() const;
@@ -7607,8 +7605,6 @@ protected:
 public:
   Fish(SimulationData &s, cubism::ArgumentParser &p);
   ~Fish() override;
-  virtual void saveRestart(FILE *f) override;
-  virtual void loadRestart(FILE *f) override;
   virtual void create() override;
   FishMidlineData *myFish = nullptr;
   struct BlockID {
@@ -9066,8 +9062,6 @@ public:
   std::deque<std::array<Real, 4>> r_axis;
   void create() override;
   virtual void computeVelocities() override;
-  virtual void saveRestart(FILE *f) override;
-  virtual void loadRestart(FILE *f) override;
   void act(const Real lTact, const std::vector<Real> &a) const;
   std::vector<Real> state() const;
   Real getPhase(const Real time) const;
@@ -11274,49 +11268,6 @@ void Fish::create() {
   std::vector<VolumeSegment_OBB> vSegments = prepare_vSegments();
   const intersect_t segmPerBlock = prepare_segPerBlock(vSegments);
   writeSDFOnBlocks(vSegments);
-}
-void Fish::saveRestart(FILE *f) {
-  assert(f != NULL);
-  Obstacle::saveRestart(f);
-  fprintf(f, "angvel_internal_x: %20.20e\n",
-          (double)myFish->angvel_internal[0]);
-  fprintf(f, "angvel_internal_y: %20.20e\n",
-          (double)myFish->angvel_internal[1]);
-  fprintf(f, "angvel_internal_z: %20.20e\n",
-          (double)myFish->angvel_internal[2]);
-  fprintf(f, "quaternion_internal_0: %20.20e\n",
-          (double)myFish->quaternion_internal[0]);
-  fprintf(f, "quaternion_internal_1: %20.20e\n",
-          (double)myFish->quaternion_internal[1]);
-  fprintf(f, "quaternion_internal_2: %20.20e\n",
-          (double)myFish->quaternion_internal[2]);
-  fprintf(f, "quaternion_internal_3: %20.20e\n",
-          (double)myFish->quaternion_internal[3]);
-}
-void Fish::loadRestart(FILE *f) {
-  assert(f != NULL);
-  Obstacle::loadRestart(f);
-  bool ret = true;
-  double temp;
-  ret = ret && 1 == fscanf(f, "angvel_internal_x: %le\n", &temp);
-  myFish->angvel_internal[0] = temp;
-  ret = ret && 1 == fscanf(f, "angvel_internal_y: %le\n", &temp);
-  myFish->angvel_internal[1] = temp;
-  ret = ret && 1 == fscanf(f, "angvel_internal_z: %le\n", &temp);
-  myFish->angvel_internal[2] = temp;
-  ret = ret && 1 == fscanf(f, "quaternion_internal_0: %le\n", &temp);
-  myFish->quaternion_internal[0] = temp;
-  ret = ret && 1 == fscanf(f, "quaternion_internal_1: %le\n", &temp);
-  myFish->quaternion_internal[1] = temp;
-  ret = ret && 1 == fscanf(f, "quaternion_internal_2: %le\n", &temp);
-  myFish->quaternion_internal[2] = temp;
-  ret = ret && 1 == fscanf(f, "quaternion_internal_3: %le\n", &temp);
-  myFish->quaternion_internal[3] = temp;
-  if ((not ret)) {
-    printf("Error reading restart file. Aborting...\n");
-    fflush(0);
-    abort();
-  }
 }
 } // namespace cubismup3d
 namespace cubismup3d {
@@ -13660,97 +13611,6 @@ std::array<Real, 3> Obstacle::getYawPitchRoll() const {
       -1.0 + 2.0 * (quaternion[0] * quaternion[0] +
                     quaternion[1] * quaternion[1]));
   return std::array<Real, 3>{{yaw, pitch, roll}};
-}
-void Obstacle::saveRestart(FILE *f) {
-  assert(f != NULL);
-  fprintf(f, "x:       %20.20e\n", (double)position[0]);
-  fprintf(f, "y:       %20.20e\n", (double)position[1]);
-  fprintf(f, "z:       %20.20e\n", (double)position[2]);
-  fprintf(f, "xAbs:    %20.20e\n", (double)absPos[0]);
-  fprintf(f, "yAbs:    %20.20e\n", (double)absPos[1]);
-  fprintf(f, "zAbs:    %20.20e\n", (double)absPos[2]);
-  fprintf(f, "quat_0:  %20.20e\n", (double)quaternion[0]);
-  fprintf(f, "quat_1:  %20.20e\n", (double)quaternion[1]);
-  fprintf(f, "quat_2:  %20.20e\n", (double)quaternion[2]);
-  fprintf(f, "quat_3:  %20.20e\n", (double)quaternion[3]);
-  fprintf(f, "u_x:     %20.20e\n", (double)transVel[0]);
-  fprintf(f, "u_y:     %20.20e\n", (double)transVel[1]);
-  fprintf(f, "u_z:     %20.20e\n", (double)transVel[2]);
-  fprintf(f, "omega_x: %20.20e\n", (double)angVel[0]);
-  fprintf(f, "omega_y: %20.20e\n", (double)angVel[1]);
-  fprintf(f, "omega_z: %20.20e\n", (double)angVel[2]);
-  fprintf(f, "old_position_0:    %20.20e\n", (double)old_position[0]);
-  fprintf(f, "old_position_1:    %20.20e\n", (double)old_position[1]);
-  fprintf(f, "old_position_2:    %20.20e\n", (double)old_position[2]);
-  fprintf(f, "old_absPos_0:      %20.20e\n", (double)old_absPos[0]);
-  fprintf(f, "old_absPos_1:      %20.20e\n", (double)old_absPos[1]);
-  fprintf(f, "old_absPos_2:      %20.20e\n", (double)old_absPos[2]);
-  fprintf(f, "old_quaternion_0:  %20.20e\n", (double)old_quaternion[0]);
-  fprintf(f, "old_quaternion_1:  %20.20e\n", (double)old_quaternion[1]);
-  fprintf(f, "old_quaternion_2:  %20.20e\n", (double)old_quaternion[2]);
-  fprintf(f, "old_quaternion_3:  %20.20e\n", (double)old_quaternion[3]);
-}
-void Obstacle::loadRestart(FILE *f) {
-  assert(f != NULL);
-  bool ret = true;
-  double temp;
-  ret = ret && 1 == fscanf(f, "x:       %le\n", &temp);
-  position[0] = temp;
-  ret = ret && 1 == fscanf(f, "y:       %le\n", &temp);
-  position[1] = temp;
-  ret = ret && 1 == fscanf(f, "z:       %le\n", &temp);
-  position[2] = temp;
-  ret = ret && 1 == fscanf(f, "xAbs:    %le\n", &temp);
-  absPos[0] = temp;
-  ret = ret && 1 == fscanf(f, "yAbs:    %le\n", &temp);
-  absPos[1] = temp;
-  ret = ret && 1 == fscanf(f, "zAbs:    %le\n", &temp);
-  absPos[2] = temp;
-  ret = ret && 1 == fscanf(f, "quat_0:  %le\n", &temp);
-  quaternion[0] = temp;
-  ret = ret && 1 == fscanf(f, "quat_1:  %le\n", &temp);
-  quaternion[1] = temp;
-  ret = ret && 1 == fscanf(f, "quat_2:  %le\n", &temp);
-  quaternion[2] = temp;
-  ret = ret && 1 == fscanf(f, "quat_3:  %le\n", &temp);
-  quaternion[3] = temp;
-  ret = ret && 1 == fscanf(f, "u_x:     %le\n", &temp);
-  transVel[0] = temp;
-  ret = ret && 1 == fscanf(f, "u_y:     %le\n", &temp);
-  transVel[1] = temp;
-  ret = ret && 1 == fscanf(f, "u_z:     %le\n", &temp);
-  transVel[2] = temp;
-  ret = ret && 1 == fscanf(f, "omega_x: %le\n", &temp);
-  angVel[0] = temp;
-  ret = ret && 1 == fscanf(f, "omega_y: %le\n", &temp);
-  angVel[1] = temp;
-  ret = ret && 1 == fscanf(f, "omega_z: %le\n", &temp);
-  angVel[2] = temp;
-  ret = ret && 1 == fscanf(f, "old_position_0:    %le\n", &temp);
-  old_position[0] = temp;
-  ret = ret && 1 == fscanf(f, "old_position_1:    %le\n", &temp);
-  old_position[1] = temp;
-  ret = ret && 1 == fscanf(f, "old_position_2:    %le\n", &temp);
-  old_position[2] = temp;
-  ret = ret && 1 == fscanf(f, "old_absPos_0:      %le\n", &temp);
-  old_absPos[0] = temp;
-  ret = ret && 1 == fscanf(f, "old_absPos_1:      %le\n", &temp);
-  old_absPos[1] = temp;
-  ret = ret && 1 == fscanf(f, "old_absPos_2:      %le\n", &temp);
-  old_absPos[2] = temp;
-  ret = ret && 1 == fscanf(f, "old_quaternion_0:  %le\n", &temp);
-  old_quaternion[0] = temp;
-  ret = ret && 1 == fscanf(f, "old_quaternion_1:  %le\n", &temp);
-  old_quaternion[1] = temp;
-  ret = ret && 1 == fscanf(f, "old_quaternion_2:  %le\n", &temp);
-  old_quaternion[2] = temp;
-  ret = ret && 1 == fscanf(f, "old_quaternion_3:  %le\n", &temp);
-  old_quaternion[3] = temp;
-  if ((not ret)) {
-    printf("Error reading restart file. Aborting...\n");
-    fflush(0);
-    abort();
-  }
 }
 } // namespace cubismup3d
 namespace cubismup3d {
@@ -16251,215 +16111,6 @@ void CurvatureDefinedFishData::recomputeNormalVectors() {
         (dtZ * norX[i] + tZ * vNorX[i]) - (dtX * norZ[i] + tX * vNorZ[i]);
     vBinZ[i] =
         (dtX * norY[i] + tX * vNorY[i]) - (dtY * norX[i] + tY * vNorX[i]);
-  }
-}
-void StefanFish::saveRestart(FILE *f) {
-  assert(f != NULL);
-  Fish::saveRestart(f);
-  CurvatureDefinedFishData *const cFish =
-      dynamic_cast<CurvatureDefinedFishData *>(myFish);
-  std::stringstream ss;
-  ss << std::setfill('0') << std::setw(7) << "_" << obstacleID << "_";
-  std::string filename = "Schedulers" + ss.str() + ".restart";
-  {
-    std::ofstream savestream;
-    savestream.setf(std::ios::scientific);
-    savestream.precision(std::numeric_limits<Real>::digits10 + 1);
-    savestream.open(filename);
-    {
-      const auto &c = cFish->curvatureScheduler;
-      savestream << c.t0 << "\t" << c.t1 << std::endl;
-      for (int i = 0; i < c.npoints; ++i)
-        savestream << c.parameters_t0[i] << "\t" << c.parameters_t1[i] << "\t"
-                   << c.dparameters_t0[i] << std::endl;
-    }
-    {
-      const auto &c = cFish->periodScheduler;
-      savestream << c.t0 << "\t" << c.t1 << std::endl;
-      for (int i = 0; i < c.npoints; ++i)
-        savestream << c.parameters_t0[i] << "\t" << c.parameters_t1[i] << "\t"
-                   << c.dparameters_t0[i] << std::endl;
-    }
-    {
-      const auto &c = cFish->rlBendingScheduler;
-      savestream << c.t0 << "\t" << c.t1 << std::endl;
-      for (int i = 0; i < c.npoints; ++i)
-        savestream << c.parameters_t0[i] << "\t" << c.parameters_t1[i] << "\t"
-                   << c.dparameters_t0[i] << std::endl;
-    }
-    {
-      const auto &c = cFish->torsionScheduler;
-      savestream << c.t0 << "\t" << c.t1 << std::endl;
-      for (int i = 0; i < c.npoints; ++i)
-        savestream << c.parameters_t0[i] << "\t" << c.parameters_t1[i] << "\t"
-                   << c.dparameters_t0[i] << std::endl;
-    }
-    {
-      savestream << r_axis.size() << std::endl;
-      for (size_t i = 0; i < r_axis.size(); i++) {
-        const auto &r = r_axis[i];
-        savestream << r[0] << "\t" << r[1] << "\t" << r[2] << "\t" << r[3]
-                   << std::endl;
-      }
-    }
-    savestream.close();
-  }
-  fprintf(f, "origC_x: %20.20e\n", (double)origC[0]);
-  fprintf(f, "origC_y: %20.20e\n", (double)origC[1]);
-  fprintf(f, "origC_z: %20.20e\n", (double)origC[2]);
-  fprintf(f, "lastTact                 : %20.20e\n", (double)cFish->lastTact);
-  fprintf(f, "lastCurv                 : %20.20e\n", (double)cFish->lastCurv);
-  fprintf(f, "oldrCurv                 : %20.20e\n", (double)cFish->oldrCurv);
-  fprintf(f, "periodPIDval             : %20.20e\n",
-          (double)cFish->periodPIDval);
-  fprintf(f, "periodPIDdif             : %20.20e\n",
-          (double)cFish->periodPIDdif);
-  fprintf(f, "time0                    : %20.20e\n", (double)cFish->time0);
-  fprintf(f, "timeshift                : %20.20e\n", (double)cFish->timeshift);
-  fprintf(f, "Ttorsion_start           : %20.20e\n",
-          (double)cFish->Ttorsion_start);
-  fprintf(f, "current_period           : %20.20e\n",
-          (double)cFish->current_period);
-  fprintf(f, "next_period              : %20.20e\n",
-          (double)cFish->next_period);
-  fprintf(f, "transition_start         : %20.20e\n",
-          (double)cFish->transition_start);
-  fprintf(f, "transition_duration      : %20.20e\n",
-          (double)cFish->transition_duration);
-  fprintf(f, "torsionValues[0]         : %20.20e\n",
-          (double)cFish->torsionValues[0]);
-  fprintf(f, "torsionValues[1]         : %20.20e\n",
-          (double)cFish->torsionValues[1]);
-  fprintf(f, "torsionValues[2]         : %20.20e\n",
-          (double)cFish->torsionValues[2]);
-  fprintf(f, "torsionValues_previous[0]: %20.20e\n",
-          (double)cFish->torsionValues_previous[0]);
-  fprintf(f, "torsionValues_previous[1]: %20.20e\n",
-          (double)cFish->torsionValues_previous[1]);
-  fprintf(f, "torsionValues_previous[2]: %20.20e\n",
-          (double)cFish->torsionValues_previous[2]);
-  fprintf(f, "TperiodPID               : %d\n", (int)cFish->TperiodPID);
-  fprintf(f, "control_torsion          : %d\n", (int)cFish->control_torsion);
-  fprintf(f, "alpha                    : %20.20e\n", (double)cFish->alpha);
-  fprintf(f, "dalpha                   : %20.20e\n", (double)cFish->dalpha);
-  fprintf(f, "beta                     : %20.20e\n", (double)cFish->beta);
-  fprintf(f, "dbeta                    : %20.20e\n", (double)cFish->dbeta);
-  fprintf(f, "gamma                    : %20.20e\n", (double)cFish->gamma);
-  fprintf(f, "dgamma                   : %20.20e\n", (double)cFish->dgamma);
-}
-void StefanFish::loadRestart(FILE *f) {
-  assert(f != NULL);
-  Fish::loadRestart(f);
-  CurvatureDefinedFishData *const cFish =
-      dynamic_cast<CurvatureDefinedFishData *>(myFish);
-  std::stringstream ss;
-  ss << std::setfill('0') << std::setw(7) << "_" << obstacleID << "_";
-  std::ifstream restartstream;
-  std::string filename = "Schedulers" + ss.str() + ".restart";
-  restartstream.open(filename);
-  {
-    auto &c = cFish->curvatureScheduler;
-    restartstream >> c.t0 >> c.t1;
-    for (int i = 0; i < c.npoints; ++i)
-      restartstream >> c.parameters_t0[i] >> c.parameters_t1[i] >>
-          c.dparameters_t0[i];
-  }
-  {
-    auto &c = cFish->periodScheduler;
-    restartstream >> c.t0 >> c.t1;
-    for (int i = 0; i < c.npoints; ++i)
-      restartstream >> c.parameters_t0[i] >> c.parameters_t1[i] >>
-          c.dparameters_t0[i];
-  }
-  {
-    auto &c = cFish->rlBendingScheduler;
-    restartstream >> c.t0 >> c.t1;
-    for (int i = 0; i < c.npoints; ++i)
-      restartstream >> c.parameters_t0[i] >> c.parameters_t1[i] >>
-          c.dparameters_t0[i];
-  }
-  {
-    auto &c = cFish->torsionScheduler;
-    restartstream >> c.t0 >> c.t1;
-    for (int i = 0; i < c.npoints; ++i)
-      restartstream >> c.parameters_t0[i] >> c.parameters_t1[i] >>
-          c.dparameters_t0[i];
-  }
-  {
-    size_t nr = 0;
-    restartstream >> nr;
-    for (size_t i = 0; i < nr; i++) {
-      std::array<Real, 4> r;
-      restartstream >> r[0] >> r[1] >> r[2] >> r[3];
-      r_axis.push_back(r);
-    }
-  }
-  restartstream.close();
-  bool ret = true;
-  double temp;
-  int temp1;
-  ret = ret && 1 == fscanf(f, "origC_x: %le\n", &temp);
-  origC[0] = temp;
-  ret = ret && 1 == fscanf(f, "origC_y: %le\n", &temp);
-  origC[1] = temp;
-  ret = ret && 1 == fscanf(f, "origC_z: %le\n", &temp);
-  origC[2] = temp;
-  ret = ret && 1 == fscanf(f, "lastTact                 : %le\n", &temp);
-  cFish->lastTact = temp;
-  ret = ret && 1 == fscanf(f, "lastCurv                 : %le\n", &temp);
-  cFish->lastCurv = temp;
-  ret = ret && 1 == fscanf(f, "oldrCurv                 : %le\n", &temp);
-  cFish->oldrCurv = temp;
-  ret = ret && 1 == fscanf(f, "periodPIDval             : %le\n", &temp);
-  cFish->periodPIDval = temp;
-  ret = ret && 1 == fscanf(f, "periodPIDdif             : %le\n", &temp);
-  cFish->periodPIDdif = temp;
-  ret = ret && 1 == fscanf(f, "time0                    : %le\n", &temp);
-  cFish->time0 = temp;
-  ret = ret && 1 == fscanf(f, "timeshift                : %le\n", &temp);
-  cFish->timeshift = temp;
-  ret = ret && 1 == fscanf(f, "Ttorsion_start           : %le\n", &temp);
-  cFish->Ttorsion_start = temp;
-  ret = ret && 1 == fscanf(f, "current_period           : %le\n", &temp);
-  cFish->current_period = temp;
-  ret = ret && 1 == fscanf(f, "next_period              : %le\n", &temp);
-  cFish->next_period = temp;
-  ret = ret && 1 == fscanf(f, "transition_start         : %le\n", &temp);
-  cFish->transition_start = temp;
-  ret = ret && 1 == fscanf(f, "transition_duration      : %le\n", &temp);
-  cFish->transition_duration = temp;
-  ret = ret && 1 == fscanf(f, "torsionValues[0]         : %le\n", &temp);
-  cFish->torsionValues[0] = temp;
-  ret = ret && 1 == fscanf(f, "torsionValues[1]         : %le\n", &temp);
-  cFish->torsionValues[1] = temp;
-  ret = ret && 1 == fscanf(f, "torsionValues[2]         : %le\n", &temp);
-  cFish->torsionValues[2] = temp;
-  ret = ret && 1 == fscanf(f, "torsionValues_previous[0]: %le\n", &temp);
-  cFish->torsionValues_previous[0] = temp;
-  ret = ret && 1 == fscanf(f, "torsionValues_previous[1]: %le\n", &temp);
-  cFish->torsionValues_previous[1] = temp;
-  ret = ret && 1 == fscanf(f, "torsionValues_previous[2]: %le\n", &temp);
-  cFish->torsionValues_previous[2] = temp;
-  ret = ret && 1 == fscanf(f, "TperiodPID               : %d\n", &temp1);
-  cFish->TperiodPID = temp1;
-  ret = ret && 1 == fscanf(f, "control_torsion          : %d\n", &temp1);
-  cFish->control_torsion = temp1;
-  ret = ret && 1 == fscanf(f, "alpha                    : %le\n", &temp);
-  cFish->alpha = temp;
-  ret = ret && 1 == fscanf(f, "dalpha                   : %le\n", &temp);
-  cFish->dalpha = temp;
-  ret = ret && 1 == fscanf(f, "beta                     : %le\n", &temp);
-  cFish->beta = temp;
-  ret = ret && 1 == fscanf(f, "dbeta                    : %le\n", &temp);
-  cFish->dbeta = temp;
-  ret = ret && 1 == fscanf(f, "gamma                    : %le\n", &temp);
-  cFish->gamma = temp;
-  ret = ret && 1 == fscanf(f, "dgamma                   : %le\n", &temp);
-  cFish->dgamma = temp;
-  if ((not ret)) {
-    printf("Error reading restart file. Aborting...\n");
-    fflush(0);
-    abort();
   }
 }
 StefanFish::StefanFish(SimulationData &s, ArgumentParser &p) : Fish(s, p) {
