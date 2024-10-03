@@ -13426,11 +13426,6 @@ Obstacle::Obstacle(SimulationData &s, ArgumentParser &parser) : sim(s) {
   absPos[0] = position[0];
   absPos[1] = position[1];
   absPos[2] = position[2];
-  if (!sim.rank) {
-    printf("Obstacle L=%g, pos=[%g %g %g], q=[%g %g %g %g]\n", length,
-           position[0], position[1], position[2], quaternion[0], quaternion[1],
-           quaternion[2], quaternion[3]);
-  }
   const Real one =
       std::sqrt(quaternion[0] * quaternion[0] + quaternion[1] * quaternion[1] +
                 quaternion[2] * quaternion[2] + quaternion[3] * quaternion[3]);
@@ -13926,16 +13921,8 @@ static void _addObstacles(SimulationData &sim, std::stringstream &stream) {
       std::cout << "[CUP3D] OBSTACLE FACTORY did not create any obstacles.\n";
     return;
   }
-  if (sim.rank == 0) {
-    std::cout << "-------------   OBSTACLE FACTORY : START ("
-              << factoryLines.size() << " objects)   ------------\n";
-  }
   for (auto &l : factoryLines) {
     sim.obstacle_vector->addObstacle(_createObstacle(sim, l.first, l.second));
-    if (sim.rank == 0)
-      std::cout << "-----------------------------------------------------------"
-                   "---------"
-                << std::endl;
   }
 }
 void ObstacleFactory::addObstacles(cubism::ArgumentParser &parser) {
@@ -16068,7 +16055,6 @@ Real Simulation::calcMaxTimestep() {
     fprintf(stderr,
             "dt <= 0. CFL=%f, hMin=%f, sim.uMax_measured=%f. Aborting...\n",
             CFL, hMin, sim.uMax_measured);
-    fflush(0);
     MPI_Abort(sim.comm, 1);
   }
   if (sim.DLM > 0)
