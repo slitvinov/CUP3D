@@ -1,7 +1,7 @@
 #pragma once
 
 #include <memory>
-#include "../Definitions.h"
+#include "../LDefinitions.h"
 
 namespace cubismup3d {
 

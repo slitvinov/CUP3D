@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../Definitions.h"
+#include "../LDefinitions.h"
 #include <Cubism/BlockInfo.h>
 
 namespace cubismup3d {
