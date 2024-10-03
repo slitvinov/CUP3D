@@ -1,4 +1,65 @@
 #include "AdvectionDiffusion.h"
+#include "AdvectionDiffusionImplicit.h"
+#include <cstdio>
+#include <string>
+#include <cstring>
+#include <cmath>
+#include <fstream>
+#include <iomanip>
+#include <iostream>
+#include <sstream>
+#include <limits>
+#include "ArgumentParser.h"
+#include "BufferedLogger.h"
+#include <unordered_map>
+#include "CarlingFish.h"
+#include "FishLibrary.h"
+#include "FishShapes.h"
+#include "ComputeDissipation.h"
+#include "Cylinder.h"
+#include "ObstacleLibrary.h"
+#include "CylinderNozzle.h"
+#include <ArgumentParser.h>
+#include "DiffusionSolverAMRKernels.h"
+#include <cassert>
+#include "Ellipsoid.h"
+#include "ExternalForcing.h"
+#include "ExternalObstacle.h"
+#include "happly.h"
+#include <sys/stat.h>
+#include <unistd.h>
+#include "Fish.h"
+#include <HDF5Dumper.h>
+#include <gsl/gsl_bspline.h>
+#include <gsl/gsl_statistics.h>
+#include "FixMassFlux.h"
+#include "FluidSolidForces.h"
+#include "InitialConditions.h"
+#include "ProcessHelpers.h"
+#include "ObstacleVector.h"
+#include "PoissonSolverBase.h"
+#include "Pipe.h"
+#include <random>
+#include "Naca.h"
+#include "Obstacle.h"
+#include <gsl/gsl_linalg.h>
+#include "ObstacleFactory.h"
+#include "FactoryFileLineParser.h"
+#include "SmartNaca.h"
+#include "Plate.h"
+#include "Sphere.h"
+#include "StefanFish.h"
+#include "ObstaclesCreate.h"
+#include "ObstaclesUpdate.h"
+#include "Penalization.h"
+#include "PoissonSolverAMR.h"
+#include "PoissonSolverAMRKernels.h"
+#include "SimulationData.h"
+#include "PressureProjection.h"
+#include "Simulation.h"
+#include "HDF5Dumper.h"
+#include "Operator.h"
+#include "Profiler.h"
 
 CubismUP_3D_NAMESPACE_BEGIN
 
@@ -368,7 +429,6 @@ void AdvectionDiffusion::operator()(const Real dt) {
 }
 
 CubismUP_3D_NAMESPACE_END
-#include "AdvectionDiffusionImplicit.h"
 
 CubismUP_3D_NAMESPACE_BEGIN
 
@@ -867,17 +927,7 @@ void AdvectionDiffusionImplicit::euler(const Real dt) {
 void AdvectionDiffusionImplicit::operator()(const Real dt) { euler(sim.dt); }
 
 CubismUP_3D_NAMESPACE_END
-#include <cstdio>
-#include <string>
-#include <cstring>
-#include <cmath>
-#include <fstream>
-#include <iomanip>
-#include <iostream>
-#include <sstream>
-#include <limits>
 
-#include "ArgumentParser.h"
 
 namespace cubism {
 
@@ -1272,10 +1322,7 @@ void ArgumentParser::print_args() {
 }
 
 } // namespace cubism
-#include "BufferedLogger.h"
 
-#include <fstream>
-#include <unordered_map>
 
 namespace cubismup3d {
 
@@ -1341,10 +1388,6 @@ void BufferedLogger::flush(void) {
 }
 
 } // namespace cubismup3d
-#include "CarlingFish.h"
-#include "FishLibrary.h"
-#include "FishShapes.h"
-#include "ArgumentParser.h"
 
 CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
 
@@ -1499,8 +1542,6 @@ CarlingFish::CarlingFish(SimulationData &s, ArgumentParser &p) : Fish(s, p) {
 }
 
 CubismUP_3D_NAMESPACE_END
-#include "ComputeDissipation.h"
-#include "BufferedLogger.h"
 
 CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
 
@@ -1660,9 +1701,6 @@ void ComputeDissipation::operator()(const Real dt) {
 }
 
 CubismUP_3D_NAMESPACE_END
-#include "Cylinder.h"
-#include "ObstacleLibrary.h"
-#include "ArgumentParser.h"
 
 CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
 
@@ -1812,10 +1850,7 @@ void Cylinder::finalize() {
 }
 
 CubismUP_3D_NAMESPACE_END
-#include "CylinderNozzle.h"
-#include "ObstacleLibrary.h"
 
-#include <ArgumentParser.h>
 
 CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
 
@@ -2010,9 +2045,7 @@ std::vector<Real> CylinderNozzle::state(const int agentID) {
 }
 
 CubismUP_3D_NAMESPACE_END
-#include "DiffusionSolverAMRKernels.h"
 
-#include <cassert>
 
 /*
 Optimization comments:
@@ -2343,10 +2376,7 @@ void getZImplParallel(const std::vector<cubism::BlockInfo> &vInfo,
 
 } // namespace diffusion_kernels
 } // namespace cubismup3d
-#include "Ellipsoid.h"
-#include "ObstacleLibrary.h"
 
-#include <ArgumentParser.h>
 
 CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
 
@@ -2713,7 +2743,6 @@ void Ellipsoid::computeVelocities() {
 }
 
 CubismUP_3D_NAMESPACE_END
-#include "ExternalForcing.h"
 
 CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
 
@@ -2738,16 +2767,8 @@ void ExternalForcing::operator()(const double dt) {
 }
 
 CubismUP_3D_NAMESPACE_END
-#include "ExternalObstacle.h"
-#include "ObstacleLibrary.h"
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wshadow"
-#include "happly.h"
-#include <sys/stat.h>
-#include <unistd.h>
-#include <string>
-#include <fstream>
-#include "ArgumentParser.h"
 
 CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
 
@@ -3245,11 +3266,7 @@ void ExternalObstacle::create() {
 }
 
 CubismUP_3D_NAMESPACE_END
-#include "Fish.h"
-#include "FishLibrary.h"
 
-#include <ArgumentParser.h>
-#include <HDF5Dumper.h>
 
 CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
 
@@ -3758,7 +3775,6 @@ void Fish::loadRestart(FILE *f) {
 }
 
 CubismUP_3D_NAMESPACE_END
-#include "FishLibrary.h"
 
 CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
 
@@ -4987,11 +5003,7 @@ void PutNacaOnBlocks::constructInternl(
 }
 
 CubismUP_3D_NAMESPACE_END
-#include "FishShapes.h"
 
-#include <gsl/gsl_bspline.h>
-#include <gsl/gsl_statistics.h>
-#include <iostream>
 
 CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
 
@@ -5359,7 +5371,6 @@ void MidlineShapes::computeWidthsHeights(const std::string &heightName,
 }
 
 CubismUP_3D_NAMESPACE_END
-#include "FixMassFlux.h"
 
 CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
 
@@ -5434,7 +5445,6 @@ void FixMassFlux::operator()(const double dt) {
 }
 
 CubismUP_3D_NAMESPACE_END
-#include "FluidSolidForces.h"
 
 CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
 
@@ -5745,12 +5755,6 @@ void ComputeForces::operator()(const Real dt) {
 }
 
 CubismUP_3D_NAMESPACE_END
-#include "InitialConditions.h"
-#include "ProcessHelpers.h"
-#include "ObstacleVector.h"
-#include "PoissonSolverBase.h"
-#include "Pipe.h"
-#include <random>
 
 class PoissonSolverBase;
 
@@ -6193,9 +6197,7 @@ void InitialConditions::operator()(const Real dt) {
 }
 
 CubismUP_3D_NAMESPACE_END
-#include "Naca.h"
 
-#include <cmath>
 
 CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
 
@@ -6394,12 +6396,7 @@ void Naca::update() {
 }
 
 CubismUP_3D_NAMESPACE_END
-#include "Obstacle.h"
-#include "BufferedLogger.h"
 
-#include "ArgumentParser.h"
-#include <gsl/gsl_linalg.h>
-#include <fstream>
 
 CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
 
@@ -7128,24 +7125,8 @@ void Obstacle::_writeDiagForcesToFile() {
 }
 
 CubismUP_3D_NAMESPACE_END
-#include "ObstacleFactory.h"
-#include "ObstacleVector.h"
-#include "FactoryFileLineParser.h"
 
-#include "CarlingFish.h"
-#include "Cylinder.h"
-#include "CylinderNozzle.h"
-#include "Ellipsoid.h"
-#include "Naca.h"
-#include "SmartNaca.h"
-#include "Pipe.h"
-#include "Plate.h"
-#include "Sphere.h"
-#include "StefanFish.h"
-#include "ExternalObstacle.h"
 
-#include <iostream>
-#include <fstream>
 
 CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
 using VectorType = ObstacleVector::VectorType;
@@ -7253,7 +7234,6 @@ void ObstacleFactory::addObstacles(const std::string &factoryContent) {
 }
 
 CubismUP_3D_NAMESPACE_END
-#include "ObstaclesCreate.h"
 
 CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
 
@@ -7648,8 +7628,6 @@ void CreateObstacles::operator()(const Real dt) {
 }
 
 CubismUP_3D_NAMESPACE_END
-#include "ObstaclesUpdate.h"
-#include "ObstacleVector.h"
 
 // define this to update obstacles with old (mrag-like) approach of integrating
 // momenta contained in chi before the penalization step:
@@ -7897,8 +7875,6 @@ void UpdateObstacles::operator()(const Real dt) {
 }
 
 CubismUP_3D_NAMESPACE_END
-#include "Penalization.h"
-#include "ObstacleVector.h"
 
 CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
 
@@ -8505,10 +8481,7 @@ void Penalization::operator()(const Real dt) {
 }
 
 CubismUP_3D_NAMESPACE_END
-#include "Pipe.h"
-#include "ObstacleLibrary.h"
 
-#include <ArgumentParser.h>
 
 CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
 
@@ -8607,10 +8580,7 @@ void Pipe::finalize() {
 }
 
 CubismUP_3D_NAMESPACE_END
-#include "Plate.h"
-#include "ObstacleLibrary.h"
 
-#include <ArgumentParser.h>
 
 CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
 
@@ -8821,7 +8791,6 @@ CubismUP_3D_NAMESPACE_END
 //  Created by Michalis Chatzimanolakis (michaich@ethz.ch).
 //
 
-#include "PoissonSolverAMR.h"
 
 namespace cubismup3d {
 
@@ -9163,9 +9132,7 @@ void PoissonSolverAMR::solve() {
   }
 }
 } // namespace cubismup3d
-#include "PoissonSolverAMRKernels.h"
 
-#include <cassert>
 
 /*
 Optimization comments:
@@ -9493,12 +9460,6 @@ void getZImplParallel(const std::vector<cubism::BlockInfo> &vInfo) {
 
 } // namespace poisson_kernels
 } // namespace cubismup3d
-#include "PoissonSolverBase.h"
-#include "PoissonSolverAMR.h"
-#ifdef GPU_POISSON
-#include "PoissonSolverExp.h"
-#endif
-#include "SimulationData.h"
 
 namespace cubismup3d {
 
@@ -9506,17 +9467,9 @@ std::shared_ptr<PoissonSolverBase> makePoissonSolver(SimulationData &s) {
   if (s.poissonSolver == "iterative") {
     return std::make_shared<PoissonSolverAMR>(s);
   } else if (s.poissonSolver == "cuda_iterative") {
-#ifdef GPU_POISSON
-    if (!_DOUBLE_PRECISION_)
-      throw std::runtime_error(
-          "Poisson solver: \"" + s.poissonSolver +
-          "\" must be compiled with in double precision mode!");
-    return std::make_shared<PoissonSolverExp>(s);
-#else
     throw std::runtime_error(
         "Poisson solver: \"" + s.poissonSolver +
         "\" must be compiled with the -DGPU_POISSON flag!");
-#endif
   } else {
     throw std::invalid_argument("Poisson solver: \"" + s.poissonSolver +
                                 "\" unrecognized!");
@@ -9531,7 +9484,6 @@ std::shared_ptr<PoissonSolverBase> makePoissonSolver(SimulationData &s) {
 //  Created by Michalis Chatzimanolakis (michaich@ethz.ch).
 //
 
-#include "PressureProjection.h"
 
 CubismUP_3D_NAMESPACE_BEGIN
 
@@ -10017,28 +9969,7 @@ void PressureProjection::operator()(const Real dt) {
 }
 
 CubismUP_3D_NAMESPACE_END
-#include "Simulation.h"
 
-#include "InitialConditions.h"
-#include "ObstaclesCreate.h"
-#include "AdvectionDiffusion.h"
-#include "AdvectionDiffusionImplicit.h"
-#include "ExternalForcing.h"
-#include "FixMassFlux.h"
-#include "ObstaclesUpdate.h"
-#include "Penalization.h"
-#include "PressureProjection.h"
-#include "ComputeDissipation.h"
-#include "FluidSolidForces.h"
-#include "ProcessHelpers.h"
-#include "ObstacleVector.h"
-#include "ObstacleFactory.h"
-#include "HDF5Dumper.h"
-#include "ArgumentParser.h"
-#include <iomanip>
-#include <iostream>
-#include <sstream>
-#include "BufferedLogger.h"
 
 CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
 
@@ -10478,13 +10409,7 @@ CubismUP_3D_NAMESPACE_END
 //  Distributed under the terms of the MIT license.
 //
 
-#include <unistd.h>
 
-#include "SimulationData.h"
-#include "Operator.h"
-#include "ObstacleVector.h"
-#include "ArgumentParser.h"
-#include "Profiler.h"
 
 CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
 
@@ -10780,8 +10705,6 @@ CubismUP_3D_NAMESPACE_END
 //  Distributed under the terms of the MIT license.
 //
 
-#include "SmartNaca.h"
-#include "FishLibrary.h"
 
 using namespace cubism;
 
@@ -11130,9 +11053,6 @@ std::vector<Real> SmartNaca::state(const int agentID) {
 }
 
 CubismUP_3D_NAMESPACE_END
-#include "Sphere.h"
-#include "ObstacleLibrary.h"
-#include "ArgumentParser.h"
 
 CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
 
@@ -11253,7 +11173,6 @@ void Sphere::computeVelocities() {
 }
 
 CubismUP_3D_NAMESPACE_END
-#include "StefanFish.h"
 
 CubismUP_3D_NAMESPACE_BEGIN using namespace cubism;
 
@@ -12146,8 +12065,6 @@ StefanFish::getShear(const std::array<Real, 3> pSurf) const {
 };
 
 CubismUP_3D_NAMESPACE_END
-#include "Simulation.h"
-#include <iostream>
 int main(int argc, char **argv) {
   int provided;
   const auto SECURITY = MPI_THREAD_FUNNELED;
