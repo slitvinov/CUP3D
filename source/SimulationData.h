@@ -6,7 +6,7 @@
 
 #pragma once
 
-#include "Definitions.h"
+#include "LDefinitions.h"
 #include <array>
 #include <vector>
 #include <random>

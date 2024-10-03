@@ -9,7 +9,7 @@
 #ifndef CubismUP_3D_ObstacleLibrary_h
 #define CubismUP_3D_ObstacleLibrary_h
 
-#include "../../Definitions.h"
+#include "../../LDefinitions.h"
 
 CubismUP_3D_NAMESPACE_BEGIN
 

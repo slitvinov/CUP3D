@@ -9,7 +9,7 @@
 #ifndef CubismUP_3D_Frenet_h
 #define CubismUP_3D_Frenet_h
 
-#include "../../Definitions.h"
+#include "../../LDefinitions.h"
 
 #include <limits>
 
