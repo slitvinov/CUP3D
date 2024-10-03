@@ -23,7 +23,7 @@ def plot(path):
 
     xyz = np.memmap(xyz_path, np.dtype("f4"), "r", order="C")
     xyz = np.reshape(xyz, (-1, 8, 3))
-    xyz = xyz[:, 0, :]
+    xyz = (xyz[:, 0, :] + xyz[:, 6, :]) / 2
     attr = np.memmap(attr_path, np.dtype("f4"), "r", order="C")
 
     xx = []
@@ -34,7 +34,7 @@ def plot(path):
             xx.append(x)
             yy.append(y)
             zz.append(z)
-    points.set_data(xx, yy)
+    points.set_data(xx, zz)
 
 
 plt.axis("equal")
