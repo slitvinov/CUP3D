@@ -1,6 +1,6 @@
 #!/bin/sh
 
-OMP_NUM_THREADS=1 exec mpiexec -n 2 ./main \
+OMP_NUM_THREADS=4 exec mpiexec -n 2 ./main \
      -bMeanConstraint 2 \
      -bpdx 1 \
      -bpdy 1 \
