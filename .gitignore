@@ -1,0 +1,9 @@
+main
+*.raw
+*.xdmf2
+*.png
+post.mp4
+*.gcda
+*.gcno
+cover.*
+!cover.sh
