@@ -2738,6 +2738,7 @@ static void remove_udef_momenta(void) {
     const Real *av = f->angVel_correction;
     const Real *tv = f->transVel_correction;
     const Real *CM = f->centerOfMass;
+#pragma omp parallel for schedule(dynamic, 1)
     for (long long i = 0; i < sim.nblk; i++) {
       struct ObstacleBlock *o = f->oblock[i];
       if (o == NULL)
@@ -2817,11 +2818,12 @@ static void nodes_rehash(void) {
   free(old);
 }
 static struct Node *node_find(long long key, int create) {
-  if (nodes.cap == 0 || 2 * (nodes.n + 1) > nodes.cap) {
-    if (!create && nodes.cap == 0)
+  if (nodes.cap == 0) {
+    if (!create)
       return NULL;
     nodes_rehash();
-  }
+  } else if (create && 2 * (nodes.n + 1) > nodes.cap)
+    nodes_rehash();
   unsigned long long h = (unsigned long long)key * 0x9E3779B97F4A7C15ULL;
   long long i = (long long)(h >> 20) & (nodes.cap - 1);
   for (;;) {
@@ -2845,6 +2847,9 @@ static struct Node *node_find(long long key, int create) {
 }
 static struct Node *node(int level, long long Z) {
   return node_find(node_key(level, Z), 1);
+}
+static struct Node *node_get(int level, long long Z) {
+  return node_find(node_key(level, Z), 0);
 }
 static void nodes_reset(void) {
   free(nodes.tab);
@@ -2971,7 +2976,6 @@ static void blk_sort(void) {
   sim.fld = nf;
   free(keys);
 }
-static int imin(int a, int b) { return a < b ? a : b; }
 static int imax(int a, int b) { return a > b ? a : b; }
 #define HALO_BASE (1LL << 40)
 static struct {
@@ -2981,7 +2985,9 @@ static struct {
   Real *buf;
 } halo;
 static long long blk_avail(int level, long long Z) {
-  struct Node *nd = node(level, Z);
+  const struct Node *nd = node_get(level, Z);
+  if (nd == NULL)
+    return -1;
   if (nd->pos == sim.rank)
     return nd->local;
   if (nd->halo >= 0)
@@ -3168,6 +3174,7 @@ static void halo_sync(int f, int nc) {
   free(halo.buf);
   halo.buf = (Real *)malloc((halo.nhalo > 0 ? halo.nhalo : 1) * m * sizeof(Real));
   Real *sbuf = (Real *)malloc((halo.nsend > 0 ? halo.nsend : 1) * m * sizeof(Real));
+#pragma omp parallel for
   for (int k = 0; k < halo.nsend; k++)
     memcpy(sbuf + k * m, BLK(halo.send[k]) + f * BS3, m * sizeof(Real));
   MPI_Request *req = (MPI_Request *)malloc(2 * sim.size * sizeof *req);
@@ -3341,550 +3348,244 @@ static void grid_init(void) {
   fc_prepare();
 }
 
+enum { OP_COPY, OP_AVG8, OP_INTERP, OP_FD, OP_BC };
+struct Op {
+  int32_t type, bd, dst, bs, src, n, a[8];
+};
+struct LabTab {
+  int32_t magic, ss, te, nops;
+  int32_t same_copy[27][2], same_cfill[27][2], fine[27][2], coarse[27][8][2], interp[27][2],
+      own_avg[2], bc[6][2][2];
+  int32_t relevant[27][64];
+  struct Op *ops;
+};
+static struct LabTab lab_tab[4];
+static void lab_tables_init(void) {
+  static const int cfg[4][2] = {{1, 1}, {1, 0}, {2, 1}, {3, 0}};
+  for (int k = 0; k < 4; k++) {
+    struct LabTab *T = &lab_tab[k];
+    char name[64];
+    snprintf(name, sizeof name, "lab_ss%d_t%d.bin", cfg[k][0], cfg[k][1]);
+    FILE *fp = fopen(name, "rb");
+    if (fp == NULL) {
+      fprintf(stderr, "main.c: cannot open %s (run gen_table.py)\n", name);
+      MPI_Abort(sim.comm, 1);
+    }
+    const size_t hdr = offsetof(struct LabTab, ops);
+    if (fread(T, 1, hdr, fp) != hdr || T->magic != 0x4C414231 || T->ss != cfg[k][0] ||
+        T->te != cfg[k][1]) {
+      fprintf(stderr, "main.c: bad table %s\n", name);
+      MPI_Abort(sim.comm, 1);
+    }
+    T->ops = (struct Op *)malloc(T->nops * sizeof *T->ops);
+    if (fread(T->ops, sizeof *T->ops, T->nops, fp) != (size_t)T->nops) {
+      fprintf(stderr, "main.c: short read from %s\n", name);
+      MPI_Abort(sim.comm, 1);
+    }
+    fclose(fp);
+  }
+}
 struct Lab {
   int f, nc, vflip;
-  int ss[3], se[3], is[3], ie[3];
-  int tensorial, use_averages;
-  Real *cache, *coarse;
+  int ss[3], se[3];
   int cn[3], cc[3];
-  int offset[3], CoarseBlockSize[3];
   int NX, NY, NZ;
-  int coarsened, ncoarse_codes, coarse_codes[27];
-  long long myblocks[27];
+  Real *cache, *coarse;
+  const struct LabTab *tab;
 };
 static const double d_coef_plus[9] = {-0.09375, 0.4375,   0.15625, 0.15625, -0.5625,
                                       0.90625,  -0.09375, 0.4375,  0.15625};
 static const double d_coef_minus[9] = {0.15625, -0.5625, 0.90625, -0.09375, 0.4375,
                                        0.15625, 0.15625, 0.4375,  -0.09375};
 #define LAB(l, ix, iy, iz) ((l)->cache + (((iz) * (l)->cn[1] + (iy)) * (l)->cn[0] + (ix)) * (l)->nc)
-#define COA(l, ix, iy, iz) ((l)->coarse + (((iz) * (l)->cc[1] + (iy)) * (l)->cc[0] + (ix)) * (l)->nc)
 #define CELL(i, f, c, x, y, z) (fld_ptr(i, f, c)[((z) * BS + (y)) * BS + (x)])
-static void lab_init(struct Lab *l, int f, int nc, int sx, int sy, int sz, int ex,
-                     int ey, int ez, int tensorial, int vflip) {
+static void lab_init(struct Lab *l, int f, int nc, int ss, int te, int vflip) {
   memset(l, 0, sizeof *l);
   l->f = f;
   l->nc = nc;
   l->vflip = vflip;
-  l->ss[0] = sx; l->ss[1] = sy; l->ss[2] = sz;
-  l->se[0] = ex; l->se[1] = ey; l->se[2] = ez;
-  l->is[0] = l->is[1] = l->is[2] = -1;
-  l->ie[0] = l->ie[1] = l->ie[2] = 2;
-  l->tensorial = tensorial;
+  for (int k = 0; k < 4; k++)
+    if (lab_tab[k].ss == ss && lab_tab[k].te == te)
+      l->tab = &lab_tab[k];
+  if (l->tab == NULL) {
+    fprintf(stderr, "main.c: no table for ss=%d te=%d\n", ss, te);
+    MPI_Abort(sim.comm, 1);
+  }
   for (int d = 0; d < 3; d++) {
-    l->cn[d] = BS + l->se[d] - l->ss[d] - 1;
-    l->CoarseBlockSize[d] = BS / 2;
-    l->offset[d] = (l->ss[d] - 1) / 2 + l->is[d];
-    const int e = (l->se[d]) / 2 + 1 + l->ie[d] - 1;
-    l->cc[d] = l->CoarseBlockSize[d] + e - l->offset[d] - 1;
+    l->ss[d] = -ss;
+    l->se[d] = ss + 1;
+    l->cn[d] = BS + 2 * ss;
+    const int offset = (l->ss[d] - 1) / 2 - 1;
+    const int e = l->se[d] / 2 + 2;
+    l->cc[d] = BS / 2 + e - offset - 1;
   }
   l->cache = (Real *)malloc((size_t)l->cn[0] * l->cn[1] * l->cn[2] * nc * sizeof(Real));
   l->coarse = (Real *)malloc((size_t)l->cc[0] * l->cc[1] * l->cc[2] * nc * sizeof(Real));
-  l->use_averages = (tensorial || sx < -2 || sy < -2 || sz < -2 || ex > 3 || ey > 3 || ez > 3);
 }
 static void lab_free(struct Lab *l) {
   free(l->cache);
   free(l->coarse);
 }
-static void avg8(Real *dst, const Real *e0, const Real *e1, const Real *e2,
-                 const Real *e3, const Real *e4, const Real *e5, const Real *e6,
-                 const Real *e7, int nc) {
-  for (int c = 0; c < nc; c++)
-    dst[c] = 0.125 * (e0[c] + e1[c] + e2[c] + e3[c] + e4[c] + e5[c] + e6[c] + e7[c]);
-}
-static void copy_cell(Real *dst, long long i, int f, int nc, int x, int y, int z) {
-  for (int c = 0; c < nc; c++)
-    dst[c] = CELL(i, f, c, x, y, z);
-}
-static void lab_same_level(struct Lab *l, const struct Blk *b, const int code[3],
-                           const int s[3], const int e[3]) {
-  if (e[0] - s[0] <= 0)
-    return;
-  const int icode = (code[0] + 1) + 3 * (code[1] + 1) + 9 * (code[2] + 1);
-  const long long nb = blk_avail(b->level, znei(b, code[0], code[1], code[2]));
-  l->myblocks[icode] = nb;
-  if (nb < 0)
-    return;
-  for (int iz = s[2]; iz < e[2]; iz++)
-    for (int iy = s[1]; iy < e[1]; iy++)
-      for (int ix = s[0]; ix < e[0]; ix++)
-        copy_cell(LAB(l, ix - l->ss[0], iy - l->ss[1], iz - l->ss[2]), nb, l->f,
-                  l->nc, ix - code[0] * BS, iy - code[1] * BS, iz - code[2] * BS);
-}
-static void lab_fine_to_coarse(struct Lab *l, const struct Blk *b, const int code[3],
-                               const int s[3], const int e[3]) {
-  const int nX = BS, nY = BS, nZ = BS;
-  const int nx_len = abs(code[0]) * (e[0] - s[0]) + (1 - abs(code[0])) * ((e[0] - s[0]) / 2);
-  if (nx_len <= 0)
-    return;
-  const int yStep = (code[1] == 0) ? 2 : 1;
-  const int zStep = (code[2] == 0) ? 2 : 1;
-  int Bstep = 1;
-  if ((abs(code[0]) + abs(code[1]) + abs(code[2]) == 2))
-    Bstep = 3;
-  else if ((abs(code[0]) + abs(code[1]) + abs(code[2]) == 3))
-    Bstep = 4;
-  for (int B = 0; B <= 3; B += Bstep) {
-    const int aux = (abs(code[0]) == 1) ? (B % 2) : (B / 2);
-    const int ci = 2 * b->ix + (code[0] > 0 ? code[0] : 0) + code[0] +
-                   (B % 2) * (1 - abs(code[0]) > 0 ? 1 - abs(code[0]) : 0);
-    const int cj = 2 * b->iy + (code[1] > 0 ? code[1] : 0) + code[1] +
-                   aux * (1 - abs(code[1]) > 0 ? 1 - abs(code[1]) : 0);
-    const int ck = 2 * b->iz + (code[2] > 0 ? code[2] : 0) + code[2] +
-                   (B / 2) * (1 - abs(code[2]) > 0 ? 1 - abs(code[2]) : 0);
-    const long long nb = blk_avail(b->level + 1, zforward(b->level + 1, ci, cj, ck));
-    if (nb < 0)
-      continue;
-    const int my_ix = abs(code[0]) * (s[0] - l->ss[0]) +
-                      (1 - abs(code[0])) * (s[0] - l->ss[0] + (B % 2) * (e[0] - s[0]) / 2);
-    const int XX = s[0] - code[0] * nX + (code[0] < 0 ? code[0] : 0) * (e[0] - s[0]);
-    for (int iz = s[2]; iz < e[2]; iz += zStep) {
-      const int ZZ = (abs(code[2]) == 1) ? 2 * (iz - code[2] * nZ) + (code[2] < 0 ? code[2] : 0) * nZ : iz;
-      const int my_iz = abs(code[2]) * (iz - l->ss[2]) +
-                        (1 - abs(code[2])) * (iz / 2 - l->ss[2] + (B / 2) * (e[2] - s[2]) / 2);
-      for (int iy = s[1]; iy < e[1]; iy += yStep) {
-        const int my_iy = abs(code[1]) * (iy - l->ss[1]) +
-                          (1 - abs(code[1])) * (iy / 2 - l->ss[1] + aux * (e[1] - s[1]) / 2);
-        const int YY = (abs(code[1]) == 1) ? 2 * (iy - code[1] * nY) + (code[1] < 0 ? code[1] : 0) * nY : iy;
-        for (int ee = 0; ee < nx_len; ee++) {
-          Real *dst = LAB(l, my_ix + ee, my_iy, my_iz);
-          for (int c = 0; c < l->nc; c++)
-            dst[c] = 0.125 * (CELL(nb, l->f, c, XX + 2 * ee, YY, ZZ) +
-                              CELL(nb, l->f, c, XX + 2 * ee, YY, ZZ + 1) +
-                              CELL(nb, l->f, c, XX + 2 * ee, YY + 1, ZZ) +
-                              CELL(nb, l->f, c, XX + 2 * ee, YY + 1, ZZ + 1) +
-                              CELL(nb, l->f, c, XX + 2 * ee + 1, YY, ZZ) +
-                              CELL(nb, l->f, c, XX + 2 * ee + 1, YY, ZZ + 1) +
-                              CELL(nb, l->f, c, XX + 2 * ee + 1, YY + 1, ZZ) +
-                              CELL(nb, l->f, c, XX + 2 * ee + 1, YY + 1, ZZ + 1));
-        }
-      }
-    }
-  }
-}
-static void lab_coarse_fine_exchange(struct Lab *l, const struct Blk *b, const int code[3]) {
-  const int nX = BS, nY = BS, nZ = BS;
-  const int NX = l->NX, NY = l->NY, NZ = l->NZ;
-  const int infoNei_index[3] = {(b->ix + code[0] + NX) % NX, (b->iy + code[1] + NY) % NY,
-                                (b->iz + code[2] + NZ) % NZ};
-  const int infoNei_index_true[3] = {b->ix + code[0], b->iy + code[1], b->iz + code[2]};
-  const long long nb = blk_avail(b->level - 1, zforward(b->level - 1, infoNei_index[0] / 2,
-                                                        infoNei_index[1] / 2, infoNei_index[2] / 2));
-  if (nb < 0)
-    return;
-  const int *CBS = l->CoarseBlockSize;
-  const int s[3] = {code[0] < 1 ? (code[0] < 0 ? l->offset[0] : 0) : CBS[0],
-                    code[1] < 1 ? (code[1] < 0 ? l->offset[1] : 0) : CBS[1],
-                    code[2] < 1 ? (code[2] < 0 ? l->offset[2] : 0) : CBS[2]};
-  const int e[3] = {code[0] < 1 ? (code[0] < 0 ? 0 : CBS[0]) : CBS[0] + (l->se[0]) / 2 + l->ie[0] - 1,
-                    code[1] < 1 ? (code[1] < 0 ? 0 : CBS[1]) : CBS[1] + (l->se[1]) / 2 + l->ie[1] - 1,
-                    code[2] < 1 ? (code[2] < 0 ? 0 : CBS[2]) : CBS[2] + (l->se[2]) / 2 + l->ie[2] - 1};
-  if (e[0] - s[0] <= 0)
-    return;
-  const int base[3] = {(b->ix + code[0]) % 2, (b->iy + code[1]) % 2, (b->iz + code[2]) % 2};
-  const int bidx[3] = {b->ix, b->iy, b->iz};
-  int CoarseEdge[3];
-  for (int d = 0; d < 3; d++)
-    CoarseEdge[d] = (code[d] == 0) ? 0
-                    : (((bidx[d] % 2 == 0) && (infoNei_index_true[d] > bidx[d])) ||
-                       ((bidx[d] % 2 == 1) && (infoNei_index_true[d] < bidx[d])))
-                        ? 1
-                        : 0;
-  const int start[3] = {
-      (code[0] > 0 ? code[0] : 0) * nX / 2 + (1 - abs(code[0])) * base[0] * nX / 2 - code[0] * nX + CoarseEdge[0] * code[0] * nX / 2,
-      (code[1] > 0 ? code[1] : 0) * nY / 2 + (1 - abs(code[1])) * base[1] * nY / 2 - code[1] * nY + CoarseEdge[1] * code[1] * nY / 2,
-      (code[2] > 0 ? code[2] : 0) * nZ / 2 + (1 - abs(code[2])) * base[2] * nZ / 2 - code[2] * nZ + CoarseEdge[2] * code[2] * nZ / 2};
-  for (int iz = s[2]; iz < e[2]; iz++)
-    for (int iy = s[1]; iy < e[1]; iy++)
-      for (int ix = s[0]; ix < e[0]; ix++)
-        copy_cell(COA(l, ix - l->offset[0], iy - l->offset[1], iz - l->offset[2]), nb, l->f, l->nc,
-                  ix + start[0], iy + start[1], iz + start[2]);
-}
-static void lab_fill_coarse_version(struct Lab *l, const int code[3]) {
-  const int icode = (code[0] + 1) + 3 * (code[1] + 1) + 9 * (code[2] + 1);
-  const long long nb = l->myblocks[icode];
-  if (nb < 0)
-    return;
-  const int nX = BS, nY = BS, nZ = BS;
-  const int *CBS = l->CoarseBlockSize;
-  const int eC[3] = {(l->se[0]) / 2 + l->ie[0], (l->se[1]) / 2 + l->ie[1], (l->se[2]) / 2 + l->ie[2]};
-  const int s[3] = {code[0] < 1 ? (code[0] < 0 ? l->offset[0] : 0) : CBS[0],
-                    code[1] < 1 ? (code[1] < 0 ? l->offset[1] : 0) : CBS[1],
-                    code[2] < 1 ? (code[2] < 0 ? l->offset[2] : 0) : CBS[2]};
-  const int e[3] = {code[0] < 1 ? (code[0] < 0 ? 0 : CBS[0]) : CBS[0] + eC[0] - 1,
-                    code[1] < 1 ? (code[1] < 0 ? 0 : CBS[1]) : CBS[1] + eC[1] - 1,
-                    code[2] < 1 ? (code[2] < 0 ? 0 : CBS[2]) : CBS[2] + eC[2] - 1};
-  if (e[0] - s[0] <= 0)
-    return;
-  const int start[3] = {
-      s[0] + (code[0] > 0 ? code[0] : 0) * CBS[0] - code[0] * nX + (code[0] < 0 ? code[0] : 0) * (e[0] - s[0]),
-      s[1] + (code[1] > 0 ? code[1] : 0) * CBS[1] - code[1] * nY + (code[1] < 0 ? code[1] : 0) * (e[1] - s[1]),
-      s[2] + (code[2] > 0 ? code[2] : 0) * CBS[2] - code[2] * nZ + (code[2] < 0 ? code[2] : 0) * (e[2] - s[2])};
-  const int XX = start[0];
-  for (int iz = s[2]; iz < e[2]; iz++) {
-    const int ZZ = 2 * (iz - s[2]) + start[2];
-    for (int iy = s[1]; iy < e[1]; iy++) {
-      if (code[1] == 0 && code[2] == 0 && iy > -l->is[1] && iy < nY / 2 - l->ie[1] &&
-          iz > -l->is[2] && iz < nZ / 2 - l->ie[2])
-        continue;
-      const int YY = 2 * (iy - s[1]) + start[1];
-      for (int ee = 0; ee < e[0] - s[0]; ee++) {
-        Real *dst = COA(l, s[0] + ee - l->offset[0], iy - l->offset[1], iz - l->offset[2]);
-        for (int c = 0; c < l->nc; c++)
-          dst[c] = 0.125 * (CELL(nb, l->f, c, XX + 2 * ee, YY, ZZ) + CELL(nb, l->f, c, XX + 2 * ee, YY, ZZ + 1) +
-                            CELL(nb, l->f, c, XX + 2 * ee, YY + 1, ZZ) + CELL(nb, l->f, c, XX + 2 * ee, YY + 1, ZZ + 1) +
-                            CELL(nb, l->f, c, XX + 2 * ee + 1, YY, ZZ) + CELL(nb, l->f, c, XX + 2 * ee + 1, YY, ZZ + 1) +
-                            CELL(nb, l->f, c, XX + 2 * ee + 1, YY + 1, ZZ) + CELL(nb, l->f, c, XX + 2 * ee + 1, YY + 1, ZZ + 1));
-      }
-    }
-  }
-}
-static int lab_use_coarse_stencil(struct Lab *l, const struct Blk *a, const int b_index[3]) {
-  if (a->level == 0 || (!l->use_averages))
-    return 0;
-  int lo[3], hi[3];
-  const int aidx[3] = {a->ix, a->iy, a->iz};
-  const int blocks[3] = {l->NX - 1, l->NY - 1, l->NZ - 1};
-  for (int d = 0; d < 3; d++) {
-    lo[d] = (aidx[d] < b_index[d]) ? 0 : -1;
-    hi[d] = (aidx[d] > b_index[d]) ? 0 : +1;
-    if (aidx[d] == 0 && b_index[d] == 0)
-      lo[d] = 0;
-    if (aidx[d] == blocks[d] && b_index[d] == blocks[d])
-      hi[d] = 0;
-  }
-  for (int itest = 0; itest < l->ncoarse_codes; itest++)
-    for (int i2 = lo[2]; i2 <= hi[2]; i2++)
-      for (int i1 = lo[1]; i1 <= hi[1]; i1++)
-        for (int i0 = lo[0]; i0 <= hi[0]; i0++) {
-          const int icode_test = (i0 + 1) + 3 * (i1 + 1) + 9 * (i2 + 1);
-          if (l->coarse_codes[itest] == icode_test)
-            return 1;
-        }
-  return 0;
-}
-static void lab_neumann(struct Lab *l, int dir, int side, int coarse) {
-  int stenBeg[3], stenEnd[3], bsize[3];
-  for (int d = 0; d < 3; d++) {
-    if (!coarse) {
-      stenEnd[d] = l->se[d];
-      stenBeg[d] = l->ss[d];
-      bsize[d] = BS;
-    } else {
-      stenEnd[d] = (l->se[d]) / 2 + 1 + l->ie[d] - 1;
-      stenBeg[d] = (l->ss[d] - 1) / 2 + l->is[d];
-      bsize[d] = BS / 2;
-    }
-  }
-  Real *cb = coarse ? l->coarse : l->cache;
-  const int *cn = coarse ? l->cc : l->cn;
+static void lab_exec(struct Lab *l, const int32_t sec[2], Real *const *nb) {
+  const struct Op *ops = l->tab->ops + sec[0];
   const int nc = l->nc;
-#define CB(ix, iy, iz) (cb + (((iz) * cn[1] + (iy)) * cn[0] + (ix)) * nc)
-  int s[3], e[3];
-  s[0] = dir == 0 ? (side == 0 ? stenBeg[0] : bsize[0]) : 0;
-  s[1] = dir == 1 ? (side == 0 ? stenBeg[1] : bsize[1]) : 0;
-  s[2] = dir == 2 ? (side == 0 ? stenBeg[2] : bsize[2]) : 0;
-  e[0] = dir == 0 ? (side == 0 ? 0 : bsize[0] + stenEnd[0] - 1) : bsize[0];
-  e[1] = dir == 1 ? (side == 0 ? 0 : bsize[1] + stenEnd[1] - 1) : bsize[1];
-  e[2] = dir == 2 ? (side == 0 ? 0 : bsize[2] + stenEnd[2] - 1) : bsize[2];
-  for (int iz = s[2]; iz < e[2]; iz++)
-    for (int iy = s[1]; iy < e[1]; iy++)
-      for (int ix = s[0]; ix < e[0]; ix++)
-        {
-          Real *dst = CB(ix - stenBeg[0], iy - stenBeg[1], iz - stenBeg[2]);
-          const Real *src = CB((dir == 0 ? (side == 0 ? 0 : bsize[0] - 1) : ix) - stenBeg[0],
-                               (dir == 1 ? (side == 0 ? 0 : bsize[1] - 1) : iy) - stenBeg[1],
-                               (dir == 2 ? (side == 0 ? 0 : bsize[2] - 1) : iz) - stenBeg[2]);
-          memcpy(dst, src, nc * sizeof(Real));
-          if (l->vflip >= 0)
-            dst[l->vflip + dir] = (-1.) * src[l->vflip + dir];
-        }
-  s[dir] = stenBeg[dir] * (1 - side) + bsize[dir] * side;
-  e[dir] = (bsize[dir] - 1 + stenEnd[dir]) * side;
-  const int d1 = (dir + 1) % 3;
-  const int d2 = (dir + 2) % 3;
-  for (int b = 0; b < 2; ++b)
-    for (int a = 0; a < 2; ++a) {
-      s[d1] = stenBeg[d1] + a * b * (bsize[d1] - stenBeg[d1]);
-      s[d2] = stenBeg[d2] + (a - a * b) * (bsize[d2] - stenBeg[d2]);
-      e[d1] = (1 - b + a * b) * (bsize[d1] - 1 + stenEnd[d1]);
-      e[d2] = (a + b - a * b) * (bsize[d2] - 1 + stenEnd[d2]);
-      for (int iz = s[2]; iz < e[2]; iz++)
-        for (int iy = s[1]; iy < e[1]; iy++)
-          for (int ix = s[0]; ix < e[0]; ix++) {
-            const Real *src =
-                dir == 0 ? CB(side * (bsize[0] - 1) - stenBeg[0], iy - stenBeg[1], iz - stenBeg[2])
-                : (dir == 1 ? CB(ix - stenBeg[0], side * (bsize[1] - 1) - stenBeg[1], iz - stenBeg[2])
-                            : CB(ix - stenBeg[0], iy - stenBeg[1], side * (bsize[2] - 1) - stenBeg[2]));
-            Real *dst = CB(ix - stenBeg[0], iy - stenBeg[1], iz - stenBeg[2]);
-            memcpy(dst, src, nc * sizeof(Real));
-            if (l->vflip >= 0)
-              dst[l->vflip + dir] = (-1.) * src[l->vflip + dir];
-          }
+  const int cc = l->cc[0];
+  Real *buf[2] = {l->cache, l->coarse};
+  Real R[8 * F_N];
+  for (int k = 0; k < sec[1]; k++) {
+    const struct Op *o = &ops[k];
+    const int32_t *a = o->a;
+    switch (o->type) {
+    case OP_COPY: {
+      Real *d = buf[o->bd] + (long long)o->dst * nc;
+      const Real *s = nb[o->bs - 2] + o->src;
+      for (int i = 0; i < o->n; i++)
+        for (int c = 0; c < nc; c++)
+          d[i * nc + c] = s[c * BS3 + i];
+      break;
     }
-#undef CB
-}
-static void lab_apply_bc(struct Lab *l, const struct Blk *b, int coarse) {
-  if (b->ix == 0)
-    lab_neumann(l, 0, 0, coarse);
-  if (b->ix == l->NX - 1)
-    lab_neumann(l, 0, 1, coarse);
-  if (b->iy == 0)
-    lab_neumann(l, 1, 0, coarse);
-  if (b->iy == l->NY - 1)
-    lab_neumann(l, 1, 1, coarse);
-  if (b->iz == 0)
-    lab_neumann(l, 2, 0, coarse);
-  if (b->iz == l->NZ - 1)
-    lab_neumann(l, 2, 1, coarse);
-}
-static void test_interp(const struct Lab *l, Real *C[3][3][3], Real *R) {
-  const int nc = l->nc;
-  for (int c = 0; c < nc; c++) {
-    const Real dudx = 0.125 * (C[2][1][1][c] - C[0][1][1][c]);
-    const Real dudy = 0.125 * (C[1][2][1][c] - C[1][0][1][c]);
-    const Real dudz = 0.125 * (C[1][1][2][c] - C[1][1][0][c]);
-    const Real dudxdy = 0.015625 * (C[0][0][1][c] + C[2][2][1][c] - C[2][0][1][c] - C[0][2][1][c]);
-    const Real dudxdz = 0.015625 * (C[0][1][0][c] + C[2][1][2][c] - C[2][1][0][c] - C[0][1][2][c]);
-    const Real dudydz = 0.015625 * (C[1][0][0][c] + C[1][2][2][c] - C[1][2][0][c] - C[1][0][2][c]);
-    const Real lap = C[1][1][1][c] + 0.03125 * (C[0][1][1][c] + C[2][1][1][c] + C[1][0][1][c] +
-                                                C[1][2][1][c] + C[1][1][0][c] + C[1][1][2][c] +
-                                                (-6.0) * C[1][1][1][c]);
-    R[0 * nc + c] = lap - dudx - dudy - dudz + dudxdy + dudxdz + dudydz;
-    R[1 * nc + c] = lap + dudx - dudy - dudz - dudxdy - dudxdz + dudydz;
-    R[2 * nc + c] = lap - dudx + dudy - dudz - dudxdy + dudxdz - dudydz;
-    R[3 * nc + c] = lap + dudx + dudy - dudz + dudxdy - dudxdz - dudydz;
-    R[4 * nc + c] = lap - dudx - dudy + dudz + dudxdy - dudxdz - dudydz;
-    R[5 * nc + c] = lap + dudx - dudy + dudz - dudxdy + dudxdz - dudydz;
-    R[6 * nc + c] = lap - dudx + dudy + dudz - dudxdy - dudxdz + dudydz;
-    R[7 * nc + c] = lap + dudx + dudy + dudz + dudxdy + dudxdz + dudydz;
-  }
-}
-static void lab_coarse_fine_interpolation(struct Lab *l, const struct Blk *b) {
-  const int nX = BS, nY = BS, nZ = BS;
-  const int nc = l->nc;
-  const int xskin = b->ix == 0 || b->ix == l->NX - 1;
-  const int yskin = b->iy == 0 || b->iy == l->NY - 1;
-  const int zskin = b->iz == 0 || b->iz == l->NZ - 1;
-  const int xskip = b->ix == 0 ? -1 : 1;
-  const int yskip = b->iy == 0 ? -1 : 1;
-  const int zskip = b->iz == 0 ? -1 : 1;
-  Real retval[8 * 3];
-  for (int ii = 0; ii < l->ncoarse_codes; ++ii) {
-    const int icode = l->coarse_codes[ii];
-    if (icode == 1 * 1 + 3 * 1 + 9 * 1)
-      continue;
-    const int code[3] = {icode % 3 - 1, (icode / 3) % 3 - 1, (icode / 9) % 3 - 1};
-    if (code[0] == xskip && xskin)
-      continue;
-    if (code[1] == yskip && yskin)
-      continue;
-    if (code[2] == zskip && zskin)
-      continue;
-    if (!l->tensorial && !l->use_averages && abs(code[0]) + abs(code[1]) + abs(code[2]) > 1)
-      continue;
-    const int s[3] = {code[0] < 1 ? (code[0] < 0 ? l->ss[0] : 0) : nX,
-                      code[1] < 1 ? (code[1] < 0 ? l->ss[1] : 0) : nY,
-                      code[2] < 1 ? (code[2] < 0 ? l->ss[2] : 0) : nZ};
-    const int e[3] = {code[0] < 1 ? (code[0] < 0 ? 0 : nX) : nX + l->se[0] - 1,
-                      code[1] < 1 ? (code[1] < 0 ? 0 : nY) : nY + l->se[1] - 1,
-                      code[2] < 1 ? (code[2] < 0 ? 0 : nZ) : nZ + l->se[2] - 1};
-    const int sC[3] = {code[0] < 1 ? (code[0] < 0 ? ((l->ss[0] - 1) / 2) : 0) : l->CoarseBlockSize[0],
-                       code[1] < 1 ? (code[1] < 0 ? ((l->ss[1] - 1) / 2) : 0) : l->CoarseBlockSize[1],
-                       code[2] < 1 ? (code[2] < 0 ? ((l->ss[2] - 1) / 2) : 0) : l->CoarseBlockSize[2]};
-    if (e[0] - s[0] <= 0)
-      continue;
-    if (l->use_averages)
-      for (int iz = s[2]; iz < e[2]; iz += 2) {
-        const int ZZ = (iz - s[2] - imin(0, code[2]) * ((e[2] - s[2]) % 2)) / 2 + sC[2];
-        const int z = abs(iz - s[2] - imin(0, code[2]) * ((e[2] - s[2]) % 2)) % 2;
-        const int izp = (abs(iz) % 2 == 1) ? -1 : 1;
-        const int rzp = (izp == 1) ? 1 : 0;
-        const int rz = (izp == 1) ? 0 : 1;
-        for (int iy = s[1]; iy < e[1]; iy += 2) {
-          const int YY = (iy - s[1] - imin(0, code[1]) * ((e[1] - s[1]) % 2)) / 2 + sC[1];
-          const int y = abs(iy - s[1] - imin(0, code[1]) * ((e[1] - s[1]) % 2)) % 2;
-          const int iyp = (abs(iy) % 2 == 1) ? -1 : 1;
-          const int ryp = (iyp == 1) ? 1 : 0;
-          const int ry = (iyp == 1) ? 0 : 1;
-          for (int ix = s[0]; ix < e[0]; ix += 2) {
-            const int XX = (ix - s[0] - imin(0, code[0]) * ((e[0] - s[0]) % 2)) / 2 + sC[0];
-            const int x = abs(ix - s[0] - imin(0, code[0]) * ((e[0] - s[0]) % 2)) % 2;
-            const int ixp = (abs(ix) % 2 == 1) ? -1 : 1;
-            const int rxp = (ixp == 1) ? 1 : 0;
-            const int rx = (ixp == 1) ? 0 : 1;
-            (void)x; (void)y; (void)z;
-            Real *Test[3][3][3];
-            for (int i = 0; i < 3; i++)
-              for (int j = 0; j < 3; j++)
-                for (int k = 0; k < 3; k++)
-                  Test[i][j][k] = COA(l, XX - 1 + i - l->offset[0], YY - 1 + j - l->offset[1], ZZ - 1 + k - l->offset[2]);
-            test_interp(l, Test, retval);
-#define PUT(IX, IY, IZ, R)                                                       \
-  if ((IX) >= s[0] && (IX) < e[0] && (IY) >= s[1] && (IY) < e[1] && (IZ) >= s[2] && (IZ) < e[2]) \
-    memcpy(LAB(l, (IX) - l->ss[0], (IY) - l->ss[1], (IZ) - l->ss[2]), retval + (R) * nc, nc * sizeof(Real))
-            PUT(ix, iy, iz, rx + 2 * ry + 4 * rz);
-            PUT(ix + ixp, iy, iz, rxp + 2 * ry + 4 * rz);
-            PUT(ix, iy + iyp, iz, rx + 2 * ryp + 4 * rz);
-            PUT(ix + ixp, iy + iyp, iz, rxp + 2 * ryp + 4 * rz);
-            PUT(ix, iy, iz + izp, rx + 2 * ry + 4 * rzp);
-            PUT(ix + ixp, iy, iz + izp, rxp + 2 * ry + 4 * rzp);
-            PUT(ix, iy + iyp, iz + izp, rx + 2 * ryp + 4 * rzp);
-            PUT(ix + ixp, iy + iyp, iz + izp, rxp + 2 * ryp + 4 * rzp);
-#undef PUT
-          }
-        }
+    case OP_AVG8: {
+      Real *d = buf[o->bd] + (long long)o->dst * nc;
+      if (o->bs >= 2) {
+        const Real *s = nb[o->bs - 2];
+        for (int c = 0; c < nc; c++)
+          d[c] = 0.125 * (s[c * BS3 + a[0]] + s[c * BS3 + a[1]] + s[c * BS3 + a[2]] + s[c * BS3 + a[3]] +
+                          s[c * BS3 + a[4]] + s[c * BS3 + a[5]] + s[c * BS3 + a[6]] + s[c * BS3 + a[7]]);
+      } else {
+        const Real *s = buf[o->bs];
+        for (int c = 0; c < nc; c++)
+          d[c] = 0.125 * (s[a[0] * nc + c] + s[a[1] * nc + c] + s[a[2] * nc + c] + s[a[3] * nc + c] +
+                          s[a[4] * nc + c] + s[a[5] * nc + c] + s[a[6] * nc + c] + s[a[7] * nc + c]);
       }
-    if (abs(code[0]) + abs(code[1]) + abs(code[2]) == 1) {
-      const int coef_ixyz[3] = {imin(0, code[0]) * ((e[0] - s[0]) % 2),
-                                imin(0, code[1]) * ((e[1] - s[1]) % 2),
-                                imin(0, code[2]) * ((e[2] - s[2]) % 2)};
-      const int min_iz = imax(s[2], -2), min_iy = imax(s[1], -2), min_ix = imax(s[0], -2);
-      const int max_iz = imin(e[2], nZ + 2), max_iy = imin(e[1], nY + 2), max_ix = imin(e[0], nX + 2);
-      const int *CBS = l->CoarseBlockSize;
-      for (int iz = min_iz; iz < max_iz; iz++) {
-        const int ZZ = (iz - s[2] - coef_ixyz[2]) / 2 + sC[2] - l->offset[2];
-        const int z = abs(iz - s[2] - coef_ixyz[2]) % 2;
-        const double dz = 0.25 * (2 * z - 1);
-        const double *dz_coef = dz > 0 ? d_coef_plus : d_coef_minus;
-        const int zinner = (ZZ + l->offset[2] != 0) && (ZZ + l->offset[2] != CBS[2] - 1);
-        const int zstart = (ZZ + l->offset[2] == 0);
-        for (int iy = min_iy; iy < max_iy; iy++) {
-          const int YY = (iy - s[1] - coef_ixyz[1]) / 2 + sC[1] - l->offset[1];
-          const int y = abs(iy - s[1] - coef_ixyz[1]) % 2;
-          const double dy = 0.25 * (2 * y - 1);
-          const double *dy_coef = dy > 0 ? d_coef_plus : d_coef_minus;
-          const int yinner = (YY + l->offset[1] != 0) && (YY + l->offset[1] != CBS[1] - 1);
-          const int ystart = (YY + l->offset[1] == 0);
-          for (int ix = min_ix; ix < max_ix; ix++) {
-            const int XX = (ix - s[0] - coef_ixyz[0]) / 2 + sC[0] - l->offset[0];
-            const int x = abs(ix - s[0] - coef_ixyz[0]) % 2;
-            const double dx = 0.25 * (2 * x - 1);
-            const double *dx_coef = dx > 0 ? d_coef_plus : d_coef_minus;
-            const int xinner = (XX + l->offset[0] != 0) && (XX + l->offset[0] != CBS[0] - 1);
-            const int xstart = (XX + l->offset[0] == 0);
-            Real *a = LAB(l, ix - l->ss[0], iy - l->ss[1], iz - l->ss[2]);
-            for (int c = 0; c < nc; c++) {
-#define CO(IX, IY, IZ) (COA(l, (IX), (IY), (IZ))[c])
-              Real x1D, x2D, mixed;
-              double mixed_coef = 1.0;
-              if (code[0] != 0) {
-                int YP, YM, ZP, ZM;
-                if (yinner) {
-                  x1D = (dy_coef[6] * CO(XX, YY - 1, ZZ) + dy_coef[8] * CO(XX, YY + 1, ZZ)) + dy_coef[7] * CO(XX, YY, ZZ);
-                  YP = YY + 1; YM = YY - 1; mixed_coef *= 0.5;
-                } else if (ystart) {
-                  x1D = (dy_coef[0] * CO(XX, YY + 2, ZZ) + dy_coef[1] * CO(XX, YY + 1, ZZ)) + dy_coef[2] * CO(XX, YY, ZZ);
-                  YP = YY + 1; YM = YY;
-                } else {
-                  x1D = (dy_coef[3] * CO(XX, YY - 2, ZZ) + dy_coef[4] * CO(XX, YY - 1, ZZ)) + dy_coef[5] * CO(XX, YY, ZZ);
-                  YP = YY; YM = YY - 1;
-                }
-                if (zinner) {
-                  x2D = (dz_coef[6] * CO(XX, YY, ZZ - 1) + dz_coef[8] * CO(XX, YY, ZZ + 1)) + dz_coef[7] * CO(XX, YY, ZZ);
-                  ZP = ZZ + 1; ZM = ZZ - 1; mixed_coef *= 0.5;
-                } else if (zstart) {
-                  x2D = (dz_coef[0] * CO(XX, YY, ZZ + 2) + dz_coef[1] * CO(XX, YY, ZZ + 1)) + dz_coef[2] * CO(XX, YY, ZZ);
-                  ZP = ZZ + 1; ZM = ZZ;
-                } else {
-                  x2D = (dz_coef[3] * CO(XX, YY, ZZ - 2) + dz_coef[4] * CO(XX, YY, ZZ - 1)) + dz_coef[5] * CO(XX, YY, ZZ);
-                  ZP = ZZ; ZM = ZZ - 1;
-                }
-                mixed = mixed_coef * dy * dz * ((CO(XX, YM, ZM) + CO(XX, YP, ZP)) - (CO(XX, YP, ZM) + CO(XX, YM, ZP)));
-                a[c] = (x1D + x2D) + mixed;
-              } else if (code[1] != 0) {
-                int XP, XM, ZP, ZM;
-                if (xinner) {
-                  x1D = (dx_coef[6] * CO(XX - 1, YY, ZZ) + dx_coef[8] * CO(XX + 1, YY, ZZ)) + dx_coef[7] * CO(XX, YY, ZZ);
-                  XP = XX + 1; XM = XX - 1; mixed_coef *= 0.5;
-                } else if (xstart) {
-                  x1D = (dx_coef[0] * CO(XX + 2, YY, ZZ) + dx_coef[1] * CO(XX + 1, YY, ZZ)) + dx_coef[2] * CO(XX, YY, ZZ);
-                  XP = XX + 1; XM = XX;
-                } else {
-                  x1D = (dx_coef[3] * CO(XX - 2, YY, ZZ) + dx_coef[4] * CO(XX - 1, YY, ZZ)) + dx_coef[5] * CO(XX, YY, ZZ);
-                  XP = XX; XM = XX - 1;
-                }
-                if (zinner) {
-                  x2D = (dz_coef[6] * CO(XX, YY, ZZ - 1) + dz_coef[8] * CO(XX, YY, ZZ + 1)) + dz_coef[7] * CO(XX, YY, ZZ);
-                  ZP = ZZ + 1; ZM = ZZ - 1; mixed_coef *= 0.5;
-                } else if (zstart) {
-                  x2D = (dz_coef[0] * CO(XX, YY, ZZ + 2) + dz_coef[1] * CO(XX, YY, ZZ + 1)) + dz_coef[2] * CO(XX, YY, ZZ);
-                  ZP = ZZ + 1; ZM = ZZ;
-                } else {
-                  x2D = (dz_coef[3] * CO(XX, YY, ZZ - 2) + dz_coef[4] * CO(XX, YY, ZZ - 1)) + dz_coef[5] * CO(XX, YY, ZZ);
-                  ZP = ZZ; ZM = ZZ - 1;
-                }
-                mixed = mixed_coef * dx * dz * ((CO(XM, YY, ZM) + CO(XP, YY, ZP)) - (CO(XP, YY, ZM) + CO(XM, YY, ZP)));
-                a[c] = (x1D + x2D) + mixed;
-              } else {
-                int XP, XM, YP, YM;
-                if (xinner) {
-                  x1D = (dx_coef[6] * CO(XX - 1, YY, ZZ) + dx_coef[8] * CO(XX + 1, YY, ZZ)) + dx_coef[7] * CO(XX, YY, ZZ);
-                  XP = XX + 1; XM = XX - 1; mixed_coef *= 0.5;
-                } else if (xstart) {
-                  x1D = (dx_coef[0] * CO(XX + 2, YY, ZZ) + dx_coef[1] * CO(XX + 1, YY, ZZ)) + dx_coef[2] * CO(XX, YY, ZZ);
-                  XP = XX + 1; XM = XX;
-                } else {
-                  x1D = (dx_coef[3] * CO(XX - 2, YY, ZZ) + dx_coef[4] * CO(XX - 1, YY, ZZ)) + dx_coef[5] * CO(XX, YY, ZZ);
-                  XP = XX; XM = XX - 1;
-                }
-                if (yinner) {
-                  x2D = (dy_coef[6] * CO(XX, YY - 1, ZZ) + dy_coef[8] * CO(XX, YY + 1, ZZ)) + dy_coef[7] * CO(XX, YY, ZZ);
-                  YP = YY + 1; YM = YY - 1; mixed_coef *= 0.5;
-                } else if (ystart) {
-                  x2D = (dy_coef[0] * CO(XX, YY + 2, ZZ) + dy_coef[1] * CO(XX, YY + 1, ZZ)) + dy_coef[2] * CO(XX, YY, ZZ);
-                  YP = YY + 1; YM = YY;
-                } else {
-                  x2D = (dy_coef[3] * CO(XX, YY - 2, ZZ) + dy_coef[4] * CO(XX, YY - 1, ZZ)) + dy_coef[5] * CO(XX, YY, ZZ);
-                  YP = YY; YM = YY - 1;
-                }
-                mixed = mixed_coef * dx * dy * ((CO(XM, YM, ZZ) + CO(XP, YP, ZZ)) - (CO(XP, YM, ZZ) + CO(XM, YP, ZZ)));
-                a[c] = (x1D + x2D) + mixed;
-              }
+      break;
+    }
+    case OP_INTERP: {
+#define C3(I, J, K) (l->coarse[(o->src + ((K) * cc + (J)) * cc + (I)) * nc + c])
+      for (int c = 0; c < nc; c++) {
+        const Real dudx = 0.125 * (C3(2, 1, 1) - C3(0, 1, 1));
+        const Real dudy = 0.125 * (C3(1, 2, 1) - C3(1, 0, 1));
+        const Real dudz = 0.125 * (C3(1, 1, 2) - C3(1, 1, 0));
+        const Real dudxdy = 0.015625 * (C3(0, 0, 1) + C3(2, 2, 1) - C3(2, 0, 1) - C3(0, 2, 1));
+        const Real dudxdz = 0.015625 * (C3(0, 1, 0) + C3(2, 1, 2) - C3(2, 1, 0) - C3(0, 1, 2));
+        const Real dudydz = 0.015625 * (C3(1, 0, 0) + C3(1, 2, 2) - C3(1, 2, 0) - C3(1, 0, 2));
+        const Real lap = C3(1, 1, 1) + 0.03125 * (C3(0, 1, 1) + C3(2, 1, 1) + C3(1, 0, 1) + C3(1, 2, 1) +
+                                                  C3(1, 1, 0) + C3(1, 1, 2) + (-6.0) * C3(1, 1, 1));
+        R[0 * nc + c] = lap - dudx - dudy - dudz + dudxdy + dudxdz + dudydz;
+        R[1 * nc + c] = lap + dudx - dudy - dudz - dudxdy - dudxdz + dudydz;
+        R[2 * nc + c] = lap - dudx + dudy - dudz - dudxdy + dudxdz - dudydz;
+        R[3 * nc + c] = lap + dudx + dudy - dudz + dudxdy - dudxdz - dudydz;
+        R[4 * nc + c] = lap - dudx - dudy + dudz + dudxdy - dudxdz - dudydz;
+        R[5 * nc + c] = lap + dudx - dudy + dudz - dudxdy + dudxdz - dudydz;
+        R[6 * nc + c] = lap - dudx + dudy + dudz - dudxdy - dudxdz + dudydz;
+        R[7 * nc + c] = lap + dudx + dudy + dudz + dudxdy + dudxdz + dudydz;
+      }
+#undef C3
+      for (int r = 0; r < 8; r++)
+        if (a[r] >= 0)
+          memcpy(l->cache + (long long)a[r] * nc, R + r * nc, nc * sizeof(Real));
+      break;
+    }
+    case OP_FD: {
+      static const int tang[3][2] = {{1, 2}, {0, 2}, {0, 1}};
+      const int stride[3] = {1, cc, cc * cc};
+      const int t1 = tang[a[0]][0], t2 = tang[a[0]][1];
+      const int s1 = stride[t1], s2 = stride[t2];
+      const double d1 = 0.25 * (2 * ((a[3] >> t1) & 1) - 1);
+      const double d2 = 0.25 * (2 * ((a[3] >> t2) & 1) - 1);
+      const double *c1 = d1 > 0 ? d_coef_plus : d_coef_minus;
+      const double *c2 = d2 > 0 ? d_coef_plus : d_coef_minus;
+      Real *dst = l->cache + (long long)o->dst * nc;
+      const Real *bb = l->cache + (long long)a[4] * nc;
+      const Real *cq = l->cache + (long long)a[5] * nc;
+      for (int c = 0; c < nc; c++) {
+#define CO(OFF) (l->coarse[(o->src + (OFF)) * nc + c])
+        Real x1D, x2D;
+        double mixed_coef = 1.0;
+        int P1, M1, P2, M2;
+        if (a[1] == 0) {
+          x1D = (c1[6] * CO(-s1) + c1[8] * CO(s1)) + c1[7] * CO(0);
+          P1 = s1;
+          M1 = -s1;
+          mixed_coef *= 0.5;
+        } else if (a[1] == 1) {
+          x1D = (c1[0] * CO(2 * s1) + c1[1] * CO(s1)) + c1[2] * CO(0);
+          P1 = s1;
+          M1 = 0;
+        } else {
+          x1D = (c1[3] * CO(-2 * s1) + c1[4] * CO(-s1)) + c1[5] * CO(0);
+          P1 = 0;
+          M1 = -s1;
+        }
+        if (a[2] == 0) {
+          x2D = (c2[6] * CO(-s2) + c2[8] * CO(s2)) + c2[7] * CO(0);
+          P2 = s2;
+          M2 = -s2;
+          mixed_coef *= 0.5;
+        } else if (a[2] == 1) {
+          x2D = (c2[0] * CO(2 * s2) + c2[1] * CO(s2)) + c2[2] * CO(0);
+          P2 = s2;
+          M2 = 0;
+        } else {
+          x2D = (c2[3] * CO(-2 * s2) + c2[4] * CO(-s2)) + c2[5] * CO(0);
+          P2 = 0;
+          M2 = -s2;
+        }
+        const Real mixed = mixed_coef * d1 * d2 * ((CO(M1 + M2) + CO(P1 + P2)) - (CO(P1 + M2) + CO(M1 + P2)));
 #undef CO
-              const Real bb = LAB(l, ix - l->ss[0] + (-3 * code[0] + 1) / 2 - x * abs(code[0]),
-                                  iy - l->ss[1] + (-3 * code[1] + 1) / 2 - y * abs(code[1]),
-                                  iz - l->ss[2] + (-3 * code[2] + 1) / 2 - z * abs(code[2]))[c];
-              const Real cc = LAB(l, ix - l->ss[0] + (-5 * code[0] + 1) / 2 - x * abs(code[0]),
-                                  iy - l->ss[1] + (-5 * code[1] + 1) / 2 - y * abs(code[1]),
-                                  iz - l->ss[2] + (-5 * code[2] + 1) / 2 - z * abs(code[2]))[c];
-              const int ccc = code[0] + code[1] + code[2];
-              const int xyz = abs(code[0]) * x + abs(code[1]) * y + abs(code[2]) * z;
-              if (ccc == 1)
-                a[c] = (xyz == 0) ? (1.0 / 15.0) * (8.0 * a[c] + (10.0 * bb - 3.0 * cc))
-                                  : (1.0 / 15.0) * (24.0 * a[c] + (-15.0 * bb + 6 * cc));
-              else
-                a[c] = (xyz == 1) ? (1.0 / 15.0) * (8.0 * a[c] + (10.0 * bb - 3.0 * cc))
-                                  : (1.0 / 15.0) * (24.0 * a[c] + (-15.0 * bb + 6 * cc));
-            }
-          }
-        }
+        Real v = (x1D + x2D) + mixed;
+        const int first = a[6] == 1 ? a[7] == 0 : a[7] == 1;
+        v = first ? (1.0 / 15.0) * (8.0 * v + (10.0 * bb[c] - 3.0 * cq[c]))
+                  : (1.0 / 15.0) * (24.0 * v + (-15.0 * bb[c] + 6 * cq[c]));
+        dst[c] = v;
       }
+      break;
+    }
+    case OP_BC: {
+      Real *d = buf[o->bd] + (long long)o->dst * nc;
+      const Real *s = buf[o->bs] + (long long)o->src * nc;
+      memcpy(d, s, nc * sizeof(Real));
+      if (l->vflip >= 0)
+        d[l->vflip + a[0]] = (-1.) * s[l->vflip + a[0]];
+      break;
+    }
     }
   }
+}
+static Real *lab_block(struct Lab *l, int level, long long Z) {
+  const long long i = blk_avail(level, Z);
+  if (i < 0) {
+    fprintf(stderr, "main.c: rank %d: block level %d Z %lld not available\n", sim.rank, level, Z);
+    MPI_Abort(sim.comm, 1);
+  }
+  return fld_ptr(i, l->f, 0);
 }
 static void lab_load(struct Lab *l, long long ib) {
   const struct Blk *b = &sim.blk[ib];
-  const int nX = BS, nY = BS, nZ = BS;
+  const struct LabTab *T = l->tab;
   const int aux = 1 << b->level;
   l->NX = sim.bpdx * aux;
   l->NY = sim.bpdy * aux;
   l->NZ = sim.bpdz * aux;
-  for (int iz = 0; iz < nZ; iz++)
-    for (int iy = 0; iy < nY; iy++)
-      for (int ix = 0; ix < nX; ix++)
-        copy_cell(LAB(l, ix - l->ss[0], iy - l->ss[1], iz - l->ss[2]), ib, l->f, l->nc, ix, iy, iz);
-  l->coarsened = 0;
+  for (int c = 0; c < l->nc; c++) {
+    const Real *src = fld_ptr(ib, l->f, c);
+    for (int iz = 0; iz < BS; iz++)
+      for (int iy = 0; iy < BS; iy++)
+        for (int ix = 0; ix < BS; ix++)
+          LAB(l, ix - l->ss[0], iy - l->ss[1], iz - l->ss[2])[c] = src[(iz * BS + iy) * BS + ix];
+  }
   const int xskin = b->ix == 0 || b->ix == l->NX - 1;
   const int yskin = b->iy == 0 || b->iy == l->NY - 1;
   const int zskin = b->iz == 0 || b->iz == l->NZ - 1;
   const int xskip = b->ix == 0 ? -1 : 1;
   const int yskip = b->iy == 0 ? -1 : 1;
   const int zskip = b->iz == 0 ? -1 : 1;
-  int icodes[26];
-  int k = 0;
-  l->ncoarse_codes = 0;
+  const int wall[6] = {b->ix == 0, b->ix == l->NX - 1, b->iy == 0, b->iy == l->NY - 1, b->iz == 0,
+                       b->iz == l->NZ - 1};
+  const int w = (wall[0] | wall[1] << 1) | (wall[2] | wall[3] << 1) << 2 | (wall[4] | wall[5] << 1) << 4;
+  const int par = (b->ix & 1) | (b->iy & 1) << 1 | (b->iz & 1) << 2;
+  int same[26], coarse[26], nsame = 0, ncoarse = 0;
+  unsigned coarse_mask = 0;
   for (int icode = 0; icode < 27; icode++) {
-    l->myblocks[icode] = -1;
     if (icode == 1 * 1 + 3 * 1 + 9 * 1)
       continue;
     const int code[3] = {icode % 3 - 1, (icode / 3) % 3 - 1, icode / 9 - 1};
@@ -3894,56 +3595,56 @@ static void lab_load(struct Lab *l, long long ib) {
       continue;
     if (code[2] == zskip && zskin)
       continue;
-    const struct Node *nd = node(b->level, znei(b, code[0], code[1], code[2]));
-    const int exists = nd->pos >= 0;
-    if (exists) {
-      icodes[k++] = icode;
-    } else if (nd->pos == -2) {
-      l->coarse_codes[l->ncoarse_codes++] = icode;
-      lab_coarse_fine_exchange(l, b, code);
-    }
-    if (!l->tensorial && !l->use_averages && abs(code[0]) + abs(code[1]) + abs(code[2]) > 1)
+    const long long zn = znei(b, code[0], code[1], code[2]);
+    const struct Node *nd = node_get(b->level, zn);
+    if (nd == NULL)
       continue;
-    const int s[3] = {code[0] < 1 ? (code[0] < 0 ? l->ss[0] : 0) : nX,
-                      code[1] < 1 ? (code[1] < 0 ? l->ss[1] : 0) : nY,
-                      code[2] < 1 ? (code[2] < 0 ? l->ss[2] : 0) : nZ};
-    const int e[3] = {code[0] < 1 ? (code[0] < 0 ? 0 : nX) : nX + l->se[0] - 1,
-                      code[1] < 1 ? (code[1] < 0 ? 0 : nY) : nY + l->se[1] - 1,
-                      code[2] < 1 ? (code[2] < 0 ? 0 : nZ) : nZ + l->se[2] - 1};
-    if (exists)
-      lab_same_level(l, b, code, s, e);
-    else if (nd->pos == -1)
-      lab_fine_to_coarse(l, b, code, s, e);
+    if (nd->pos >= 0) {
+      same[nsame++] = icode;
+      Real *nb = lab_block(l, b->level, zn);
+      lab_exec(l, T->same_copy[icode], &nb);
+    } else if (nd->pos == -2) {
+      coarse[ncoarse++] = icode;
+      coarse_mask |= 1u << icode;
+      const int idx[3] = {(b->ix + code[0] + l->NX) % l->NX, (b->iy + code[1] + l->NY) % l->NY,
+                          (b->iz + code[2] + l->NZ) % l->NZ};
+      Real *nb = lab_block(l, b->level - 1, zforward(b->level - 1, idx[0] / 2, idx[1] / 2, idx[2] / 2));
+      lab_exec(l, T->coarse[icode][par], &nb);
+    } else if (nd->pos == -1) {
+      Real *nb[4] = {NULL, NULL, NULL, NULL};
+      const int tmp = abs(code[0]) + abs(code[1]) + abs(code[2]);
+      const int Bstep = tmp == 2 ? 3 : tmp == 3 ? 4 : 1;
+      for (int B = 0; B <= 3; B += Bstep) {
+        const int a = (abs(code[0]) == 1) ? (B % 2) : (B / 2);
+        const int ci = 2 * b->ix + imax(code[0], 0) + code[0] + (B % 2) * imax(0, 1 - abs(code[0]));
+        const int cj = 2 * b->iy + imax(code[1], 0) + code[1] + a * imax(0, 1 - abs(code[1]));
+        const int ck = 2 * b->iz + imax(code[2], 0) + code[2] + (B / 2) * imax(0, 1 - abs(code[2]));
+        nb[B] = lab_block(l, b->level + 1, zforward(b->level + 1, ci, cj, ck));
+      }
+      lab_exec(l, T->fine[icode], nb);
+    }
   }
-  if (l->ncoarse_codes > 0)
-    for (int i = 0; i < k; ++i) {
-      const int icode = icodes[i];
-      const int code[3] = {icode % 3 - 1, (icode / 3) % 3 - 1, icode / 9 - 1};
-      const int infoNei_index[3] = {(b->ix + code[0] + l->NX) % l->NX, (b->iy + code[1] + l->NY) % l->NY,
-                                    (b->iz + code[2] + l->NZ) % l->NZ};
-      if (lab_use_coarse_stencil(l, b, infoNei_index)) {
-        lab_fill_coarse_version(l, code);
-        l->coarsened = 1;
+  int coarsened = 0;
+  if (ncoarse > 0)
+    for (int k = 0; k < nsame; k++) {
+      const int icode = same[k];
+      if (T->relevant[icode][w] & coarse_mask) {
+        const int code[3] = {icode % 3 - 1, (icode / 3) % 3 - 1, icode / 9 - 1};
+        Real *nb = lab_block(l, b->level, znei(b, code[0], code[1], code[2]));
+        lab_exec(l, T->same_cfill[icode], &nb);
+        coarsened = 1;
       }
     }
-  if (l->coarsened)
-    for (int kk = 0; kk < nZ / 2; kk++)
-      for (int j = 0; j < nY / 2; j++)
-        for (int i = 0; i < nX / 2; i++) {
-          if (i > -l->is[0] && i < nX / 2 - l->ie[0] && j > -l->is[1] && j < nY / 2 - l->ie[1] &&
-              kk > -l->is[2] && kk < nZ / 2 - l->ie[2])
-            continue;
-          const int ix = 2 * i - l->ss[0];
-          const int iy = 2 * j - l->ss[1];
-          const int iz = 2 * kk - l->ss[2];
-          avg8(COA(l, i - l->offset[0], j - l->offset[1], kk - l->offset[2]),
-               LAB(l, ix, iy, iz), LAB(l, ix + 1, iy, iz), LAB(l, ix, iy + 1, iz), LAB(l, ix + 1, iy + 1, iz),
-               LAB(l, ix, iy, iz + 1), LAB(l, ix + 1, iy, iz + 1), LAB(l, ix, iy + 1, iz + 1),
-               LAB(l, ix + 1, iy + 1, iz + 1), l->nc);
-        }
-  lab_apply_bc(l, b, 1);
-  lab_coarse_fine_interpolation(l, b);
-  lab_apply_bc(l, b, 0);
+  if (coarsened)
+    lab_exec(l, T->own_avg, NULL);
+  for (int f = 0; f < 6; f++)
+    if (wall[f])
+      lab_exec(l, T->bc[f][1], NULL);
+  for (int k = 0; k < ncoarse; k++)
+    lab_exec(l, T->interp[coarse[k]], NULL);
+  for (int f = 0; f < 6; f++)
+    if (wall[f])
+      lab_exec(l, T->bc[f][0], NULL);
 }
 
 static void kernel_gradchi(struct Lab *l, long long ib) {
@@ -3982,13 +3683,17 @@ static void kernel_gradchi(struct Lab *l, long long ib) {
       }
 }
 static void compute_gradchi(void) {
-  struct Lab l;
-  lab_init(&l, F_CHI, 1, -2, -2, -2, 3, 3, 3, 1, -1);
-  for (long long i = 0; i < sim.nblk; i++) {
-    lab_load(&l, i);
-    kernel_gradchi(&l, i);
+#pragma omp parallel
+  {
+    struct Lab l;
+    lab_init(&l, F_CHI, 1, 2, 1, -1);
+#pragma omp for schedule(dynamic, 1)
+    for (long long i = 0; i < sim.nblk; i++) {
+      lab_load(&l, i);
+      kernel_gradchi(&l, i);
+    }
+    lab_free(&l);
   }
-  lab_free(&l);
 }
 static int tag_block(long long i) {
   const Real *u0 = BLK(i) + F_TMP * BS3, *u1 = u0 + BS3, *u2 = u1 + BS3;
@@ -4003,10 +3708,11 @@ static int tag_block(long long i) {
     return Compress;
   return Leave;
 }
-static void set_state(long long i, int st) { node(sim.blk[i].level, sim.blk[i].Z)->state = st; }
-static int get_state(long long i) { return node(sim.blk[i].level, sim.blk[i].Z)->state; }
+static void set_state(long long i, int st) { node_get(sim.blk[i].level, sim.blk[i].Z)->state = st; }
+static int get_state(long long i) { return node_get(sim.blk[i].level, sim.blk[i].Z)->state; }
 static int tag_all(void) {
   int changed = 0;
+#pragma omp parallel for reduction(| : changed)
   for (long long i = 0; i < sim.nblk; i++) {
     int st = tag_block(i);
     const int level = sim.blk[i].level;
@@ -4460,7 +4166,7 @@ static void adapt_mesh(void) {
   MPI_Allgather(&blocks_after, 1, MPI_LONG_LONG, dist, 1, MPI_LONG_LONG, sim.comm);
   halo_sync(F_PRES, 4);
   struct Lab lab;
-  lab_init(&lab, F_PRES, 4, -1, -1, -1, 2, 2, 2, 1, 1);
+  lab_init(&lab, F_PRES, 4, 1, 1, 1);
   for (long long r = 0; r < nref; r++) {
     struct Node *pn = node_find(ref[r], 1);
     const long long ip = pn->local;
@@ -4580,6 +4286,7 @@ static void adapt_mesh(void) {
   fc_prepare();
 }
 static void zero_fields(void) {
+#pragma omp parallel for
   for (long long i = 0; i < sim.nblk; i++) {
     memset(BLK(i) + F_PRES * BS3, 0, BS3 * sizeof(Real));
     memset(BLK(i) + F_VEL * BS3, 0, 3 * BS3 * sizeof(Real));
@@ -4603,6 +4310,7 @@ static void fc_fill(int f, int nc) {
   const int Q = 16 * nc;
   Real *sbuf = (Real *)malloc((fc.nsend > 0 ? fc.nsend : 1) * Q * sizeof(Real));
   Real *rbuf = (Real *)malloc((fc.nrecv > 0 ? fc.nrecv : 1) * Q * sizeof(Real));
+#pragma omp parallel for
   for (long long k = 0; k < fc.nsend; k++) {
     const long long *e = fc.send + 4 * k;
     for (int c = 0; c < nc; c++) {
@@ -4628,6 +4336,7 @@ static void fc_fill(int f, int nc) {
       MPI_Isend(sbuf + (long long)fc.sdsp[r] * Q, fc.scnt[r] * Q, MPI_Real, r, 3, sim.comm, &req[nreq++]);
   }
   MPI_Waitall(nreq, req, MPI_STATUSES_IGNORE);
+#pragma omp parallel for
   for (long long k = 0; k < fc.nrecv; k++) {
     const long long *e = fc.recv + 6 * k;
     const int B = (int)e[5];
@@ -4721,25 +4430,31 @@ static void compute_lhs(void) {
   Real avgP = 0;
   long long index = -1;
   if (sim.bMeanConstraint <= 2 && sim.bMeanConstraint > 0) {
+    for (long long i = 0; i < sim.nblk; ++i)
+      if (sim.blk[i].ix == 0 && sim.blk[i].iy == 0 && sim.blk[i].iz == 0)
+        index = i;
+#pragma omp parallel for reduction(+ : avgP)
     for (long long i = 0; i < sim.nblk; ++i) {
       const struct Blk *b = &sim.blk[i];
       const Real *Z = BLK(i) + F_PRES * BS3;
       const Real h3 = b->h * b->h * b->h;
-      if (b->ix == 0 && b->iy == 0 && b->iz == 0)
-        index = i;
       for (int j = 0; j < BS3; j++)
         avgP += Z[j] * h3;
     }
     MPI_Allreduce(MPI_IN_PLACE, &avgP, 1, MPI_Real, MPI_SUM, sim.comm);
   }
   halo_sync(F_PRES, 1);
-  struct Lab l;
-  lab_init(&l, F_PRES, 1, -1, -1, -1, 2, 2, 2, 0, -1);
-  for (long long i = 0; i < sim.nblk; i++) {
-    lab_load(&l, i);
-    kernel_lhs(&l, i);
+#pragma omp parallel
+  {
+    struct Lab l;
+    lab_init(&l, F_PRES, 1, 1, 0, -1);
+#pragma omp for schedule(dynamic, 1)
+    for (long long i = 0; i < sim.nblk; i++) {
+      lab_load(&l, i);
+      kernel_lhs(&l, i);
+    }
+    lab_free(&l);
   }
-  lab_free(&l);
   fc_fill(F_LHS, 1);
   if (sim.bMeanConstraint == 0)
     return;
@@ -4747,6 +4462,7 @@ static void compute_lhs(void) {
     if (sim.bMeanConstraint == 1 && index != -1) {
       BLK(index)[F_LHS * BS3] = avgP;
     } else if (sim.bMeanConstraint == 2) {
+#pragma omp parallel for
       for (long long i = 0; i < sim.nblk; ++i) {
         Real *LHS = BLK(i) + F_LHS * BS3;
         const Real h3 = sim.blk[i].h * sim.blk[i].h * sim.blk[i].h;
@@ -4819,7 +4535,11 @@ static Real getz_inner(Real p[BS + 2][BS + 2][BS + 2 * XPAD], Real Ax[BS3], Real
   return sqrSum;
 }
 static void getz(void) {
-  static Real r[BS3], Ax[BS3], p[BS + 2][BS + 2][BS + 2 * XPAD];
+#pragma omp parallel
+  {
+  Real r[BS3], Ax[BS3], p[BS + 2][BS + 2][BS + 2 * XPAD];
+  memset(p, 0, sizeof p);
+#pragma omp for
   for (long long i = 0; i < sim.nblk; ++i) {
     Real *block = BLK(i) + F_PRES * BS3;
     const Real invh = 1 / sim.blk[i].h;
@@ -4844,12 +4564,15 @@ static void getz(void) {
         break;
     }
   }
+  }
 }
 static void field_set(int f, const Real *in) {
+#pragma omp parallel for
   for (long long i = 0; i < sim.nblk; i++)
     memcpy(BLK(i) + f * BS3, in + i * BS3, BS3 * sizeof(Real));
 }
 static void field_get(int f, Real *out) {
+#pragma omp parallel for
   for (long long i = 0; i < sim.nblk; i++)
     memcpy(out + i * BS3, BLK(i) + f * BS3, BS3 * sizeof(Real));
 }
@@ -4887,6 +4610,7 @@ static void poisson_solve(void) {
     }
     cap = N;
   }
+#pragma omp parallel for
   for (long long i = 0; i < sim.nblk; i++) {
     Real *rhs = BLK(i) + F_LHS * BS3;
     const Real *zz = BLK(i) + F_PRES * BS3;
@@ -4901,6 +4625,7 @@ static void poisson_solve(void) {
     }
   }
   poisson_lhs(x, r0);
+#pragma omp parallel for
   for (long long i = 0; i < N; i++) {
     r0[i] = r[i] - r0[i];
     r[i] = r0[i];
@@ -4917,6 +4642,7 @@ static void poisson_solve(void) {
   {
     Real temp0 = 0.0;
     Real temp1 = 0.0;
+#pragma omp parallel for reduction(+ : temp0, temp1, norm)
     for (long long j = 0; j < N; j++) {
       temp0 += r0[j] * r0[j];
       temp1 += r0[j] * w[j];
@@ -4934,6 +4660,7 @@ static void poisson_solve(void) {
     Real qy = 0.0;
     Real yy = 0.0;
     if (k % 50 != 0) {
+#pragma omp parallel for reduction(+ : qy, yy)
       for (long long j = 0; j < N; j++) {
         phat[j] = rhat[j] + beta * (phat[j] - omega * shat[j]);
         s[j] = w[j] + beta * (s[j] - omega * z[j]);
@@ -4946,11 +4673,13 @@ static void poisson_solve(void) {
         yy += y[j] * y[j];
       }
     } else {
+#pragma omp parallel for
       for (long long j = 0; j < N; j++)
         phat[j] = rhat[j] + beta * (phat[j] - omega * shat[j]);
       poisson_lhs(phat, s);
       poisson_precond(s, shat);
       poisson_lhs(shat, z);
+#pragma omp parallel for reduction(+ : qy, yy)
       for (long long j = 0; j < N; j++) {
         q[j] = r[j] - alpha * s[j];
         qhat[j] = rhat[j] - alpha * shat[j];
@@ -4976,6 +4705,7 @@ static void poisson_solve(void) {
     norm_1 = 0.0;
     norm_2 = 0.0;
     if (k % 50 != 0) {
+#pragma omp parallel for reduction(+ : r0r, r0w, r0s, r0z, norm_1, norm_2, norm)
       for (long long j = 0; j < N; j++) {
         x[j] = x[j] + alpha * phat[j] + omega * qhat[j];
         r[j] = q[j] - omega * y[j];
@@ -4990,13 +4720,16 @@ static void poisson_solve(void) {
         norm_2 += r0[j] * r0[j];
       }
     } else {
+#pragma omp parallel for
       for (long long j = 0; j < N; j++)
         x[j] = x[j] + alpha * phat[j] + omega * qhat[j];
       poisson_lhs(x, r);
+#pragma omp parallel for
       for (long long j = 0; j < N; j++)
         r[j] = b[j] - r[j];
       poisson_precond(r, rhat);
       poisson_lhs(rhat, w);
+#pragma omp parallel for reduction(+ : r0r, r0w, r0s, r0z, norm_1, norm_2, norm)
       for (long long j = 0; j < N; j++) {
         r0r += r0[j] * r[j];
         r0w += r0[j] * w[j];
@@ -5034,6 +4767,7 @@ static void poisson_solve(void) {
     serious_breakdown = r0r * r0r < 1e-16 * norm_1 * norm_2;
     if (serious_breakdown && restarts < max_restarts) {
       restarts++;
+#pragma omp parallel for
       for (long long i = 0; i < N; i++)
         r0[i] = r[i];
       poisson_precond(r0, rhat);
@@ -5041,6 +4775,7 @@ static void poisson_solve(void) {
       alpha = 0.0;
       Real temp0 = 0.0;
       Real temp1 = 0.0;
+#pragma omp parallel for reduction(+ : temp0, temp1)
       for (long long j = 0; j < N; j++) {
         temp0 += r0[j] * r0[j];
         temp1 += r0[j] * w[j];
@@ -5057,6 +4792,7 @@ static void poisson_solve(void) {
     if (norm < min_norm) {
       useXopt = 1;
       min_norm = norm;
+#pragma omp parallel for
       for (long long i = 0; i < N; i++)
         x_opt[i] = x[i];
     }
@@ -5164,18 +4900,24 @@ static void kernel_advect_diffuse(struct Lab *l, long long i) {
 static void advection_diffusion(void) {
   const Real alpha[3] = {1.0 / 3.0, 15.0 / 16.0, 8.0 / 15.0};
   const Real beta[3] = {-5.0 / 9.0, -153.0 / 128.0, 0.0};
+#pragma omp parallel for
   for (long long i = 0; i < sim.nblk; i++)
     memset(BLK(i) + F_TMP * BS3, 0, 3 * BS3 * sizeof(Real));
   for (int RKstep = 0; RKstep < 3; RKstep++) {
     halo_sync(F_VEL, 3);
-    struct Lab l;
-    lab_init(&l, F_VEL, 3, -3, -3, -3, 4, 4, 4, 0, 0);
-    for (long long i = 0; i < sim.nblk; i++) {
-      lab_load(&l, i);
-      kernel_advect_diffuse(&l, i);
+#pragma omp parallel
+    {
+      struct Lab l;
+      lab_init(&l, F_VEL, 3, 3, 0, 0);
+#pragma omp for schedule(dynamic, 1)
+      for (long long i = 0; i < sim.nblk; i++) {
+        lab_load(&l, i);
+        kernel_advect_diffuse(&l, i);
+      }
+      lab_free(&l);
     }
-    lab_free(&l);
     fc_fill(F_TMP, 3);
+#pragma omp parallel for
     for (long long i = 0; i < sim.nblk; i++) {
       const Real h = sim.blk[i].h;
       const Real ih3 = alpha[RKstep] / (h * h * h);
@@ -5945,6 +5687,7 @@ static void kernel_gradp(struct Lab *l, long long i) {
 static void update_tmpv(void) {
   for (int k = 0; k < sim.nfish; k++) {
     const struct Fish *f = &sim.fish[k];
+#pragma omp parallel for schedule(dynamic, 1)
     for (long long i = 0; i < sim.nblk; ++i) {
       const struct ObstacleBlock *o = f->oblock[i];
       if (o == NULL)
@@ -5972,17 +5715,20 @@ static void pressure_projection(void) {
     pOld = (Real *)malloc(N * sizeof(Real));
     cap = N;
   }
+#pragma omp parallel for
   for (long long i = 0; i < sim.nblk; i++) {
     memcpy(pOld + i * BS3, BLK(i) + F_PRES * BS3, BS3 * sizeof(Real));
     memset(BLK(i) + F_TMP * BS3, 0, 3 * BS3 * sizeof(Real));
   }
   if (sim.nfish > 0)
     update_tmpv();
+  halo_sync(F_VEL, 6);
+#pragma omp parallel
   {
-    halo_sync(F_VEL, 6);
     struct Lab l, l2;
-    lab_init(&l, F_VEL, 3, -1, -1, -1, 2, 2, 2, 0, 0);
-    lab_init(&l2, F_TMP, 3, -1, -1, -1, 2, 2, 2, 0, 0);
+    lab_init(&l, F_VEL, 3, 1, 0, 0);
+    lab_init(&l2, F_TMP, 3, 1, 0, 0);
+#pragma omp for schedule(dynamic, 1)
     for (long long i = 0; i < sim.nblk; i++) {
       lab_load(&l, i);
       lab_load(&l2, i);
@@ -5990,18 +5736,23 @@ static void pressure_projection(void) {
     }
     lab_free(&l);
     lab_free(&l2);
-    fc_fill(F_LHS, 1);
   }
+  fc_fill(F_LHS, 1);
   if (sim.step > sim.step_2nd_start) {
     halo_sync(F_PRES, 1);
-    struct Lab l;
-    lab_init(&l, F_PRES, 1, -1, -1, -1, 2, 2, 2, 0, -1);
-    for (long long i = 0; i < sim.nblk; i++) {
-      lab_load(&l, i);
-      kernel_div_pressure(&l, i);
+#pragma omp parallel
+    {
+      struct Lab l;
+      lab_init(&l, F_PRES, 1, 1, 0, -1);
+#pragma omp for schedule(dynamic, 1)
+      for (long long i = 0; i < sim.nblk; i++) {
+        lab_load(&l, i);
+        kernel_div_pressure(&l, i);
+      }
+      lab_free(&l);
     }
-    lab_free(&l);
     fc_fill(F_TMP, 3);
+#pragma omp parallel for
     for (long long i = 0; i < sim.nblk; i++) {
       const Real *b = BLK(i) + F_TMP * BS3;
       Real *LHS = BLK(i) + F_LHS * BS3;
@@ -6012,12 +5763,14 @@ static void pressure_projection(void) {
       }
     }
   } else {
+#pragma omp parallel for
     for (long long i = 0; i < sim.nblk; i++)
       memset(BLK(i) + F_PRES * BS3, 0, BS3 * sizeof(Real));
   }
   poisson_solve();
   Real avg = 0;
   Real avg1 = 0;
+#pragma omp parallel for reduction(+ : avg, avg1)
   for (long long i = 0; i < sim.nblk; i++) {
     const Real *P = BLK(i) + F_PRES * BS3;
     const Real vv = sim.blk[i].h * sim.blk[i].h * sim.blk[i].h;
@@ -6031,28 +5784,34 @@ static void pressure_projection(void) {
   avg = quantities[0];
   avg1 = quantities[1];
   avg = avg / avg1;
+#pragma omp parallel for
   for (long long i = 0; i < sim.nblk; i++) {
     Real *P = BLK(i) + F_PRES * BS3;
     for (int j = 0; j < BS3; j++)
       P[j] -= avg;
   }
-  if (sim.step > sim.step_2nd_start)
+  if (sim.step > sim.step_2nd_start) {
+#pragma omp parallel for
     for (long long i = 0; i < sim.nblk; i++) {
       Real *p = BLK(i) + F_PRES * BS3;
       for (int j = 0; j < BS3; j++)
         p[j] += pOld[i * BS3 + j];
     }
+  }
+  halo_sync(F_PRES, 1);
+#pragma omp parallel
   {
-    halo_sync(F_PRES, 1);
     struct Lab l;
-    lab_init(&l, F_PRES, 1, -1, -1, -1, 2, 2, 2, 0, -1);
+    lab_init(&l, F_PRES, 1, 1, 0, -1);
+#pragma omp for schedule(dynamic, 1)
     for (long long i = 0; i < sim.nblk; i++) {
       lab_load(&l, i);
       kernel_gradp(&l, i);
     }
     lab_free(&l);
-    fc_fill(F_TMP, 3);
   }
+  fc_fill(F_TMP, 3);
+#pragma omp parallel for
   for (long long i = 0; i < sim.nblk; i++) {
     const Real h = sim.blk[i].h;
     const Real fac = 1.0 / (h * h * h);
@@ -6065,6 +5824,7 @@ static void pressure_projection(void) {
 
 static Real find_max_u(void) {
   Real maxU = 0;
+#pragma omp parallel for reduction(max : maxU)
   for (long long i = 0; i < sim.nblk; i++) {
     const Real *b = BLK(i) + F_VEL * BS3;
     for (int j = 0; j < BS3; j++) {
@@ -6206,6 +5966,7 @@ int main(int argc, char **argv) {
   struct Params parser;
   params_from_argv(&parser, argc, argv);
   parse_arguments(&parser);
+  lab_tables_init();
   add_obstacles(&parser);
   const char *replay = param_str(&parser, "midline_replay", "");
   if (replay[0])

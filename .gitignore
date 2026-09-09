@@ -7,3 +7,4 @@ post.mp4
 *.gcno
 cover.*
 !cover.sh
+lab_*.bin
