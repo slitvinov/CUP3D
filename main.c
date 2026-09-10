@@ -2243,7 +2243,8 @@ static void construct_surface(const struct Frame *fr, Real h, Real ox, Real oy,
                 const Real PP[3] = {rX[TS] + signW * width[TS] * norX[TS],
                                     rY[TS] + signW * width[TS] * norY[TS],
                                     rZ[TS] + signW * width[TS] * norZ[TS]};
-                defblock->sdfLab[sz][sy][sx] = dist_plane(PC, PT, PP, p, PF);
+                const Real dplane = dist_plane(PC, PT, PP, p, PF);
+                defblock->sdfLab[sz][sy][sx] = dplane * fabs(dplane);
               } else if (dSsq >= radius_close + radius_second - corr) {
                 const Real xMidl[3] = {rX[close_s], rY[close_s], rZ[close_s]};
                 const Real grd2ML = euler_dist_sq(p, xMidl);
