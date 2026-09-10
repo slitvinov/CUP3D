@@ -3666,11 +3666,11 @@ static void kernel_gradchi(struct Lab *l, long long ib) {
           T0(h - 1, h - 1, h - 1) = 1e10;
           T0(h, h - 1, h - 1) = 1e10;
           T0(h - 1, h, h - 1) = 1e10;
-          T0(h, h - 1, h - 1) = 1e10;
-          T0(h - 1, h - 1, h) = 1e10;
-          T0(h, h, h) = 1e10;
+          T0(h, h, h - 1) = 1e10;
           T0(h - 1, h - 1, h) = 1e10;
           T0(h, h - 1, h) = 1e10;
+          T0(h - 1, h, h) = 1e10;
+          T0(h, h, h) = 1e10;
 #undef T0
           done = 1;
           break;
@@ -4137,7 +4137,9 @@ static int balance_diffusion(const long long *dist) {
   free(rr);
   return moved >= 1;
 }
+static void compute_vorticity(void);
 static void adapt_mesh(void) {
+  compute_vorticity();
   halo_sync(F_CHI, 1);
   compute_gradchi();
   int changed = tag_all();
@@ -4606,7 +4608,7 @@ static void poisson_solve(void) {
                       &t,    &v,    &q,    &r,    &y,    &x,    &r0, &b, &x_opt};
     for (int k = 0; k < 18; k++) {
       free(*all[k]);
-      *all[k] = (Real *)malloc(N * sizeof(Real));
+      *all[k] = (Real *)calloc(N, sizeof(Real));
     }
     cap = N;
   }
@@ -5682,6 +5684,92 @@ static void kernel_gradp(struct Lab *l, long long i) {
     for (int y = 0; y < BS; ++y)
       for (int x = 0; x < BS; ++x)
         F[x + BS * y] = -fac * (L(x, y, z + 1, 0) + L(x, y, z, 0));
+  }
+}
+static void kernel_vorticity(struct Lab *l, long long i) {
+  const Real h = sim.blk[i].h;
+  const Real inv2h = .5 * h * h;
+  Real *o = BLK(i) + F_TMP * BS3;
+  for (int z = 0; z < BS; ++z)
+    for (int y = 0; y < BS; ++y)
+      for (int x = 0; x < BS; ++x) {
+        o[0 * BS3 + IDX(x, y, z)] =
+            inv2h * ((L(x, y + 1, z, 2) - L(x, y - 1, z, 2)) - (L(x, y, z + 1, 1) - L(x, y, z - 1, 1)));
+        o[1 * BS3 + IDX(x, y, z)] =
+            inv2h * ((L(x, y, z + 1, 0) - L(x, y, z - 1, 0)) - (L(x + 1, y, z, 2) - L(x - 1, y, z, 2)));
+        o[2 * BS3 + IDX(x, y, z)] =
+            inv2h * ((L(x + 1, y, z, 1) - L(x - 1, y, z, 1)) - (L(x, y + 1, z, 0) - L(x, y - 1, z, 0)));
+      }
+  if (fc_face(i, 0, 0)) {
+    const int x = 0;
+    for (int z = 0; z < BS; ++z)
+      for (int y = 0; y < BS; ++y) {
+        fc_face(i, 0, 1)[y + BS * z] = -inv2h * (L(x - 1, y, z, 2) + L(x, y, z, 2));
+        fc_face(i, 0, 2)[y + BS * z] = +inv2h * (L(x - 1, y, z, 1) + L(x, y, z, 1));
+      }
+  }
+  if (fc_face(i, 1, 0)) {
+    const int x = BS - 1;
+    for (int z = 0; z < BS; ++z)
+      for (int y = 0; y < BS; ++y) {
+        fc_face(i, 1, 1)[y + BS * z] = +inv2h * (L(x + 1, y, z, 2) + L(x, y, z, 2));
+        fc_face(i, 1, 2)[y + BS * z] = -inv2h * (L(x + 1, y, z, 1) + L(x, y, z, 1));
+      }
+  }
+  if (fc_face(i, 2, 0)) {
+    const int y = 0;
+    for (int z = 0; z < BS; ++z)
+      for (int x = 0; x < BS; ++x) {
+        fc_face(i, 2, 0)[x + BS * z] = +inv2h * (L(x, y - 1, z, 2) + L(x, y, z, 2));
+        fc_face(i, 2, 2)[x + BS * z] = -inv2h * (L(x, y - 1, z, 0) + L(x, y, z, 0));
+      }
+  }
+  if (fc_face(i, 3, 0)) {
+    const int y = BS - 1;
+    for (int z = 0; z < BS; ++z)
+      for (int x = 0; x < BS; ++x) {
+        fc_face(i, 3, 0)[x + BS * z] = -inv2h * (L(x, y + 1, z, 2) + L(x, y, z, 2));
+        fc_face(i, 3, 2)[x + BS * z] = +inv2h * (L(x, y + 1, z, 0) + L(x, y, z, 0));
+      }
+  }
+  if (fc_face(i, 4, 0)) {
+    const int z = 0;
+    for (int y = 0; y < BS; ++y)
+      for (int x = 0; x < BS; ++x) {
+        fc_face(i, 4, 0)[x + BS * y] = -inv2h * (L(x, y, z - 1, 1) + L(x, y, z, 1));
+        fc_face(i, 4, 1)[x + BS * y] = +inv2h * (L(x, y, z - 1, 0) + L(x, y, z, 0));
+      }
+  }
+  if (fc_face(i, 5, 0)) {
+    const int z = BS - 1;
+    for (int y = 0; y < BS; ++y)
+      for (int x = 0; x < BS; ++x) {
+        fc_face(i, 5, 0)[x + BS * y] = +inv2h * (L(x, y, z + 1, 1) + L(x, y, z, 1));
+        fc_face(i, 5, 1)[x + BS * y] = -inv2h * (L(x, y, z + 1, 0) + L(x, y, z, 0));
+      }
+  }
+}
+static void compute_vorticity(void) {
+  halo_sync(F_VEL, 3);
+#pragma omp parallel
+  {
+    struct Lab l;
+    lab_init(&l, F_VEL, 3, 1, 0, 0);
+#pragma omp for schedule(dynamic, 1)
+    for (long long i = 0; i < sim.nblk; i++) {
+      lab_load(&l, i);
+      kernel_vorticity(&l, i);
+    }
+    lab_free(&l);
+  }
+  fc_fill(F_TMP, 3);
+#pragma omp parallel for
+  for (long long i = 0; i < sim.nblk; i++) {
+    const Real h = sim.blk[i].h;
+    const Real fac = 1.0 / (h * h * h);
+    Real *b = BLK(i) + F_TMP * BS3;
+    for (int j = 0; j < 3 * BS3; j++)
+      b[j] *= fac;
   }
 }
 static void update_tmpv(void) {
