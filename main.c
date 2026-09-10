@@ -963,7 +963,7 @@ static void integrate_linear_momentum(struct Midline *m) {
   Real volume;
   Real aux;
   int d;
-#pragma omp parallel for schedule(static) reduction(+ : V, cm[ : 3], lm[ : 3])
+
   for (i = 0; i < Nm; ++i) {
     Real ds =
         0.5 * ((i == 0) ? rS[1] - rS[0] : ((i == Nm - 1) ? rS[Nm - 1] - rS[Nm - 2] : rS[i + 1] - rS[i - 1]));
@@ -1085,7 +1085,7 @@ static void integrate_angular_momentum(struct Midline *m, Real dt) {
   Real determinant;
   Real dqdt[4];
   Real R[3][3];
-#pragma omp parallel for reduction(+ : Jd[ : 3], Jo[ : 3], AM[ : 3])
+
   for (i = 0; i < Nm; ++i) {
     Real ds =
         0.5 * ((i == 0) ? rS[1] - rS[0] : ((i == Nm - 1) ? rS[Nm - 1] - rS[Nm - 2] : rS[i + 1] - rS[i - 1]));
@@ -1208,9 +1208,7 @@ static void fish_init(struct Fish *f) {
   profile_apply(height_profiles, NHEIGHT, "height", f->heightProfile, f->length, f->m.rS, f->m.height,
                 f->m.Nm);
   profile_apply(width_profiles, NWIDTH, "width", f->widthProfile, f->length, f->m.rS, f->m.width, f->m.Nm);
-  /* interior points with a degenerate cross-section: construct_surface needs
-     a positive major axis; done once here, not from inside the parallel
-     geometry build, which raced on these shared arrays */
+
   for (d = 1; d < f->m.Nm - 1; d++) {
     if (f->m.height[d] <= 0)
       f->m.height[d] = 1e-10;
@@ -1469,7 +1467,7 @@ static void mpi_check(int err, char *what) {
   MPI_Error_string(err, msg, &len);
   fatal("%s: %s", what, msg);
 }
-/* collective write of n records of m floats per rank, record offset off */
+
 static void write_raw(char *path, float *buf, long n, int m, long off) {
   MPI_File fp;
   MPI_Datatype t;
@@ -3518,8 +3516,8 @@ static void lab_load(struct Lab *l, long long ib) {
     long long zn = znei(b, code[0], code[1], code[2]);
     struct Node *nd = node_get(b->level, zn);
     if (nd == NULL)
-      fatal("lab_load: no tree entry for neighbor level %d Z %lld of level %d Z %lld", b->level, zn,
-            b->level, b->Z);
+      fatal("lab_load: no tree entry for neighbor level %d Z %lld of level %d Z %lld", b->level, zn, b->level,
+            b->Z);
     if (nd->pos >= 0) {
       Real *nb;
       same[nsame++] = icode;
