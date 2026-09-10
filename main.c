@@ -1479,22 +1479,28 @@ static void write_raw(char *path, float *buf, long n, int m, long off) {
   mpi_check(MPI_File_close(&fp), path);
   MPI_Type_free(&t);
 }
+static void compute_vorticity(void);
 static void dump(Real time, char *path) {
-  long i, j, k, l, x, y, z, ncell, ncell_total, offset;
-  char xyz_path[FILENAME_MAX], attr_path[FILENAME_MAX], xdmf_path[FILENAME_MAX], *xyz_base, *attr_base;
+  long i, j, k, l, m, x, y, z, ncell, ncell_total, offset;
+  char xyz_path[FILENAME_MAX], attr_path[FILENAME_MAX], vort_path[FILENAME_MAX], xdmf_path[FILENAME_MAX],
+      *xyz_base, *attr_base, *vort_base;
   FILE *xmf;
-  float *xyz, *attr;
+  float *xyz, *attr, *vort;
   static int corner[8][3] = {{0, 0, 0}, {0, 0, 1}, {0, 1, 1}, {0, 1, 0},
                              {1, 0, 0}, {1, 0, 1}, {1, 1, 1}, {1, 1, 0}};
+  compute_vorticity();
   snprintf(xyz_path, sizeof xyz_path, "%s.xyz.raw", path);
   snprintf(attr_path, sizeof attr_path, "%s.attr.raw", path);
+  snprintf(vort_path, sizeof vort_path, "%s.vort.raw", path);
   snprintf(xdmf_path, sizeof xdmf_path, "%s.xdmf2", path);
   xyz_base = xyz_path;
   attr_base = attr_path;
+  vort_base = vort_path;
   for (j = 0; xyz_path[j] != '\0'; j++) {
     if (xyz_path[j] == '/' && xyz_path[j + 1] != '\0') {
       xyz_base = &xyz_path[j + 1];
       attr_base = &attr_path[j + 1];
+      vort_base = &vort_path[j + 1];
     }
   }
   ncell = sta.nblk * BS3;
@@ -1533,19 +1539,32 @@ static void dump(Real time, char *path) {
             "           %s\n"
             "         </DataItem>\n"
             "       </Attribute>\n"
+            "       <Attribute\n"
+            "           Name=\"vorticity\"\n"
+            "           AttributeType=\"Vector\"\n"
+            "           Center=\"Cell\">\n"
+            "         <DataItem\n"
+            "             Dimensions=\"%ld 3\"\n"
+            "             Format=\"Binary\">\n"
+            "           %s\n"
+            "         </DataItem>\n"
+            "       </Attribute>\n"
             "    </Grid>\n"
             "  </Domain>\n"
             "</Xdmf>\n",
-            time, ncell_total, 8 * ncell_total, xyz_base, ncell_total, attr_base);
+            time, ncell_total, 8 * ncell_total, xyz_base, ncell_total, attr_base, ncell_total, vort_base);
     fclose(xmf);
   }
   xyz = emalloc(3 * 8 * ncell * sizeof *xyz);
   attr = emalloc(ncell * sizeof *attr);
+  vort = emalloc(3 * ncell * sizeof *vort);
   k = 0;
   l = 0;
+  m = 0;
   for (i = 0; i < sta.nblk; i++) {
     struct Blk *b = &sta.blk[i];
     Real *chi = fld(i, F_CHI);
+    Real *om = fld(i, F_TMP);
     j = 0;
     for (z = 0; z < BS; z++)
       for (y = 0; y < BS; y++)
@@ -1564,6 +1583,9 @@ static void dump(Real time, char *path) {
             xyz[k++] = corner[q][1] ? v1 : v0;
             xyz[k++] = corner[q][2] ? w1 : w0;
           }
+          vort[m++] = om[j];
+          vort[m++] = om[BS3 + j];
+          vort[m++] = om[2 * BS3 + j];
           attr[l++] = chi[j++];
         }
   }
@@ -1571,6 +1593,8 @@ static void dump(Real time, char *path) {
   free(xyz);
   write_raw(attr_path, attr, ncell, 1, offset);
   free(attr);
+  write_raw(vort_path, vort, ncell, 3, offset);
+  free(vort);
 }
 static char *parse_arguments(int argc, char **argv) {
   int seen[NSIMP];
