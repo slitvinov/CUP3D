@@ -4175,7 +4175,6 @@ static void adapt_mesh(void) {
   }
   int temp[2] = {(int)nref, (int)ncom}, result[2];
   MPI_Allreduce(temp, result, 2, MPI_INT, MPI_SUM, sim.comm);
-  if (sim.rank == 0) fprintf(stderr, "TMPAMR step %d nref %d ncom %d\n", sim.step, result[0], result[1]);
   long long *dist = (long long *)malloc(sim.size * sizeof *dist);
   MPI_Allgather(&blocks_after, 1, MPI_LONG_LONG, dist, 1, MPI_LONG_LONG, sim.comm);
   halo_sync(F_PRES, 4);
@@ -5502,7 +5501,6 @@ static void prevent_colliding_obstacles(void) {
         fj->u_collision[d] = hv2[d];
         fj->o_collision[d] = ho2[d];
       }
-      if (sim.rank == 0) fprintf(stderr, "TMPCOLL step %d fish %d %d\n", sim.step, i, j);
       fi->collision_counter = 0.01 * sim.dt;
       fj->collision_counter = 0.01 * sim.dt;
     }
