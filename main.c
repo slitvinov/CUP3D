@@ -335,6 +335,10 @@ static void midline_init(struct Midline *m, Real L, Real Tp, Real phi, Real h,
   m->Nend =
       (int)ceil(m->fracRefined * L * 2 / (m->dSmid + m->dSrefine_tgt) / 4) * 4;
   m->dSref = m->fracRefined * L * 2 / m->Nend - m->dSmid;
+  while (m->dSref < 0 && m->Nend > 4) {
+    m->Nend -= 4;
+    m->dSref = m->fracRefined * L * 2 / m->Nend - m->dSmid;
+  }
   m->Nm = m->Nmid + 2 * m->Nend + 1;
   const int Nm = m->Nm;
   Real **arrays[] = {&m->rS,    &m->rX,    &m->rY,    &m->rZ,    &m->vX,
@@ -1101,7 +1105,7 @@ static void integrate_angular_momentum(struct Midline *m, const Real dt) {
                       cB * M22 * (vX[i] * binY[i] + rY[i] * vBinX[i]);
     const Real x_yd = cR * (rX[i] * vY[i] * M00 + norX[i] * vNorY[i] * M11 +
                             binX[i] * vBinY[i] * M22) +
-                      cN * M11 * (rX[i] * vNorY[i] + rY[i] * norX[i]) +
+                      cN * M11 * (rX[i] * vNorY[i] + vY[i] * norX[i]) +
                       cB * M22 * (rX[i] * vBinY[i] + vY[i] * binX[i]);
     const Real xd_z = cR * (rZ[i] * vX[i] * M00 + norZ[i] * vNorX[i] * M11 +
                             binZ[i] * vBinX[i] * M22) +
@@ -2446,7 +2450,8 @@ static void fish_create(struct Fish *f) {
   const Real vx = d1 / dn;
   const Real vy = d2 / dn;
   const Real vz = d3 / dn;
-  const Real xx2 = Rmatrix3D[0] * vx + Rmatrix3D[1] * vy + Rmatrix3D[2] * vz;
+  Real xx2 = Rmatrix3D[0] * vx + Rmatrix3D[1] * vy + Rmatrix3D[2] * vz;
+  xx2 = xx2 > 1 ? 1 : (xx2 < -1 ? -1 : xx2);
   const Real pitch = asin(xx2);
   const Real roll = atan2(2.0 * (q[3] * q[2] + q[0] * q[1]),
                           1.0 - 2.0 * (q[1] * q[1] + q[2] * q[2]));
@@ -2657,6 +2662,8 @@ static void compute_grid_com(void) {
       com[3] += o->CoM_z;
     }
     MPI_Allreduce(MPI_IN_PLACE, com, 4, MPI_Real, MPI_SUM, sim.comm);
+    if (com[0] <= 0)
+      continue;
     f->centerOfMass[0] = com[1] / com[0];
     f->centerOfMass[1] = com[2] / com[0];
     f->centerOfMass[2] = com[3] / com[0];
@@ -2670,7 +2677,6 @@ static void integrate_udef_momenta(long long i) {
     if (o == NULL)
       continue;
     const Real *CM = f->centerOfMass;
-    const Real *oldCorrVel = f->transVel_correction;
     Real *M = o->mom;
     for (int q = 0; q < 13; q++)
       M[q] = 0;
@@ -2686,16 +2692,13 @@ static void integrate_udef_momenta(long long i) {
           p[0] -= CM[0];
           p[1] -= CM[1];
           p[2] -= CM[2];
-          const Real dUs = U[0] - oldCorrVel[0];
-          const Real dVs = U[1] - oldCorrVel[1];
-          const Real dWs = U[2] - oldCorrVel[2];
           M[M_V] += X * dv;
           M[M_FX] += X * U[0] * dv;
           M[M_FY] += X * U[1] * dv;
           M[M_FZ] += X * U[2] * dv;
-          M[M_TX] += X * (p[1] * dWs - p[2] * dVs) * dv;
-          M[M_TY] += X * (p[2] * dUs - p[0] * dWs) * dv;
-          M[M_TZ] += X * (p[0] * dVs - p[1] * dUs) * dv;
+          M[M_TX] += X * (p[1] * U[2] - p[2] * U[1]) * dv;
+          M[M_TY] += X * (p[2] * U[0] - p[0] * U[2]) * dv;
+          M[M_TZ] += X * (p[0] * U[1] - p[1] * U[0]) * dv;
           M[M_J0] += X * (p[1] * p[1] + p[2] * p[2]) * dv;
           M[M_J3] -= X * p[0] * p[1] * dv;
           M[M_J1] += X * (p[0] * p[0] + p[2] * p[2]) * dv;
@@ -2717,6 +2720,14 @@ static void accumulate_udef_momenta(void) {
         M[q] += o->mom[q];
     }
     MPI_Allreduce(MPI_IN_PLACE, M, 13, MPI_Real, MPI_SUM, sim.comm);
+    if (M[0] <= 0) {
+      f->mass = 0;
+      for (int d = 0; d < 3; d++)
+        f->transVel_correction[d] = f->angVel_correction[d] = 0;
+      for (int q = 0; q < 6; q++)
+        f->J[q] = 0;
+      continue;
+    }
     const Real AM[3] = {M[4], M[5], M[6]};
     const Real J[6] = {M[7], M[8], M[9], M[10], M[11], M[12]};
     Real invJ[6];
@@ -4998,7 +5009,7 @@ static void fluid_momenta_visit(long long i, const struct Fish *f) {
         M[M_GaZ] += penalFac * (p[0] * DiffU[1] - p[1] * DiffU[0]);
       }
 }
-static void solve6(double *A, double *b, double *x) {
+static int solve6(double *A, double *b, double *x) {
   enum { N = 6 };
   int i, j, k;
   for (k = 0; k < N; k++) {
@@ -5006,6 +5017,8 @@ static void solve6(double *A, double *b, double *x) {
     for (i = k + 1; i < N; i++)
       if (fabs(A[i * N + k]) > fabs(A[p * N + k]))
         p = i;
+    if (fabs(A[p * N + k]) <= DBL_MIN)
+      return 1;
     if (p != k) {
       for (j = 0; j < N; j++) {
         const double tmp = A[k * N + j];
@@ -5029,6 +5042,7 @@ static void solve6(double *A, double *b, double *x) {
       s -= A[i * N + j] * x[j];
     x[i] = s / A[i * N + i];
   }
+  return 0;
 }
 static void solve_velocities(struct Fish *f) {
   double A[36];
@@ -5086,8 +5100,10 @@ static void solve_velocities(struct Fish *f) {
           A[(3 + d) * 6 + j] = 0;
       b[3 + d] = 0;
     }
-  double x[6];
-  solve6(A, b, x);
+  double x[6] = {f->transVel[0], f->transVel[1], f->transVel[2],
+                 f->angVel[0], f->angVel[1], f->angVel[2]};
+  if (penalM > 0)
+    solve6(A, b, x);
   f->transVel_computed[0] = x[0];
   f->transVel_computed[1] = x[1];
   f->transVel_computed[2] = x[2];
@@ -5967,7 +5983,7 @@ static Real calc_max_timestep(void) {
     sim.lambda = sim.DLM / sim.dt;
   if (sim.rank == 0)
     printf("main.c: step: %d, time: %f\n", sim.step, sim.time);
-  if (sim.step > sim.step_2nd_start) {
+  if (sim.step >= sim.step_2nd_start) {
     const Real a = dt_old;
     const Real b = sim.dt;
     const Real c1 = -(a + b) / (a * b);
