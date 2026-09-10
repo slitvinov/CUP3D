@@ -4175,6 +4175,7 @@ static void adapt_mesh(void) {
   }
   int temp[2] = {(int)nref, (int)ncom}, result[2];
   MPI_Allreduce(temp, result, 2, MPI_INT, MPI_SUM, sim.comm);
+  if (sim.rank == 0) fprintf(stderr, "TMPAMR step %d nref %d ncom %d\n", sim.step, result[0], result[1]);
   long long *dist = (long long *)malloc(sim.size * sizeof *dist);
   MPI_Allgather(&blocks_after, 1, MPI_LONG_LONG, dist, 1, MPI_LONG_LONG, sim.comm);
   halo_sync(F_PRES, 4);
