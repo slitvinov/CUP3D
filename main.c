@@ -4601,7 +4601,7 @@ static void poisson_lhs(const Real *in, Real *out) {
 }
 static void poisson_solve(void) {
   static Real *phat, *rhat, *shat, *what, *zhat, *qhat, *s, *w, *z, *t, *v, *q, *r, *y, *x,
-      *r0, *b, *x_opt;
+      *r0, *b, *x_opt, *hw;
   static long long cap;
   const long long N = sim.nblk * BS3;
   const Real eps = 1e-100;
@@ -4621,7 +4621,15 @@ static void poisson_solve(void) {
       free(*all[k]);
       *all[k] = (Real *)calloc(N, sizeof(Real));
     }
+    free(hw);
+    hw = (Real *)calloc(N / BS3, sizeof(Real));
     cap = N;
+  }
+  Real vol = 0;
+  for (long long i = 0; i < sim.nblk; i++) {
+    const Real h3 = sim.blk[i].h * sim.blk[i].h * sim.blk[i].h;
+    hw[i] = 1 / h3;
+    vol += BS3 * h3;
   }
 #pragma omp parallel for
   for (long long i = 0; i < sim.nblk; i++) {
@@ -4659,13 +4667,14 @@ static void poisson_solve(void) {
     for (long long j = 0; j < N; j++) {
       temp0 += r0[j] * r0[j];
       temp1 += r0[j] * w[j];
-      norm += r0[j] * r0[j];
+      norm += r0[j] * r0[j] * hw[j / BS3];
     }
-    Real temporary[3] = {temp0, temp1, norm};
-    MPI_Allreduce(MPI_IN_PLACE, temporary, 3, MPI_Real, MPI_SUM, sim.comm);
+    Real temporary[4] = {temp0, temp1, norm, vol};
+    MPI_Allreduce(MPI_IN_PLACE, temporary, 4, MPI_Real, MPI_SUM, sim.comm);
     alpha = temporary[0] / (temporary[1] + eps);
     r0r_prev = temporary[0];
-    norm = sqrt(temporary[2]);
+    vol = temporary[3];
+    norm = sqrt(temporary[2] / vol);
   }
   const Real init_norm = norm;
   int k;
@@ -4728,7 +4737,7 @@ static void poisson_solve(void) {
         r0w += r0[j] * w[j];
         r0s += r0[j] * s[j];
         r0z += r0[j] * z[j];
-        norm += r[j] * r[j];
+        norm += r[j] * r[j] * hw[j / BS3];
         norm_1 += r[j] * r[j];
         norm_2 += r0[j] * r0[j];
       }
@@ -4748,7 +4757,7 @@ static void poisson_solve(void) {
         r0w += r0[j] * w[j];
         r0s += r0[j] * s[j];
         r0z += r0[j] * z[j];
-        norm += r[j] * r[j];
+        norm += r[j] * r[j] * hw[j / BS3];
         norm_1 += r[j] * r[j];
         norm_2 += r0[j] * r0[j];
       }
@@ -4769,7 +4778,7 @@ static void poisson_solve(void) {
     r0z = quantities[3];
     norm_1 = quantities[4];
     norm_2 = quantities[5];
-    norm = sqrt(quantities[6]);
+    norm = sqrt(quantities[6] / vol);
     beta = alpha / (omega + eps) * r0r / (r0r_prev + eps);
     alpha = r0r / (r0w + beta * r0s - beta * omega * r0z);
     Real alphat = 1.0 / (omega + eps) + r0w / (r0r + eps) - beta * omega * r0z / (r0r + eps);
@@ -5492,6 +5501,7 @@ static void prevent_colliding_obstacles(void) {
         fj->u_collision[d] = hv2[d];
         fj->o_collision[d] = ho2[d];
       }
+      if (sim.rank == 0) fprintf(stderr, "TMPCOLL step %d fish %d %d\n", sim.step, i, j);
       fi->collision_counter = 0.01 * sim.dt;
       fj->collision_counter = 0.01 * sim.dt;
     }
