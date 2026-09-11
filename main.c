@@ -130,6 +130,7 @@ static struct Sta {
 enum { STEP_2ND = 2 };
 #define BLK(i) (sta.fld + (long long)(i) * BLK_S)
 static Real *fld(long long i, int f) { return BLK(i) + f * BS3; }
+static void fatal(char *fmt, ...) __attribute__((noreturn));
 static void fatal(char *fmt, ...) {
   va_list ap;
   fprintf(stderr, "main.c: rank %d: ", sim.rank);
@@ -138,6 +139,7 @@ static void fatal(char *fmt, ...) {
   va_end(ap);
   fputc('\n', stderr);
   MPI_Abort(MPI_COMM_WORLD, 1);
+  abort();
 }
 static void *emalloc(size_t n) {
   void *p = malloc(n > 0 ? n : 1);
@@ -215,6 +217,7 @@ static struct Param fish_params[] = {
     FISHP("wzp", wzp, P_REAL),
 };
 enum { NSIMP = sizeof sim_params / sizeof *sim_params, NFISHP = sizeof fish_params / sizeof *fish_params };
+static void param_fail(char *key, char *val, char *why) __attribute__((noreturn));
 static void param_fail(char *key, char *val, char *why) { fatal("parameter '%s' = '%s': %s", key, val, why); }
 static void param_store(struct Param *p, void *base, char *key, char *val) {
   char *end;
