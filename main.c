@@ -2127,15 +2127,19 @@ static void fish_free_blk(struct Fish *f) {
   f->pool = NULL;
   f->slot = NULL;
 }
-static void fish_geom(struct Fish *f) {
+struct Geom {
+  struct Segment *segs;
+  int *myblk, *seg_start, *seg_idx;
+  int nmyblk;
+  struct Frame fr;
+};
+static void fish_geom(struct Fish *f, struct Geom *g) {
   struct Midline *m = &f->m;
   int nm;
   int Nsegments;
   struct Segment *segs;
   int i;
   long long i2;
-  struct Frame fr;
-  int j;
   int *myblk, *seg_start, *seg_idx;
   int nmyblk, nseg_idx, cap_blk, cap_seg;
   int d;
@@ -2223,23 +2227,29 @@ static void fish_geom(struct Fish *f) {
   }
   seg_start[nmyblk] = nseg_idx;
   f->pool = emalloc(nmyblk * sizeof *f->pool);
-  frame_init(&fr, f);
-#pragma omp parallel for
-  for (j = 0; j < nmyblk; j++) {
-    int n = seg_start[j + 1] - seg_start[j];
-    struct Segment **S = emalloc(n * sizeof *S);
-    int k;
-    struct Blk *b;
-    for (k = 0; k < n; k++)
-      S[k] = &segs[seg_idx[seg_start[j] + k]];
-    b = &sta.blk[myblk[j]];
-    geom_blk(&fr, b->h, b->origin[0], b->origin[1], b->origin[2], &f->pool[j], S, n);
-    free(S);
-  }
-  free(segs);
-  free(myblk);
-  free(seg_start);
-  free(seg_idx);
+  frame_init(&g->fr, f);
+  g->segs = segs;
+  g->myblk = myblk;
+  g->seg_start = seg_start;
+  g->seg_idx = seg_idx;
+  g->nmyblk = nmyblk;
+}
+static void geom_job(struct Fish *f, struct Geom *g, int j) {
+  int n = g->seg_start[j + 1] - g->seg_start[j];
+  struct Segment **S = emalloc(n * sizeof *S);
+  int k;
+  struct Blk *b;
+  for (k = 0; k < n; k++)
+    S[k] = &g->segs[g->seg_idx[g->seg_start[j] + k]];
+  b = &sta.blk[g->myblk[j]];
+  geom_blk(&g->fr, b->h, b->origin[0], b->origin[1], b->origin[2], &f->pool[j], S, n);
+  free(S);
+}
+static void geom_free(struct Geom *g) {
+  free(g->segs);
+  free(g->myblk);
+  free(g->seg_start);
+  free(g->seg_idx);
 }
 static void clip(Real fmax, Real dfmax, Real dt, int zero, Real fcandidate, Real dfcandidate, Real *f,
                  Real *df) {
@@ -2257,7 +2267,7 @@ static void clip(Real fmax, Real dfmax, Real dt, int zero, Real fcandidate, Real
     *df = 0;
   }
 }
-static void fish_create(struct Fish *f) {
+static void fish_create(struct Fish *f, struct Geom *g) {
   struct Midline *mid = &f->m;
   int nm = mid->nm;
   Real *q = f->quaternion;
@@ -2326,7 +2336,7 @@ static void fish_create(struct Fish *f) {
     Real dgdtmax = fabs(gmax * gmax * d_rdtmax);
     clip(gmax, dgdtmax, sta.dt, 0, g, dgdt, &mid->gamma, &mid->dgamma);
   }
-  fish_geom(f);
+  fish_geom(f, g);
 }
 static void fish_update(struct Fish *f) {
   Real *position = f->position, *abs_pos = f->abs_pos, *quaternion = f->quaternion;
@@ -2617,6 +2627,9 @@ static void fish_udef_fix(void) {
 static void fish_build(void) {
   long long i;
   int k;
+  struct Geom *g;
+  int *job_fish, *job_start;
+  int njob;
   if (sim.nfish == 0)
     return;
   if (sta.mesh_changed == 0 && sim.static_obst)
@@ -2629,8 +2642,27 @@ static void fish_build(void) {
   sta_uinf();
   for (k = 0; k < sim.nfish; k++)
     fish_update(&sta.fish[k]);
+  g = emalloc(sim.nfish * sizeof *g);
+  job_start = emalloc((sim.nfish + 1) * sizeof *job_start);
+#pragma omp parallel for schedule(dynamic, 1)
   for (k = 0; k < sim.nfish; k++)
-    fish_create(&sta.fish[k]);
+    fish_create(&sta.fish[k], &g[k]);
+  job_start[0] = 0;
+  for (k = 0; k < sim.nfish; k++)
+    job_start[k + 1] = job_start[k] + g[k].nmyblk;
+  njob = job_start[sim.nfish];
+  job_fish = emalloc(njob * sizeof *job_fish);
+  for (k = 0; k < sim.nfish; k++)
+    for (i = job_start[k]; i < job_start[k + 1]; i++)
+      job_fish[i] = k;
+#pragma omp parallel for schedule(dynamic, 1)
+  for (i = 0; i < njob; i++)
+    geom_job(&sta.fish[job_fish[i]], &g[job_fish[i]], (int)(i - job_start[job_fish[i]]));
+  for (k = 0; k < sim.nfish; k++)
+    geom_free(&g[k]);
+  free(g);
+  free(job_fish);
+  free(job_start);
 #pragma omp parallel for
   for (i = 0; i < sta.nblk; ++i) {
     geom_chi(i);
@@ -3093,6 +3125,7 @@ static void halo_build(void) {
   free(sp);
   free(rp);
 }
+static Real *view_in, *view_out;
 static void halo_sync(int f, int nc) {
   long long m = (long long)nc * BS3;
   int k;
@@ -3100,7 +3133,8 @@ static void halo_sync(int f, int nc) {
   halo.nc = nc;
 #pragma omp parallel for
   for (k = 0; k < halo.nsend; k++) {
-    memcpy(halo.sbuf + k * m, fld(halo.send[k], f), m * sizeof(Real));
+    memcpy(halo.sbuf + k * m, view_in ? view_in + halo.send[k] * BS3 : fld(halo.send[k], f),
+           m * sizeof(Real));
   }
   xch_exec(&halo.x, halo.sbuf, halo.buf, (int)m, MPI_Real);
 }
@@ -3116,16 +3150,20 @@ static void states_sync(void) {
 }
 static Real *fld_ptr(long long i, int f, int c) {
   if (i < HALO_BASE)
-    return BLK(i) + (f + c) * BS3;
+    return view_in ? view_in + (i + c) * BS3 : BLK(i) + (f + c) * BS3;
   return halo.buf + ((i - HALO_BASE) * halo.nc + (f - halo.f0) + c) * BS3;
 }
 #define CELL(i, f, c, x, y, z) (fld_ptr(i, f, c)[((z) * BS + (y)) * BS + (x)])
+static Real *out_ptr(long long i, int f, int c) {
+  return view_out ? view_out + (i + c) * BS3 : BLK(i) + (f + c) * BS3;
+}
+#define OUT(i, f, c, x, y, z) (out_ptr(i, f, c)[((z) * BS + (y)) * BS + (x)])
 static struct {
   int nface;
   int *idx;
   Real *data;
-  long long nsend, nrecv;
-  long long *send, *recv;
+  long long nsend, nrecv, nrface;
+  long long *send, *recv, *rface;
   struct Xch x;
   Real *sbuf, *rbuf;
 } fc;
@@ -3151,6 +3189,7 @@ static void fc_prepare(void) {
   free(fc.data);
   free(fc.send);
   free(fc.recv);
+  free(fc.rface);
   free(fc.sbuf);
   free(fc.rbuf);
   xch_reset(&fc.x);
@@ -3160,7 +3199,8 @@ static void fc_prepare(void) {
   fc.nface = 0;
   fc.send = emalloc(6 * sta.nblk * 4 * sizeof *fc.send);
   fc.recv = emalloc(24 * sta.nblk * 6 * sizeof *fc.recv);
-  fc.nsend = fc.nrecv = 0;
+  fc.rface = emalloc(6 * sta.nblk * 2 * sizeof *fc.rface);
+  fc.nsend = fc.nrecv = fc.nrface = 0;
   for (i = 0; i < sta.nblk; i++) {
     struct Blk *b = &sta.blk[i];
     int f;
@@ -3186,6 +3226,9 @@ static void fc_prepare(void) {
         e[3] = i;
       } else if (nd->pos == -1) {
         int B;
+        fc.rface[2 * fc.nrface] = i;
+        fc.rface[2 * fc.nrface + 1] = face;
+        fc.nrface++;
         for (B = 0; B <= 3; B++) {
           long long zc = nei_fine(b, code, B);
           long long *e = fc.recv + 6 * fc.nrecv++;
@@ -3247,16 +3290,15 @@ static void fc_fill(int f, int nc) {
           F[base + i2 / 2 + (i1 / 2) * BS] += rbuf[k * Q + c * 16 + (i1 / 2) * 4 + i2 / 2];
     }
   }
-  for (d = 0; d < 3; d++)
-    for (k = 0; k < fc.nrecv; k++) {
-      long long *e = fc.recv + 6 * k;
-      int face = (int)e[4];
-      long long i;
+  for (d = 0; d < 3; d++) {
+#pragma omp parallel for
+    for (k = 0; k < fc.nrface; k++) {
+      long long i = fc.rface[2 * k];
+      int face = (int)fc.rface[2 * k + 1];
       int j;
       int c;
       if (face / 2 != d)
         continue;
-      i = e[3];
       j = (face % 2 == 0) ? 0 : BS - 1;
       for (c = 0; c < nc; c++) {
         Real *F = fc_face(i, face, c);
@@ -3265,15 +3307,16 @@ static void fc_fill(int f, int nc) {
         for (i1 = 0; i1 < BS; i1++)
           for (i2 = 0; i2 < BS; i2++) {
             if (d == 0)
-              CELL(i, f, c, j, i2, i1) += F[i2 + i1 * BS];
+              OUT(i, f, c, j, i2, i1) += F[i2 + i1 * BS];
             else if (d == 1)
-              CELL(i, f, c, i2, j, i1) += F[i2 + i1 * BS];
+              OUT(i, f, c, i2, j, i1) += F[i2 + i1 * BS];
             else
-              CELL(i, f, c, i2, i1, j) += F[i2 + i1 * BS];
+              OUT(i, f, c, i2, i1, j) += F[i2 + i1 * BS];
             F[i2 + i1 * BS] = 0;
           }
       }
     }
+  }
   memset(fc.data, 0, (size_t)fc.nface * 3 * BS * BS * sizeof(Real));
 }
 static void mesh_init(void) {
@@ -4233,7 +4276,7 @@ static void face_sum(struct Lab *l, long long i, int f, int in, int out, Real co
 }
 static void k_lhs(struct Lab *l, long long i) {
   Real h = sta.blk[i].h;
-  Real *o = fld(i, F_LHS);
+  Real *o = out_ptr(i, F_LHS, 0);
   int z;
   int y;
   int x;
@@ -4245,18 +4288,15 @@ static void k_lhs(struct Lab *l, long long i) {
   face_grad(l, i, 0, h);
 }
 static struct Stencil st_lhs = {F_PRES, 1, 1, 0, -1, F_LHS, 1, k_lhs};
-static void pois_op(void) {
+static long long pois_pin;
+static void pois_op(Real *in, Real *out) {
   Real avg_p = 0;
-  long long index = -1;
+  long long i;
   if (sim.mean_constraint <= 2 && sim.mean_constraint > 0) {
-    long long i;
-    for (i = 0; i < sta.nblk; ++i)
-      if (sta.blk[i].ix == 0 && sta.blk[i].iy == 0 && sta.blk[i].iz == 0)
-        index = i;
 #pragma omp parallel for reduction(+ : avg_p)
     for (i = 0; i < sta.nblk; ++i) {
       struct Blk *b = &sta.blk[i];
-      Real *Z = fld(i, F_PRES);
+      Real *Z = in + i * BS3;
       Real h3 = b->h * b->h * b->h;
       int j;
       for (j = 0; j < BS3; j++)
@@ -4264,30 +4304,28 @@ static void pois_op(void) {
     }
     MPI_Allreduce(MPI_IN_PLACE, &avg_p, 1, MPI_Real, MPI_SUM, sim.comm);
   }
+  view_in = in;
+  view_out = out;
   stencil_apply(&st_lhs);
+  view_in = NULL;
+  view_out = NULL;
   if (sim.mean_constraint == 0)
     return;
   if (sim.mean_constraint <= 2 && sim.mean_constraint > 0) {
-    if (sim.mean_constraint == 1 && index != -1) {
-      fld(index, F_LHS)[0] = avg_p;
+    if (sim.mean_constraint == 1 && pois_pin != -1) {
+      out[pois_pin * BS3] = avg_p;
     } else if (sim.mean_constraint == 2) {
-      long long i;
 #pragma omp parallel for
       for (i = 0; i < sta.nblk; ++i) {
-        Real *LHS = fld(i, F_LHS);
+        Real *LHS = out + i * BS3;
         Real h3 = sta.blk[i].h * sta.blk[i].h * sta.blk[i].h;
         int j;
         for (j = 0; j < BS3; j++)
           LHS[j] += avg_p * h3;
       }
     }
-  } else {
-    long long i;
-    for (i = 0; i < sta.nblk; ++i) {
-      struct Blk *b = &sta.blk[i];
-      if (b->ix == 0 && b->iy == 0 && b->iz == 0)
-        fld(i, F_LHS)[0] = fld(i, F_PRES)[0];
-    }
+  } else if (pois_pin != -1) {
+    out[pois_pin * BS3] = in[pois_pin * BS3];
   }
 }
 enum { XPAD = 4 };
@@ -4359,7 +4397,7 @@ static Real pois_pre_cg(Real p[BS + 2][BS + 2][BS + 2 * XPAD], Real Ax[BS3], Rea
         p[iz + 1][iy + 1][ix + XPAD] = r[IDX(ix, iy, iz)] + beta * p[iz + 1][iy + 1][ix + XPAD];
   return sum2;
 }
-static void pois_pre(void) {
+static void pois_pre(Real *in, Real *out) {
 #pragma omp parallel
   {
     Real r[BS3], Ax[BS3], p[BS + 2][BS + 2][BS + 2 * XPAD];
@@ -4367,7 +4405,8 @@ static void pois_pre(void) {
     memset(p, 0, sizeof p);
 #pragma omp for
     for (i = 0; i < sta.nblk; ++i) {
-      Real *block = fld(i, F_PRES);
+      Real *src = in + i * BS3;
+      Real *block = out + i * BS3;
       Real invh = 1 / sta.blk[i].h;
       Real rr_partial[BS] = {0};
       int iz;
@@ -4379,7 +4418,7 @@ static void pois_pre(void) {
       for (iz = 0; iz < BS; ++iz)
         for (iy = 0; iy < BS; ++iy)
           for (ix = 0; ix < BS; ++ix) {
-            r[IDX(ix, iy, iz)] = invh * block[IDX(ix, iy, iz)];
+            r[IDX(ix, iy, iz)] = invh * src[IDX(ix, iy, iz)];
             rr_partial[ix] += r[IDX(ix, iy, iz)] * r[IDX(ix, iy, iz)];
             p[iz + 1][iy + 1][ix + XPAD] = r[IDX(ix, iy, iz)];
             block[IDX(ix, iy, iz)] = 0;
@@ -4412,16 +4451,8 @@ static void field_get(int f, Real *out) {
     memcpy(out + i * BS3, fld(i, f), BS3 * sizeof(Real));
   }
 }
-static void pois_pre_vec(Real *in, Real *out) {
-  field_set(F_PRES, in);
-  pois_pre();
-  field_get(F_PRES, out);
-}
-static void pois_op_vec(Real *in, Real *out) {
-  field_set(F_PRES, in);
-  pois_op();
-  field_get(F_LHS, out);
-}
+static void pois_pre_vec(Real *in, Real *out) { pois_pre(in, out); }
+static void pois_op_vec(Real *in, Real *out) { pois_op(in, out); }
 static struct Pois {
   long long cap;
   Real *phat, *rhat, *shat, *what, *zhat, *qhat, *s, *w, *z, *t, *v, *q, *r, *y, *x, *r0, *b, *x_opt, *hw;
@@ -4485,12 +4516,16 @@ static void pois_solve(void) {
   Real r0r_prev;
   Real init_norm;
   int k;
+  int xzero;
   pois_alloc(N);
   vol = 0;
+  pois_pin = -1;
   for (i = 0; i < sta.nblk; i++) {
     Real h3 = sta.blk[i].h * sta.blk[i].h * sta.blk[i].h;
     pois.hw[i] = 1 / h3;
     vol += BS3 * h3;
+    if (sta.blk[i].ix == 0 && sta.blk[i].iy == 0 && sta.blk[i].iz == 0)
+      pois_pin = i;
   }
 #pragma omp parallel for
   for (i = 0; i < sta.nblk; i++) {
@@ -4507,11 +4542,19 @@ static void pois_solve(void) {
       pois.x[i * BS3 + j] = zz[j];
     }
   }
-  pois_op_vec(pois.x, pois.r0);
+  xzero = 1;
+#pragma omp parallel for reduction(& : xzero)
+  for (i = 0; i < N; i++)
+    xzero &= pois.x[i] == 0;
+  if (xzero) {
+    memcpy(pois.r0, pois.r, N * sizeof(Real));
+  } else {
+    pois_op_vec(pois.x, pois.r0);
 #pragma omp parallel for
-  for (i = 0; i < N; i++) {
-    pois.r0[i] = pois.r[i] - pois.r0[i];
-    pois.r[i] = pois.r0[i];
+    for (i = 0; i < N; i++) {
+      pois.r0[i] = pois.r[i] - pois.r0[i];
+      pois.r[i] = pois.r0[i];
+    }
   }
   alpha = 0.0;
   norm = 0.0;
