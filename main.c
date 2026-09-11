@@ -1481,26 +1481,26 @@ static void write_raw(char *path, float *buf, long n, int m, long off) {
 }
 static void compute_vorticity(void);
 static void dump(Real time, char *path) {
-  long i, j, k, l, m, x, y, z, ncell, ncell_total, offset;
-  char xyz_path[FILENAME_MAX], attr_path[FILENAME_MAX], vort_path[FILENAME_MAX], xdmf_path[FILENAME_MAX],
-      *xyz_base, *attr_base, *vort_base;
+  long i, j, l, m, ncell, nblk_total, offset, boff;
+  char attr_path[FILENAME_MAX], vort_path[FILENAME_MAX], blk_path[FILENAME_MAX], xdmf_path[FILENAME_MAX],
+      *attr_base, *vort_base, *blk_base;
   FILE *xmf;
-  float *xyz, *attr, *vort;
-  static int corner[8][3] = {{0, 0, 0}, {0, 0, 1}, {0, 1, 1}, {0, 1, 0},
-                             {1, 0, 0}, {1, 0, 1}, {1, 1, 1}, {1, 1, 0}};
+  float *attr, *vort, *blk, *all;
+  int *cnt, *dsp;
+  int n, r, root;
   compute_vorticity();
-  snprintf(xyz_path, sizeof xyz_path, "%s.xyz.raw", path);
   snprintf(attr_path, sizeof attr_path, "%s.attr.raw", path);
   snprintf(vort_path, sizeof vort_path, "%s.vort.raw", path);
+  snprintf(blk_path, sizeof blk_path, "%s.blk.raw", path);
   snprintf(xdmf_path, sizeof xdmf_path, "%s.xdmf2", path);
-  xyz_base = xyz_path;
   attr_base = attr_path;
   vort_base = vort_path;
-  for (j = 0; xyz_path[j] != '\0'; j++) {
-    if (xyz_path[j] == '/' && xyz_path[j + 1] != '\0') {
-      xyz_base = &xyz_path[j + 1];
+  blk_base = blk_path;
+  for (j = 0; attr_path[j] != '\0'; j++) {
+    if (attr_path[j] == '/' && attr_path[j + 1] != '\0') {
       attr_base = &attr_path[j + 1];
       vort_base = &vort_path[j + 1];
+      blk_base = &blk_path[j + 1];
     }
   }
   ncell = sta.nblk * BS3;
@@ -1509,92 +1509,83 @@ static void dump(Real time, char *path) {
   MPI_Exscan(&ncell, &offset, 1, MPI_LONG, MPI_SUM, sim.comm);
   if (sim.rank == 0)
     offset = 0;
-  if (sim.rank == sim.size - 1) {
-    ncell_total = ncell + offset;
+  boff = offset / BS3;
+  blk = emalloc(6 * (sta.nblk > 0 ? sta.nblk : 1) * sizeof *blk);
+  for (i = 0; i < sta.nblk; i++) {
+    struct Blk *b = &sta.blk[i];
+    blk[6 * i] = b->origin[2];
+    blk[6 * i + 1] = b->origin[1];
+    blk[6 * i + 2] = b->origin[0];
+    blk[6 * i + 3] = blk[6 * i + 4] = blk[6 * i + 5] = b->h;
+  }
+  root = sim.size - 1;
+  n = 6 * (int)sta.nblk;
+  cnt = emalloc(sim.size * sizeof *cnt);
+  dsp = emalloc(sim.size * sizeof *dsp);
+  MPI_Gather(&n, 1, MPI_INT, cnt, 1, MPI_INT, root, sim.comm);
+  all = NULL;
+  if (sim.rank == root) {
+    dsp[0] = 0;
+    for (r = 1; r < sim.size; r++)
+      dsp[r] = dsp[r - 1] + cnt[r - 1];
+    all = emalloc((dsp[sim.size - 1] + cnt[sim.size - 1] + 1) * sizeof *all);
+  }
+  MPI_Gatherv(blk, n, MPI_FLOAT, all, cnt, dsp, MPI_FLOAT, root, sim.comm);
+  if (sim.rank == root) {
+    long k;
+    nblk_total = (offset + ncell) / BS3;
     xmf = fopen(xdmf_path, "w");
     if (xmf == NULL)
       fatal("cannot write %s", xdmf_path);
     fprintf(xmf,
-            "<Xdmf\n"
-            "    Version=\"2.0\">\n"
-            "  <Domain>\n"
-            "    <Grid>\n"
-            "      <Time Value=\"%.16e\"/>\n"
-            "      <Topology\n"
-            "          Dimensions=\"%ld\"\n"
-            "          TopologyType=\"Hexahedron\"/>\n"
-            "     <Geometry>\n"
-            "       <DataItem\n"
-            "           Dimensions=\"%ld 3\"\n"
-            "           Format=\"Binary\">\n"
-            "         %s\n"
-            "       </DataItem>\n"
-            "     </Geometry>\n"
-            "       <Attribute\n"
-            "           Name=\"chi\"\n"
-            "           Center=\"Cell\">\n"
-            "         <DataItem\n"
-            "             Dimensions=\"%ld\"\n"
-            "             Format=\"Binary\">\n"
-            "           %s\n"
-            "         </DataItem>\n"
-            "       </Attribute>\n"
-            "       <Attribute\n"
-            "           Name=\"vorticity\"\n"
-            "           AttributeType=\"Vector\"\n"
-            "           Center=\"Cell\">\n"
-            "         <DataItem\n"
-            "             Dimensions=\"%ld 3\"\n"
-            "             Format=\"Binary\">\n"
-            "           %s\n"
-            "         </DataItem>\n"
-            "       </Attribute>\n"
-            "    </Grid>\n"
-            "  </Domain>\n"
-            "</Xdmf>\n",
-            time, ncell_total, 8 * ncell_total, xyz_base, ncell_total, attr_base, ncell_total, vort_base);
+            "<Xdmf Version=\"2.0\">\n"
+            " <Domain>\n"
+            "  <Grid GridType=\"Collection\" CollectionType=\"Spatial\">\n"
+            "   <Time Value=\"%.16e\"/>\n",
+            time);
+    for (k = 0; k < nblk_total; k++)
+      fprintf(xmf,
+              "   <Grid GridType=\"Uniform\">\n"
+              "    <Topology TopologyType=\"3DCoRectMesh\" Dimensions=\"%d %d %d\"/>\n"
+              "    <Geometry GeometryType=\"ORIGIN_DXDYDZ\">\n"
+              "     <DataItem Dimensions=\"3\" Format=\"Binary\" Seek=\"%ld\">%s</DataItem>\n"
+              "     <DataItem Dimensions=\"3\" Format=\"Binary\" Seek=\"%ld\">%s</DataItem>\n"
+              "    </Geometry>\n"
+              "    <Attribute Name=\"chi\" Center=\"Cell\">\n"
+              "     <DataItem Dimensions=\"%d %d %d\" Format=\"Binary\" Seek=\"%ld\">%s</DataItem>\n"
+              "    </Attribute>\n"
+              "    <Attribute Name=\"vorticity\" AttributeType=\"Vector\" Center=\"Cell\">\n"
+              "     <DataItem Dimensions=\"%d %d %d 3\" Format=\"Binary\" Seek=\"%ld\">%s</DataItem>\n"
+              "    </Attribute>\n"
+              "   </Grid>\n",
+              BS + 1, BS + 1, BS + 1, 24 * k, blk_base, 24 * k + 12, blk_base, BS, BS, BS, 4L * BS3 * k,
+              attr_base, BS, BS, BS, 12L * BS3 * k, vort_base);
+    fprintf(xmf, "  </Grid>\n </Domain>\n</Xdmf>\n");
     fclose(xmf);
+    free(all);
   }
-  xyz = emalloc(3 * 8 * ncell * sizeof *xyz);
+  free(cnt);
+  free(dsp);
   attr = emalloc(ncell * sizeof *attr);
   vort = emalloc(3 * ncell * sizeof *vort);
-  k = 0;
   l = 0;
   m = 0;
   for (i = 0; i < sta.nblk; i++) {
-    struct Blk *b = &sta.blk[i];
     Real *chi = fld(i, F_CHI);
     Real *om = fld(i, F_TMP);
-    j = 0;
-    for (z = 0; z < BS; z++)
-      for (y = 0; y < BS; y++)
-        for (x = 0; x < BS; x++) {
-          double u0, v0, w0, u1, v1, w1, h;
-          int q;
-          h = b->h;
-          u0 = b->origin[0] + h * x;
-          v0 = b->origin[1] + h * y;
-          w0 = b->origin[2] + h * z;
-          u1 = u0 + h;
-          v1 = v0 + h;
-          w1 = w0 + h;
-          for (q = 0; q < 8; q++) {
-            xyz[k++] = corner[q][0] ? u1 : u0;
-            xyz[k++] = corner[q][1] ? v1 : v0;
-            xyz[k++] = corner[q][2] ? w1 : w0;
-          }
-          vort[m++] = om[j];
-          vort[m++] = om[BS3 + j];
-          vort[m++] = om[2 * BS3 + j];
-          attr[l++] = chi[j++];
-        }
+    for (j = 0; j < BS3; j++) {
+      vort[m++] = om[j];
+      vort[m++] = om[BS3 + j];
+      vort[m++] = om[2 * BS3 + j];
+      attr[l++] = chi[j];
+    }
   }
-  write_raw(xyz_path, xyz, ncell, 3 * 8, offset);
-  free(xyz);
   write_raw(attr_path, attr, ncell, 1, offset);
   free(attr);
   write_raw(vort_path, vort, ncell, 3, offset);
   free(vort);
+  write_raw(blk_path, blk, sta.nblk, 6, boff);
+  free(blk);
 }
 static char *parse_arguments(int argc, char **argv) {
   int seen[NSIMP];

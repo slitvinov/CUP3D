@@ -2,7 +2,6 @@
 import numpy as np
 import sys
 import os
-import xml.etree.ElementTree
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -10,15 +9,16 @@ import matplotlib.animation
 
 
 def read(path):
-    root = xml.etree.ElementTree.parse(path).getroot()
-    xyz = root.find('.//Geometry/DataItem')
-    attr = root.find('.//Attribute[@Name="chi"]/DataItem')
-    dirname = os.path.dirname(path)
-    xyz = np.memmap(os.path.join(dirname, xyz.text.strip()), "f4", "r")
-    attr = np.memmap(os.path.join(dirname, attr.text.strip()), "f4", "r")
-    xyz = np.reshape(xyz, (-1, 8, 3))
-    lo = xyz[:, 0, :]
-    hi = xyz[:, 6, :]
+    base = os.path.splitext(path)[0]
+    blk = np.fromfile(base + ".blk.raw", "f4").reshape(-1, 6)
+    attr = np.fromfile(base + ".attr.raw", "f4")
+    origin = blk[:, 2::-1]
+    h = blk[:, 3]
+    i = np.arange(512)
+    idx = np.stack([i % 8, (i // 8) % 8, i // 64], 1)
+    lo = origin[:, None, :] + h[:, None, None] * idx[None, :, :]
+    lo = lo.reshape(-1, 3)
+    hi = lo + np.repeat(h, 512)[:, None]
     return (lo + hi) / 2, lo, hi, attr
 
 
