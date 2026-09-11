@@ -2141,6 +2141,8 @@ static void create_geometry(struct Fish *f) {
   int j;
   int *myblk, *seg_start, *seg_idx;
   int nmyblk, nseg_idx;
+  int d;
+  Real fb[3][2];
   compute_midline(m, sta.time);
   integrate_linear_momentum(m);
   integrate_angular_momentum(m, sta.dt);
@@ -2174,13 +2176,32 @@ static void create_geometry(struct Fish *f) {
   seg_idx = emalloc(sta.nblk * Nsegments * sizeof *seg_idx);
   nmyblk = 0;
   nseg_idx = 0;
+  for (d = 0; d < 3; d++) {
+    fb[d][0] = vSegments[0].objBoxLabFr[d][0];
+    fb[d][1] = vSegments[0].objBoxLabFr[d][1];
+    for (i = 1; i < Nsegments; ++i) {
+      if (vSegments[i].objBoxLabFr[d][0] < fb[d][0])
+        fb[d][0] = vSegments[i].objBoxLabFr[d][0];
+      if (vSegments[i].objBoxLabFr[d][1] > fb[d][1])
+        fb[d][1] = vSegments[i].objBoxLabFr[d][1];
+    }
+  }
   for (i2 = 0; i2 < sta.nblk; ++i2) {
     struct Blk *b = &sta.blk[i2];
     Real MINP[3], MAXP[3];
     int s;
+    int out = 0;
     blk_pos(b, 0, 0, 0, MINP);
     blk_pos(b, BS - 1, BS - 1, BS - 1, MAXP);
     f->slot[i2] = -1;
+    for (d = 0; d < 3; d++) {
+      Real w = (MAXP[d] - MINP[d]) / 2 + vSegments[0].safe_distance, c = (MAXP[d] + MINP[d]) / 2;
+      Real lo = fb[d][0] > c - w ? fb[d][0] : c - w, hi = fb[d][1] < c + w ? fb[d][1] : c + w;
+      if (hi - lo < 0)
+        out = 1;
+    }
+    if (out)
+      continue;
     for (s = 0; s < Nsegments; ++s)
       if (seg_intersects(&vSegments[s], MINP, MAXP)) {
         if (f->slot[i2] < 0) {
@@ -5089,6 +5110,49 @@ static void collide_cell(struct CollisionSide *cs, Real *magmax, struct Fish *f,
       cs->Mom[d] = Mom[d];
   }
 }
+static void pair_blocks(int N, long long **start_out, long long **blk_out) {
+  long long nb = sta.nblk, k, q, npair = (long long)N * N;
+  int *nfish = ecalloc(nb + 1, sizeof *nfish);
+  int *fish;
+  long long *fstart = ecalloc(nb + 1, sizeof *fstart);
+  long long *start = ecalloc(npair + 1, sizeof *start);
+  long long *fill = ecalloc(npair, sizeof *fill);
+  long long *blk;
+  int i, a, b;
+  for (i = 0; i < N; i++)
+    for (k = 0; k < nb; k++)
+      if (sta.fish[i].slot[k] >= 0)
+        nfish[k]++;
+  for (k = 0; k < nb; k++)
+    fstart[k + 1] = fstart[k] + (nfish[k] >= 2 ? nfish[k] : 0);
+  fish = emalloc((fstart[nb] + 1) * sizeof *fish);
+  memset(nfish, 0, (nb + 1) * sizeof *nfish);
+  for (i = 0; i < N; i++)
+    for (k = 0; k < nb; k++)
+      if (sta.fish[i].slot[k] >= 0 && fstart[k + 1] > fstart[k])
+        fish[fstart[k] + nfish[k]++] = i;
+  for (k = 0; k < nb; k++)
+    for (a = fstart[k]; a < fstart[k + 1]; a++)
+      for (b = fstart[k]; b < fstart[k + 1]; b++)
+        if (a != b)
+          start[(long long)fish[a] * N + fish[b] + 1]++;
+  for (q = 1; q <= npair; q++)
+    start[q] += start[q - 1];
+  blk = emalloc((start[npair] + 1) * sizeof *blk);
+  for (k = 0; k < nb; k++)
+    for (a = fstart[k]; a < fstart[k + 1]; a++)
+      for (b = fstart[k]; b < fstart[k + 1]; b++)
+        if (a != b) {
+          long long p = (long long)fish[a] * N + fish[b];
+          blk[start[p] + fill[p]++] = k;
+        }
+  free(nfish);
+  free(fstart);
+  free(fish);
+  free(fill);
+  *start_out = start;
+  *blk_out = blk;
+}
 static void prevent_colliding_obstacles(void) {
   int N = sim.nfish;
   struct CollisionInfo *collisions;
@@ -5096,9 +5160,11 @@ static void prevent_colliding_obstacles(void) {
   Real *mx;
   int s;
   int j;
+  long long *pair_start, *pair_blk, k, q;
   if (N < 2)
     return;
   collisions = ecalloc(N, sizeof *collisions);
+  pair_blocks(N, &pair_start, &pair_blk);
   for (i = 0; i < N; ++i) {
     struct CollisionInfo *coll = &collisions[i];
     struct Fish *fi = &sta.fish[i];
@@ -5106,32 +5172,36 @@ static void prevent_colliding_obstacles(void) {
     for (j = 0; j < N; ++j) {
       struct Fish *fj;
       Real imagmax, jmagmax;
-      long long k;
+      long long p;
       if (i == j)
         continue;
       fj = &sta.fish[j];
       imagmax = 0.0;
       jmagmax = 0.0;
-      for (k = 0; k < sta.nblk; ++k) {
-        struct ObstacleBlock *ib = oblock(fi, k), *jb = oblock(fj, k);
+      p = (long long)i * N + j;
+      for (q = pair_start[p]; q < pair_start[p + 1]; ++q) {
+        struct ObstacleBlock *ib, *jb;
         int z;
         int y;
         int x;
-        if (ib == NULL || jb == NULL)
-          continue;
+        k = pair_blk[q];
+        ib = oblock(fi, k);
+        jb = oblock(fj, k);
         for (z = 0; z < BS; ++z)
           for (y = 0; y < BS; ++y)
             for (x = 0; x < BS; ++x) {
-              Real p[3];
+              Real pos[3];
               if (ib->chi[z][y][x] <= 0.0 || jb->chi[z][y][x] <= 0.0)
                 continue;
-              blk_pos(&sta.blk[k], x, y, z, p);
-              collide_cell(&coll->s[0], &imagmax, fi, ib, x, y, z, p);
-              collide_cell(&coll->s[1], &jmagmax, fj, jb, x, y, z, p);
+              blk_pos(&sta.blk[k], x, y, z, pos);
+              collide_cell(&coll->s[0], &imagmax, fi, ib, x, y, z, pos);
+              collide_cell(&coll->s[1], &jmagmax, fj, jb, x, y, z, pos);
             }
       }
     }
   }
+  free(pair_start);
+  free(pair_blk);
   mx = emalloc((2 * N + 1) * sizeof(Real));
   for (i = 0; i < N; i++)
     for (s = 0; s < 2; s++) {
