@@ -22,30 +22,30 @@ struct Param {
   void *base;
 };
 struct Midline {
-  Real length, Tperiod, phaseShift, h, waveLength, amplitudeFactor;
-  Real fracRefined, fracMid, dSmid_tgt, dSrefine_tgt, dSmid, dSref;
-  int Nmid, Nend, Nm;
-  Real *rS;
-  Real (*r)[3], (*v)[3], (*nor)[3], (*vNor)[3], (*bin)[3], (*vBin)[3];
+  Real length, period, phase, h, wavelen, amp;
+  Real frac_ref, frac_mid, ds_mid_tgt, ds_ref_tgt, ds_mid, ds_ref;
+  int nmid, nend, nm;
+  Real *rs;
+  Real (*r)[3], (*v)[3], (*nor)[3], (*vnor)[3], (*bin)[3], (*vbin)[3];
   Real *width, *height;
-  Real *rK, *vK, *rC, *vC, *rT, *vT;
-  Real quaternion_internal[4], angvel_internal[3];
+  Real *rk, *vk, *rc, *vc, *rt, *vt;
+  Real quat_int[4], omega_int[3];
   Real time0, timeshift;
   Real sched_p0[6], sched_p1[6], sched_dp0[6], sched_t0, sched_t1;
   Real alpha, dalpha, beta, dbeta, gamma, dgamma;
 };
 struct Fish {
   Real length;
-  Real position[3], absPos[3], quaternion[4], transVel[3], angVel[3];
-  Real transVel_imposed[3];
-  int bFixFrameOfRef[3], bForcedInSimFrame[3], bBlockRotation[3];
-  int bCorrectPosition, bCorrectPositionZ, bCorrectRoll, bFixToPlanar;
-  Real planarAngle, origC[3], wyp, wzp;
-  char heightProfile[P_STRLEN], widthProfile[P_STRLEN];
-  Real old_position[3], old_absPos[3], old_quaternion[4];
-  Real centerOfMass[3], mass, J[6], transVel_correction[3], angVel_correction[3];
-  Real penalM, penalCM[3], penalJ[6], penalLmom[3], penalAmom[3];
-  Real collision_counter, u_collision[3], o_collision[3];
+  Real position[3], abs_pos[3], quaternion[4], vel[3], omega[3];
+  Real vel_imposed[3];
+  int fix[3], forced[3], block_rot[3];
+  int correct_pos, correct_z, correct_roll, planar;
+  Real angle, orig[3], wyp, wzp;
+  char hprof[P_STRLEN], wprof[P_STRLEN];
+  Real old_position[3], old_abs_pos[3], old_quaternion[4];
+  Real com[3], mass, J[6], vel_corr[3], omega_corr[3];
+  Real pen_m, pen_cm[3], pen_j[6], pen_lmom[3], pen_amom[3];
+  Real hit_time, hit_vel[3], hit_omega[3];
   Real (*r_axis)[4];
   int nr_axis;
   struct Midline m;
@@ -96,32 +96,32 @@ enum {
 struct ObstacleBlock {
   Real chi[BS][BS][BS];
   Real udef[BS][BS][BS][3];
-  Real sdfLab[BS + 2][BS + 2][BS + 2];
-  Real CoM_x, CoM_y, CoM_z, mass;
+  Real sdf[BS + 2][BS + 2][BS + 2];
+  Real com[3], mass;
   Real mom[M_N];
 };
 struct Segment {
   Real safe_distance;
   int s0, s1;
-  Real normalI[3], normalJ[3], normalK[3];
+  Real ni[3], nj[3], nk[3];
   Real w[3], c[3];
-  Real objBoxLabFr[3][2], objBoxObjFr[3][2];
+  Real box_lab[3][2], box_obj[3][2];
 };
 static struct Sim {
   MPI_Comm comm;
   int rank, size;
-  int bpdx, bpdy, bpdz, levelMax, levelStart;
-  Real extents[3], maxextent, hmin, h0;
-  Real Rtol, Ctol, CFL, nu, endTime, dumpTime;
-  Real uMax_allowed, DLM, PoissonErrorTol, PoissonErrorTolRel;
-  int StaticObstacles;
-  int rampup, nsteps, bMeanConstraint;
+  int bpdx, bpdy, bpdz, level_max, level_start;
+  Real extents[3], extent_max, hmin, h0;
+  Real rtol, ctol, cfl, nu, tend, tdump;
+  Real umax, dlm, ptol, ptol_rel;
+  int static_obst;
+  int rampup, nsteps, mean_constraint;
   int nfish;
 } sim;
 static struct Sta {
-  Real lambda, dt, dt_old, time, nextDumpTime, uMax_measured;
-  Real uinf[3], coefU[3];
-  int step, MeshChanged;
+  Real lambda, dt, dt_old, time, next_dump, umax;
+  Real uinf[3], coef_u[3];
+  int step, mesh_changed;
   long long nblk;
   struct Blk *blk;
   Real *fld;
@@ -166,23 +166,23 @@ static struct Param sim_params[] = {
     SIMP("bpdx", bpdx, P_INT),
     SIMP("bpdy", bpdy, P_INT),
     SIMP("bpdz", bpdz, P_INT),
-    SIMP("levelMax", levelMax, P_INT),
-    SIMP("levelStart", levelStart, P_INT),
-    SIMP("extent", maxextent, P_REAL),
-    SIMP("Rtol", Rtol, P_REAL),
-    SIMP("Ctol", Ctol, P_REAL),
-    SIMP("CFL", CFL, P_REAL),
+    SIMP("levelMax", level_max, P_INT),
+    SIMP("levelStart", level_start, P_INT),
+    SIMP("extent", extent_max, P_REAL),
+    SIMP("Rtol", rtol, P_REAL),
+    SIMP("Ctol", ctol, P_REAL),
+    SIMP("CFL", cfl, P_REAL),
     SIMP("nu", nu, P_REAL),
-    SIMP("tend", endTime, P_REAL),
-    SIMP("tdump", dumpTime, P_REAL),
-    SIMP("umax", uMax_allowed, P_REAL),
-    SIMP("use-dlm", DLM, P_REAL),
-    SIMP("poissonTol", PoissonErrorTol, P_REAL),
-    SIMP("poissonTolRel", PoissonErrorTolRel, P_REAL),
+    SIMP("tend", tend, P_REAL),
+    SIMP("tdump", tdump, P_REAL),
+    SIMP("umax", umax, P_REAL),
+    SIMP("use-dlm", dlm, P_REAL),
+    SIMP("poissonTol", ptol, P_REAL),
+    SIMP("poissonTolRel", ptol_rel, P_REAL),
     SIMP("rampup", rampup, P_INT),
     SIMP("nsteps", nsteps, P_INT),
-    SIMP("bMeanConstraint", bMeanConstraint, P_INT),
-    SIMP("StaticObstacles", StaticObstacles, P_BOOL),
+    SIMP("bMeanConstraint", mean_constraint, P_INT),
+    SIMP("StaticObstacles", static_obst, P_BOOL),
     STAP("dt", dt, P_REAL),
     STAP("lambda", lambda, P_REAL),
     STAP("uinfx", uinf[0], P_REAL),
@@ -194,29 +194,29 @@ static struct Param fish_params[] = {
     FISHP("xpos", position[0], P_REAL),
     FISHP("ypos", position[1], P_REAL),
     FISHP("zpos", position[2], P_REAL),
-    FISHP("planarAngle", planarAngle, P_REAL),
-    FISHP("T", m.Tperiod, P_REAL),
-    FISHP("phi", m.phaseShift, P_REAL),
-    FISHP("amplitudeFactor", m.amplitudeFactor, P_REAL),
-    FISHP("heightProfile", heightProfile, P_STR),
-    FISHP("widthProfile", widthProfile, P_STR),
-    FISHP("bFixFrameOfRef_x", bFixFrameOfRef[0], P_BOOL),
-    FISHP("bFixFrameOfRef_y", bFixFrameOfRef[1], P_BOOL),
-    FISHP("bFixFrameOfRef_z", bFixFrameOfRef[2], P_BOOL),
-    FISHP("bForcedInSimFrame_x", bForcedInSimFrame[0], P_BOOL),
-    FISHP("bForcedInSimFrame_y", bForcedInSimFrame[1], P_BOOL),
-    FISHP("bForcedInSimFrame_z", bForcedInSimFrame[2], P_BOOL),
-    FISHP("xvel", transVel_imposed[0], P_REAL),
-    FISHP("yvel", transVel_imposed[1], P_REAL),
-    FISHP("zvel", transVel_imposed[2], P_REAL),
-    FISHP("bFixToPlanar", bFixToPlanar, P_BOOL),
-    FISHP("CorrectPosition", bCorrectPosition, P_BOOL),
-    FISHP("CorrectPositionZ", bCorrectPositionZ, P_BOOL),
-    FISHP("CorrectRoll", bCorrectRoll, P_BOOL),
+    FISHP("planarAngle", angle, P_REAL),
+    FISHP("T", m.period, P_REAL),
+    FISHP("phi", m.phase, P_REAL),
+    FISHP("amplitudeFactor", m.amp, P_REAL),
+    FISHP("heightProfile", hprof, P_STR),
+    FISHP("widthProfile", wprof, P_STR),
+    FISHP("bFixFrameOfRef_x", fix[0], P_BOOL),
+    FISHP("bFixFrameOfRef_y", fix[1], P_BOOL),
+    FISHP("bFixFrameOfRef_z", fix[2], P_BOOL),
+    FISHP("bForcedInSimFrame_x", forced[0], P_BOOL),
+    FISHP("bForcedInSimFrame_y", forced[1], P_BOOL),
+    FISHP("bForcedInSimFrame_z", forced[2], P_BOOL),
+    FISHP("xvel", vel_imposed[0], P_REAL),
+    FISHP("yvel", vel_imposed[1], P_REAL),
+    FISHP("zvel", vel_imposed[2], P_REAL),
+    FISHP("bFixToPlanar", planar, P_BOOL),
+    FISHP("CorrectPosition", correct_pos, P_BOOL),
+    FISHP("CorrectPositionZ", correct_z, P_BOOL),
+    FISHP("CorrectRoll", correct_roll, P_BOOL),
     FISHP("wyp", wyp, P_REAL),
     FISHP("wzp", wzp, P_REAL),
 };
-enum { NSIMP = sizeof sim_params / sizeof *sim_params, NFISHP = sizeof fish_params / sizeof *fish_params };
+enum { N_SIMP = sizeof sim_params / sizeof *sim_params, N_FISHP = sizeof fish_params / sizeof *fish_params };
 static void param_fail(char *key, char *val, char *why) __attribute__((noreturn));
 static void param_fail(char *key, char *val, char *why) { fatal("parameter '%s' = '%s': %s", key, val, why); }
 static void param_store(struct Param *p, void *base, char *key, char *val) {
@@ -277,15 +277,15 @@ static void param_check(struct Param *tab, int n, int *seen, char *what) {
 }
 static Real *ralloc(int n) { return emalloc(n * sizeof(Real)); }
 
-static Real d_ds(struct Midline *m, int idx, Real (*vals)[3], int c, int maxidx) {
-  Real *rS = m->rS;
+static Real mid_dds(struct Midline *m, int idx, Real (*vals)[3], int c, int maxidx) {
+  Real *rs = m->rs;
   if (idx == 0)
-    return (vals[idx + 1][c] - vals[idx][c]) / (rS[idx + 1] - rS[idx]);
+    return (vals[idx + 1][c] - vals[idx][c]) / (rs[idx + 1] - rs[idx]);
   else if (idx == maxidx - 1)
-    return (vals[idx][c] - vals[idx - 1][c]) / (rS[idx] - rS[idx - 1]);
+    return (vals[idx][c] - vals[idx - 1][c]) / (rs[idx] - rs[idx - 1]);
   else
-    return 0.5 * ((vals[idx + 1][c] - vals[idx][c]) / (rS[idx + 1] - rS[idx]) +
-                  (vals[idx][c] - vals[idx - 1][c]) / (rS[idx] - rS[idx - 1]));
+    return 0.5 * ((vals[idx + 1][c] - vals[idx][c]) / (rs[idx + 1] - rs[idx]) +
+                  (vals[idx][c] - vals[idx - 1][c]) / (rs[idx] - rs[idx - 1]));
 }
 static void natural_cubic_spline(Real *x, Real *y, unsigned n, Real *xx, Real *yy, unsigned nn) {
   Real *y2 = ralloc(n);
@@ -339,7 +339,7 @@ static void cubic_interpolation(Real x0, Real x1, Real x, Real y0, Real y1, Real
   *y = a * xrel * xrel * xrel + b * xrel * xrel + c * xrel + d;
   *dy = 3 * a * xrel * xrel + 2 * b * xrel + c;
 }
-static void sched_transition(struct Midline *m, Real t, Real tstart, Real tend, Real p0[6], Real p1[6]) {
+static void sched_set(struct Midline *m, Real t, Real tstart, Real tend, Real p0[6], Real p1[6]) {
   int i;
   if (t < tstart || t > tend)
     return;
@@ -352,8 +352,8 @@ static void sched_transition(struct Midline *m, Real t, Real tstart, Real tend, 
     m->sched_p1[i] = p1[i];
   }
 }
-static void sched_gimme(struct Midline *m, Real t, Real positions[6], int Nfine, Real *positions_fine,
-                        Real *parameters_fine, Real *dparameters_fine) {
+static void sched_get(struct Midline *m, Real t, Real positions[6], int Nfine, Real *positions_fine,
+                      Real *parameters_fine, Real *dparameters_fine) {
   Real *p0f = ralloc(Nfine);
   Real *p1f = ralloc(Nfine);
   Real *dp0f = ralloc(Nfine);
@@ -382,64 +382,64 @@ static void sched_gimme(struct Midline *m, Real t, Real positions[6], int Nfine,
   free(p1f);
   free(dp0f);
 }
-static void midline_init(struct Midline *m, Real L, Real h) {
-  int Nm;
+static void mid_init(struct Midline *m, Real L, Real h) {
+  int nm;
   Real *buf;
-  Real *rS;
-  int Nend, Nmid;
-  Real dSref, dSmid;
+  Real *rs;
+  int nend, nmid;
+  Real ds_ref, ds_mid;
   int i, k;
   m->length = L;
   m->h = h;
-  m->waveLength = 1;
-  m->fracRefined = 0.1;
-  m->fracMid = 1 - 2 * m->fracRefined;
-  m->dSmid_tgt = h / sqrt(3);
-  m->dSrefine_tgt = 0.125 * h;
-  m->Nmid = (int)ceil(L * m->fracMid / m->dSmid_tgt / 8) * 8;
-  m->dSmid = L * m->fracMid / m->Nmid;
-  m->Nend = (int)ceil(m->fracRefined * L * 2 / (m->dSmid + m->dSrefine_tgt) / 4) * 4;
-  m->dSref = m->fracRefined * L * 2 / m->Nend - m->dSmid;
-  while (m->dSref < 0 && m->Nend > 4) {
-    m->Nend -= 4;
-    m->dSref = m->fracRefined * L * 2 / m->Nend - m->dSmid;
+  m->wavelen = 1;
+  m->frac_ref = 0.1;
+  m->frac_mid = 1 - 2 * m->frac_ref;
+  m->ds_mid_tgt = h / sqrt(3);
+  m->ds_ref_tgt = 0.125 * h;
+  m->nmid = (int)ceil(L * m->frac_mid / m->ds_mid_tgt / 8) * 8;
+  m->ds_mid = L * m->frac_mid / m->nmid;
+  m->nend = (int)ceil(m->frac_ref * L * 2 / (m->ds_mid + m->ds_ref_tgt) / 4) * 4;
+  m->ds_ref = m->frac_ref * L * 2 / m->nend - m->ds_mid;
+  while (m->ds_ref < 0 && m->nend > 4) {
+    m->nend -= 4;
+    m->ds_ref = m->frac_ref * L * 2 / m->nend - m->ds_mid;
   }
-  m->Nm = m->Nmid + 2 * m->Nend + 1;
-  Nm = m->Nm;
-  buf = ralloc(27 * Nm);
-  m->rS = buf;
-  m->width = buf + 1 * Nm;
-  m->height = buf + 2 * Nm;
-  m->rK = buf + 3 * Nm;
-  m->vK = buf + 4 * Nm;
-  m->rC = buf + 5 * Nm;
-  m->vC = buf + 6 * Nm;
-  m->rT = buf + 7 * Nm;
-  m->vT = buf + 8 * Nm;
-  m->r = (Real(*)[3])(buf + 9 * Nm);
-  m->v = (Real(*)[3])(buf + 12 * Nm);
-  m->nor = (Real(*)[3])(buf + 15 * Nm);
-  m->vNor = (Real(*)[3])(buf + 18 * Nm);
-  m->bin = (Real(*)[3])(buf + 21 * Nm);
-  m->vBin = (Real(*)[3])(buf + 24 * Nm);
-  rS = m->rS;
-  Nend = m->Nend;
-  Nmid = m->Nmid;
-  dSref = m->dSref;
-  dSmid = m->dSmid;
-  rS[0] = 0;
+  m->nm = m->nmid + 2 * m->nend + 1;
+  nm = m->nm;
+  buf = ralloc(27 * nm);
+  m->rs = buf;
+  m->width = buf + 1 * nm;
+  m->height = buf + 2 * nm;
+  m->rk = buf + 3 * nm;
+  m->vk = buf + 4 * nm;
+  m->rc = buf + 5 * nm;
+  m->vc = buf + 6 * nm;
+  m->rt = buf + 7 * nm;
+  m->vt = buf + 8 * nm;
+  m->r = (Real(*)[3])(buf + 9 * nm);
+  m->v = (Real(*)[3])(buf + 12 * nm);
+  m->nor = (Real(*)[3])(buf + 15 * nm);
+  m->vnor = (Real(*)[3])(buf + 18 * nm);
+  m->bin = (Real(*)[3])(buf + 21 * nm);
+  m->vbin = (Real(*)[3])(buf + 24 * nm);
+  rs = m->rs;
+  nend = m->nend;
+  nmid = m->nmid;
+  ds_ref = m->ds_ref;
+  ds_mid = m->ds_mid;
+  rs[0] = 0;
   k = 0;
-  for (i = 0; i < Nend; ++i, k++)
-    rS[k + 1] = rS[k] + dSref + (dSmid - dSref) * i / ((Real)Nend - 1.);
-  for (i = 0; i < Nmid; ++i, k++)
-    rS[k + 1] = rS[k] + dSmid;
-  for (i = 0; i < Nend; ++i, k++)
-    rS[k + 1] = rS[k] + dSref + (dSmid - dSref) * (Nend - i - 1) / ((Real)Nend - 1.);
-  rS[k] = (L < rS[k]) ? L : rS[k];
-  assert(k + 1 == Nm);
-  m->quaternion_internal[0] = 1;
-  m->quaternion_internal[1] = m->quaternion_internal[2] = m->quaternion_internal[3] = 0;
-  m->angvel_internal[0] = m->angvel_internal[1] = m->angvel_internal[2] = 0;
+  for (i = 0; i < nend; ++i, k++)
+    rs[k + 1] = rs[k] + ds_ref + (ds_mid - ds_ref) * i / ((Real)nend - 1.);
+  for (i = 0; i < nmid; ++i, k++)
+    rs[k + 1] = rs[k] + ds_mid;
+  for (i = 0; i < nend; ++i, k++)
+    rs[k + 1] = rs[k] + ds_ref + (ds_mid - ds_ref) * (nend - i - 1) / ((Real)nend - 1.);
+  rs[k] = (L < rs[k]) ? L : rs[k];
+  assert(k + 1 == nm);
+  m->quat_int[0] = 1;
+  m->quat_int[1] = m->quat_int[2] = m->quat_int[3] = 0;
+  m->omega_int[0] = m->omega_int[1] = m->omega_int[2] = 0;
   m->time0 = 0;
   m->timeshift = 0;
   for (i = 0; i < 6; i++)
@@ -488,7 +488,7 @@ static void bspline_basis(Real x, Real *t, int n, Real *B) {
   for (i = 0; i < K; i++)
     B[left - K + 1 + i] = b[i];
 }
-static void integrate_bspline(Real *xc, Real *yc, int n, Real length, Real *rS, Real *res, int Nm) {
+static void integrate_bspline(Real *xc, Real *yc, int n, Real length, Real *rs, Real *res, int nm) {
   enum { K = 4 };
   Real len = 0;
   int i;
@@ -509,17 +509,17 @@ static void integrate_bspline(Real *xc, Real *yc, int n, Real length, Real *rS, 
   for (i = n; i < n + K; i++)
     t[i] = len;
   ti = 0;
-  for (i = 0; i < Nm; ++i) {
+  for (i = 0; i < nm; ++i) {
     res[i] = 0;
-    if (rS[i] > 0 && rS[i] < length) {
-      Real dtt = (rS[i] - rS[i - 1]) / 1e3;
+    if (rs[i] > 0 && rs[i] < length) {
+      Real dtt = (rs[i] - rs[i - 1]) / 1e3;
       int j;
       for (;;) {
         Real xi = 0;
         bspline_basis(ti, t, n, B);
         for (j = 0; j < n; j++)
           xi += xc[j] * B[j];
-        if (xi >= rS[i])
+        if (xi >= rs[i])
           break;
         if (ti + dtt > len)
           break;
@@ -533,47 +533,47 @@ static void integrate_bspline(Real *xc, Real *yc, int n, Real length, Real *rS, 
   free(t);
   free(B);
 }
-static void stefan_width(Real L, Real *rS, Real *res, int Nm) {
+static void w_stefan(Real L, Real *rs, Real *res, int nm) {
   Real sb = .04 * L;
   Real st = .95 * L;
   Real wt = .01 * L;
   Real wh = .04 * L;
   int i;
-  for (i = 0; i < Nm; ++i) {
-    if (rS[i] <= 0 || rS[i] >= L)
+  for (i = 0; i < nm; ++i) {
+    if (rs[i] <= 0 || rs[i] >= L)
       res[i] = 0;
     else {
-      Real s = rS[i];
+      Real s = rs[i];
       res[i] =
           (s < sb ? sqrt(2.0 * wh * s - s * s)
                   : (s < st ? wh - (wh - wt) * pow((s - sb) / (st - sb), 2) : (wt * (L - s) / (L - st))));
     }
   }
 }
-static void stefan_height(Real L, Real *rS, Real *res, int Nm) {
+static void h_stefan(Real L, Real *rs, Real *res, int nm) {
   Real a = 0.51 * L;
   Real b = 0.08 * L;
   int i;
-  for (i = 0; i < Nm; ++i) {
-    if (rS[i] <= 0 || rS[i] >= L)
+  for (i = 0; i < nm; ++i) {
+    if (rs[i] <= 0 || rs[i] >= L)
       res[i] = 0;
     else {
-      Real s = rS[i];
+      Real s = rs[i];
       res[i] = b * sqrt(1 - pow((s - a) / a, 2));
     }
   }
 }
-static void larval_width(Real L, Real *rS, Real *res, int Nm) {
+static void w_larval(Real L, Real *rs, Real *res, int nm) {
   Real sb = .0862 * L;
   Real st = .3448 * L;
   Real wh = .0635 * L;
   Real wt = .0254 * L;
   int i;
-  for (i = 0; i < Nm; ++i) {
-    if (rS[i] <= 0 || rS[i] >= L)
+  for (i = 0; i < nm; ++i) {
+    if (rs[i] <= 0 || rs[i] >= L)
       res[i] = 0;
     else {
-      Real s = rS[i];
+      Real s = rs[i];
       res[i] = s < sb ? wh * sqrt(1 - pow((sb - s) / sb, 2))
                       : (s < st ? (-2 * (wt - wh) - wt * (st - sb)) * pow((s - sb) / (st - sb), 3) +
                                       (3 * (wt - wh) + wt * (st - sb)) * pow((s - sb) / (st - sb), 2) + wh
@@ -581,7 +581,7 @@ static void larval_width(Real L, Real *rS, Real *res, int Nm) {
     }
   }
 }
-static void larval_height(Real L, Real *rS, Real *res, int Nm) {
+static void h_larval(Real L, Real *rs, Real *res, int nm) {
   Real s1 = 0.287 * L;
   Real h1 = 0.072 * L;
   Real s2 = 0.844 * L;
@@ -589,11 +589,11 @@ static void larval_height(Real L, Real *rS, Real *res, int Nm) {
   Real s3 = 0.957 * L;
   Real h3 = 0.071 * L;
   int i;
-  for (i = 0; i < Nm; ++i) {
-    if (rS[i] <= 0 || rS[i] >= L)
+  for (i = 0; i < nm; ++i) {
+    if (rs[i] <= 0 || rs[i] >= L)
       res[i] = 0;
     else {
-      Real s = rS[i];
+      Real s = rs[i];
       res[i] = s < s1 ? (h1 * sqrt(1 - pow((s - s1) / s1, 2)))
                       : (s < s2 ? -2 * (h2 - h1) * pow((s - s1) / (s2 - s1), 3) +
                                       3 * (h2 - h1) * pow((s - s1) / (s2 - s1), 2) + h1
@@ -603,41 +603,41 @@ static void larval_height(Real L, Real *rS, Real *res, int Nm) {
     }
   }
 }
-static void danio_width(Real L, Real *rS, Real *res, int Nm) {
-  enum { nBreaksW = 11 };
-  Real breaksW[nBreaksW] = {0, 0.005, 0.01, 0.05, 0.1, 0.2, 0.4, 0.6, 0.8, 0.95, 1.0};
-  Real coeffsW[nBreaksW - 1][4] = {{0.0015713, 2.6439, 0, -15410},
-                                   {0.012865, 1.4882, -231.15, 15598},
-                                   {0.016476, 0.34647, 2.8156, -39.328},
-                                   {0.032323, 0.38294, -1.9038, 0.7411},
-                                   {0.046803, 0.19812, -1.7926, 5.4876},
-                                   {0.054176, 0.0042136, -0.14638, 0.077447},
-                                   {0.049783, -0.045043, -0.099907, -0.12599},
-                                   {0.03577, -0.10012, -0.1755, 0.62019},
-                                   {0.013687, -0.0959, 0.19662, 0.82341},
-                                   {0.0065049, 0.018665, 0.56715, -3.781}};
+static void w_danio(Real L, Real *rs, Real *res, int nm) {
+  enum { n_breaks_w = 11 };
+  Real bw[n_breaks_w] = {0, 0.005, 0.01, 0.05, 0.1, 0.2, 0.4, 0.6, 0.8, 0.95, 1.0};
+  Real coeffs_w[n_breaks_w - 1][4] = {{0.0015713, 2.6439, 0, -15410},
+                                      {0.012865, 1.4882, -231.15, 15598},
+                                      {0.016476, 0.34647, 2.8156, -39.328},
+                                      {0.032323, 0.38294, -1.9038, 0.7411},
+                                      {0.046803, 0.19812, -1.7926, 5.4876},
+                                      {0.054176, 0.0042136, -0.14638, 0.077447},
+                                      {0.049783, -0.045043, -0.099907, -0.12599},
+                                      {0.03577, -0.10012, -0.1755, 0.62019},
+                                      {0.013687, -0.0959, 0.19662, 0.82341},
+                                      {0.0065049, 0.018665, 0.56715, -3.781}};
   int i;
-  for (i = 0; i < Nm; ++i) {
-    if (rS[i] <= 0 || rS[i] >= L)
+  for (i = 0; i < nm; ++i) {
+    if (rs[i] <= 0 || rs[i] >= L)
       res[i] = 0;
     else {
-      Real sNormalized = rS[i] / L;
-      int currentSegW = 1;
-      Real *paramsW;
-      Real xxW;
-      while (sNormalized >= breaksW[currentSegW])
-        currentSegW++;
-      currentSegW--;
-      paramsW = coeffsW[currentSegW];
-      xxW = sNormalized - breaksW[currentSegW];
-      res[i] = L * (paramsW[0] + paramsW[1] * xxW + paramsW[2] * pow(xxW, 2) + paramsW[3] * pow(xxW, 3));
+      Real sn = rs[i] / L;
+      int iw = 1;
+      Real *cw;
+      Real xw;
+      while (sn >= bw[iw])
+        iw++;
+      iw--;
+      cw = coeffs_w[iw];
+      xw = sn - bw[iw];
+      res[i] = L * (cw[0] + cw[1] * xw + cw[2] * pow(xw, 2) + cw[3] * pow(xw, 3));
     }
   }
 }
-static void danio_height(Real L, Real *rS, Real *res, int Nm) {
-  enum { nBreaksH = 15 };
-  Real breaksH[nBreaksH] = {0, 0.01, 0.05, 0.1, 0.3, 0.5, 0.7, 0.8, 0.85, 0.87, 0.9, 0.993, 0.996, 0.998, 1};
-  Real coeffsH[nBreaksH - 1][4] = {
+static void h_danio(Real L, Real *rs, Real *res, int nm) {
+  enum { n_breaks_h = 15 };
+  Real bh[n_breaks_h] = {0, 0.01, 0.05, 0.1, 0.3, 0.5, 0.7, 0.8, 0.85, 0.87, 0.9, 0.993, 0.996, 0.998, 1};
+  Real coeffs_h[n_breaks_h - 1][4] = {
       {0.0011746, 1.345, 2.2204e-14, -578.62},   {0.014046, 1.1715, -17.359, 128.6},
       {0.041361, 0.40004, -1.9268, 9.7029},      {0.057759, 0.28013, -0.47141, -0.08102},
       {0.094281, 0.081843, -0.52002, -0.76511},  {0.083728, -0.21798, -0.97909, 3.9699},
@@ -646,70 +646,70 @@ static void danio_height(Real L, Real *rS, Real *res, int Nm) {
       {0.069781, 0.3937, -0.42196, -29.388},     {0.079107, -0.44731, -8.6211, -1.8283e+05},
       {0.072751, -5.4355, -1654.1, -2.9121e+05}, {0.052934, -15.546, -3401.4, 5.6689e+05}};
   int i;
-  for (i = 0; i < Nm; ++i) {
-    if (rS[i] <= 0 || rS[i] >= L)
+  for (i = 0; i < nm; ++i) {
+    if (rs[i] <= 0 || rs[i] >= L)
       res[i] = 0;
     else {
-      Real sNormalized = rS[i] / L;
-      int currentSegH = 1;
-      Real *paramsH;
-      Real xxH;
-      while (sNormalized >= breaksH[currentSegH])
-        currentSegH++;
-      currentSegH--;
-      paramsH = coeffsH[currentSegH];
-      xxH = sNormalized - breaksH[currentSegH];
-      res[i] = L * (paramsH[0] + paramsH[1] * xxH + paramsH[2] * pow(xxH, 2) + paramsH[3] * pow(xxH, 3));
+      Real sn = rs[i] / L;
+      int ih = 1;
+      Real *ch;
+      Real xh;
+      while (sn >= bh[ih])
+        ih++;
+      ih--;
+      ch = coeffs_h[ih];
+      xh = sn - bh[ih];
+      res[i] = L * (ch[0] + ch[1] * xh + ch[2] * pow(xh, 2) + ch[3] * pow(xh, 3));
     }
   }
 }
-static void largefin_height(Real L, Real *rS, Real *res, int Nm) {
+static void h_largefin(Real L, Real *rs, Real *res, int nm) {
   Real x[8] = {0, 0, .2 * L, .4 * L, .6 * L, .8 * L, L, L};
   Real y[8] = {0, .055 * L, .18 * L, .2 * L, .064 * L, .002 * L, .325 * L, 0};
-  integrate_bspline(x, y, 8, L, rS, res, Nm);
+  integrate_bspline(x, y, 8, L, rs, res, nm);
 }
-static void tunaclone_height(Real L, Real *rS, Real *res, int Nm) {
+static void h_tunaclone(Real L, Real *rs, Real *res, int nm) {
   Real x[9] = {0, 0, 0.2 * L, .4 * L, .6 * L, .9 * L, .96 * L, L, L};
   Real y[9] = {0, .05 * L, .14 * L, .15 * L, .11 * L, 0, .1 * L, .2 * L, 0};
-  integrate_bspline(x, y, 9, L, rS, res, Nm);
+  integrate_bspline(x, y, 9, L, rs, res, nm);
 }
-static void default_height(Real L, Real *rS, Real *res, int Nm) {
+static void h_default(Real L, Real *rs, Real *res, int nm) {
   Real x[8] = {0, 0, .2 * L, .4 * L, .6 * L, .8 * L, L, L};
   Real y[8] = {0, .055 * L, .068 * L, .076 * L, .064 * L, .0072 * L, .11 * L, 0};
-  integrate_bspline(x, y, 8, L, rS, res, Nm);
+  integrate_bspline(x, y, 8, L, rs, res, nm);
 }
-static void fatter_width(Real L, Real *rS, Real *res, int Nm) {
+static void w_fatter(Real L, Real *rs, Real *res, int nm) {
   Real x[6] = {0, 0, L / 3., 2 * L / 3., L, L};
   Real y[6] = {0, 8.9e-2 * L, 7.0e-2 * L, 3.0e-2 * L, 2.0e-2 * L, 0};
-  integrate_bspline(x, y, 6, L, rS, res, Nm);
+  integrate_bspline(x, y, 6, L, rs, res, nm);
 }
-static void default_width(Real L, Real *rS, Real *res, int Nm) {
+static void w_default(Real L, Real *rs, Real *res, int nm) {
   Real x[6] = {0, 0, L / 3., 2 * L / 3., L, L};
   Real y[6] = {0, 8.9e-2 * L, 1.7e-2 * L, 1.6e-2 * L, 1.3e-2 * L, 0};
-  integrate_bspline(x, y, 6, L, rS, res, Nm);
+  integrate_bspline(x, y, 6, L, rs, res, nm);
 }
 struct Profile {
   char *name;
-  void (*fn)(Real L, Real *rS, Real *res, int Nm);
+  void (*fn)(Real L, Real *rs, Real *res, int nm);
 };
 static struct Profile height_profiles[] = {
-    {"largefin", largefin_height}, {"tunaclone", tunaclone_height}, {"danio", danio_height},
-    {"stefan", stefan_height},     {"larval", larval_height},       {"default", default_height},
+    {"largefin", h_largefin}, {"tunaclone", h_tunaclone}, {"danio", h_danio},
+    {"stefan", h_stefan},     {"larval", h_larval},       {"default", h_default},
 };
 static struct Profile width_profiles[] = {
-    {"fatter", fatter_width}, {"danio", danio_width},     {"stefan", stefan_width},
-    {"larval", larval_width}, {"default", default_width},
+    {"fatter", w_fatter}, {"danio", w_danio},     {"stefan", w_stefan},
+    {"larval", w_larval}, {"default", w_default},
 };
 enum {
   NHEIGHT = sizeof height_profiles / sizeof *height_profiles,
   NWIDTH = sizeof width_profiles / sizeof *width_profiles
 };
-static void profile_apply(struct Profile *tab, int n, char *what, char *name, Real L, Real *rS, Real *res,
-                          int Nm) {
+static void profile_set(struct Profile *tab, int n, char *what, char *name, Real L, Real *rs, Real *res,
+                        int nm) {
   int i;
   for (i = 0; i < n; i++)
     if (strcmp(tab[i].name, name) == 0) {
-      tab[i].fn(L, rS, res, Nm);
+      tab[i].fn(L, rs, res, nm);
       return;
     }
   fatal("unknown %s profile '%s'", what, name);
@@ -732,38 +732,38 @@ static void normalize3(Real a[3]) {
       a[k] *= f;
   }
 }
-static void frenet_solve(struct Midline *m) {
-  int Nm = m->Nm;
-  Real *rS = m->rS, *curv = m->rK, *curv_dt = m->vK, *tors = m->rT, *tors_dt = m->vT;
-  Real(*r)[3] = m->r, (*v)[3] = m->v, (*nor)[3] = m->nor, (*vNor)[3] = m->vNor, (*bin)[3] = m->bin,
-  (*vBin)[3] = m->vBin;
-  Real ksi[3] = {1.0, 0.0, 0.0}, vKsi[3] = {0.0, 0.0, 0.0};
+static void mid_frenet(struct Midline *m) {
+  int nm = m->nm;
+  Real *rs = m->rs, *curv = m->rk, *curv_dt = m->vk, *tors = m->rt, *tors_dt = m->vt;
+  Real(*r)[3] = m->r, (*v)[3] = m->v, (*nor)[3] = m->nor, (*vnor)[3] = m->vnor, (*bin)[3] = m->bin,
+  (*vbin)[3] = m->vbin;
+  Real ksi[3] = {1.0, 0.0, 0.0}, v_ksi[3] = {0.0, 0.0, 0.0};
   int d;
   int i;
   for (d = 0; d < 3; d++) {
-    r[0][d] = v[0][d] = vNor[0][d] = vBin[0][d] = 0.0;
+    r[0][d] = v[0][d] = vnor[0][d] = vbin[0][d] = 0.0;
     nor[0][d] = d == 1;
     bin[0][d] = d == 2;
   }
-  for (i = 1; i < Nm; i++) {
+  for (i = 1; i < nm; i++) {
     Real k = curv[i - 1], kt = curv_dt[i - 1], tau = tors[i - 1], taut = tors_dt[i - 1];
-    Real ds = rS[i] - rS[i - 1];
+    Real ds = rs[i] - rs[i - 1];
     int d;
     for (d = 0; d < 3; d++) {
       Real dksi = k * nor[i - 1][d];
       Real dnu = -k * ksi[d] + tau * bin[i - 1][d];
       Real dbin = -tau * nor[i - 1][d];
-      Real dvKsi = kt * nor[i - 1][d] + k * vNor[i - 1][d];
-      Real dvNu = -kt * ksi[d] - k * vKsi[d] + taut * bin[i - 1][d] + tau * vBin[i - 1][d];
-      Real dvBin = -taut * nor[i - 1][d] - tau * vNor[i - 1][d];
+      Real dv_ksi = kt * nor[i - 1][d] + k * vnor[i - 1][d];
+      Real dv_nu = -kt * ksi[d] - k * v_ksi[d] + taut * bin[i - 1][d] + tau * vbin[i - 1][d];
+      Real dv_bin = -taut * nor[i - 1][d] - tau * vnor[i - 1][d];
       r[i][d] = r[i - 1][d] + ds * ksi[d];
       nor[i][d] = nor[i - 1][d] + ds * dnu;
       ksi[d] += ds * dksi;
       bin[i][d] = bin[i - 1][d] + ds * dbin;
-      v[i][d] = v[i - 1][d] + ds * vKsi[d];
-      vNor[i][d] = vNor[i - 1][d] + ds * dvNu;
-      vKsi[d] += ds * dvKsi;
-      vBin[i][d] = vBin[i - 1][d] + ds * dvBin;
+      v[i][d] = v[i - 1][d] + ds * v_ksi[d];
+      vnor[i][d] = vnor[i - 1][d] + ds * dv_nu;
+      v_ksi[d] += ds * dv_ksi;
+      vbin[i][d] = vbin[i - 1][d] + ds * dv_bin;
     }
     normalize3(ksi);
     normalize3(nor[i]);
@@ -771,11 +771,11 @@ static void frenet_solve(struct Midline *m) {
   }
 }
 
-static void frame_orthonormalize(struct Midline *m, int i, Real t[3], Real dt[3]) {
-  Real *nor = m->nor[i], *vNor = m->vNor[i], *bin = m->bin[i], *vBin = m->vBin[i];
-  Real BD[3] = {nor[0], nor[1], nor[2]}, dBD[3] = {vNor[0], vNor[1], vNor[2]};
+static void mid_frame(struct Midline *m, int i, Real t[3], Real dt[3]) {
+  Real *nor = m->nor[i], *vnor = m->vnor[i], *bin = m->bin[i], *vbin = m->vbin[i];
+  Real BD[3] = {nor[0], nor[1], nor[2]}, d_bd[3] = {vnor[0], vnor[1], vnor[2]};
   Real dot = dot3(BD, t);
-  Real ddot = dot3(dBD, t) + BD[0] * dt[0] + BD[1] * dt[1] + BD[2] * dt[2];
+  Real ddot = dot3(d_bd, t) + BD[0] * dt[0] + BD[1] * dt[1] + BD[2] * dt[2];
   int d;
   Real inormn;
   Real inormb;
@@ -785,7 +785,7 @@ static void frame_orthonormalize(struct Midline *m, int i, Real t[3], Real dt[3]
   inormn = 1.0 / sqrt(dot3(nor, nor));
   for (d = 0; d < 3; d++) {
     nor[d] *= inormn;
-    vNor[d] = dBD[d] - ddot * t[d] - dot * dt[d];
+    vnor[d] = d_bd[d] - ddot * t[d] - dot * dt[d];
   }
   cross3(bin, t, nor);
   inormb = 1.0 / sqrt(dot3(bin, bin));
@@ -793,18 +793,18 @@ static void frame_orthonormalize(struct Midline *m, int i, Real t[3], Real dt[3]
     bin[d] *= inormb;
   for (a = 0; a < 3; a++) {
     int b = (a + 1) % 3, c = (a + 2) % 3;
-    vBin[a] = (dt[b] * nor[c] + t[b] * vNor[c]) - (dt[c] * nor[b] + t[c] * vNor[b]);
+    vbin[a] = (dt[b] * nor[c] + t[b] * vnor[c]) - (dt[c] * nor[b] + t[c] * vnor[b]);
   }
 }
-static void recompute_normal_vectors(struct Midline *m) {
-  int Nm = m->Nm;
-  Real *rS = m->rS;
+static void mid_frames(struct Midline *m) {
+  int nm = m->nm;
+  Real *rs = m->rs;
   Real(*r)[3] = m->r, (*v)[3] = m->v;
   int i;
 #pragma omp parallel for
-  for (i = 1; i < Nm - 1; i++) {
-    Real hp = rS[i + 1] - rS[i];
-    Real hm = rS[i] - rS[i - 1];
+  for (i = 1; i < nm - 1; i++) {
+    Real hp = rs[i + 1] - rs[i];
+    Real hm = rs[i] - rs[i - 1];
     Real frac = hp / hm;
     Real am = -frac * frac;
     Real a = frac * frac - 1.0;
@@ -816,29 +816,29 @@ static void recompute_normal_vectors(struct Midline *m) {
       t[d] = (am * r[i - 1][d] + a * r[i][d] + ap * r[i + 1][d]) * denom;
       dt[d] = (am * v[i - 1][d] + a * v[i][d] + ap * v[i + 1][d]) * denom;
     }
-    frame_orthonormalize(m, i, t, dt);
+    mid_frame(m, i, t, dt);
   }
-  for (i = 0; i <= Nm - 1; i += Nm - 1) {
-    int ipm = (i == Nm - 1) ? i - 1 : i + 1;
-    Real ids = 1.0 / (rS[ipm] - rS[i]);
+  for (i = 0; i <= nm - 1; i += nm - 1) {
+    int ipm = (i == nm - 1) ? i - 1 : i + 1;
+    Real ids = 1.0 / (rs[ipm] - rs[i]);
     Real t[3], dt[3];
     int d;
     for (d = 0; d < 3; d++) {
       t[d] = (r[ipm][d] - r[i][d]) * ids;
       dt[d] = (v[ipm][d] - v[i][d]) * ids;
     }
-    frame_orthonormalize(m, i, t, dt);
+    mid_frame(m, i, t, dt);
   }
 }
-static void perform_pitching_motion(struct Midline *m) {
-  int Nm = m->Nm;
+static void mid_pitch(struct Midline *m) {
+  int nm = m->nm;
   Real(*r)[3] = m->r, (*v)[3] = m->v;
   Real gamma = m->gamma, dgamma = m->dgamma;
   Real R, Rdot;
-  Real x0N;
-  Real y0N;
-  Real x0Ndot;
-  Real y0Ndot;
+  Real x0_n;
+  Real y0_n;
+  Real x0_ndot;
+  Real y0_ndot;
   Real phi;
   Real phidot;
   Real M;
@@ -853,18 +853,18 @@ static void perform_pitching_motion(struct Midline *m) {
     R = gamma >= 0 ? 1e10 : -1e10;
     Rdot = 0.0;
   }
-  x0N = r[Nm - 1][0];
-  y0N = r[Nm - 1][1];
-  x0Ndot = v[Nm - 1][0];
-  y0Ndot = v[Nm - 1][1];
-  phi = atan2(y0N, x0N);
-  phidot = 1.0 / (1.0 + pow(y0N / x0N, 2)) * (y0Ndot / x0N - y0N * x0Ndot / x0N / x0N);
-  M = pow(x0N * x0N + y0N * y0N, 0.5);
-  Mdot = (x0N * x0Ndot + y0N * y0Ndot) / M;
+  x0_n = r[nm - 1][0];
+  y0_n = r[nm - 1][1];
+  x0_ndot = v[nm - 1][0];
+  y0_ndot = v[nm - 1][1];
+  phi = atan2(y0_n, x0_n);
+  phidot = 1.0 / (1.0 + pow(y0_n / x0_n, 2)) * (y0_ndot / x0_n - y0_n * x0_ndot / x0_n / x0_n);
+  M = pow(x0_n * x0_n + y0_n * y0_n, 0.5);
+  Mdot = (x0_n * x0_ndot + y0_n * y0_ndot) / M;
   cosphi = cos(phi);
   sinphi = sin(phi);
 #pragma omp parallel for
-  for (i = 0; i < Nm; i++) {
+  for (i = 0; i < nm; i++) {
     double x0 = r[i][0];
     double y0 = r[i][1];
     double x0dot = v[i][0];
@@ -888,88 +888,87 @@ static void perform_pitching_motion(struct Midline *m) {
     v[i][1] = y1dot;
     v[i][2] = z2dot;
   }
-  recompute_normal_vectors(m);
+  mid_frames(m);
 }
-static void compute_midline(struct Midline *m, Real t) {
-  int Nm = m->Nm;
-  Real length = m->length, Tperiod = m->Tperiod;
-  Real curvaturePoints[6];
-  Real curvatureValues[6];
-  Real curvatureZeros[6];
+static void mid_step(struct Midline *m, Real t) {
+  int nm = m->nm;
+  Real length = m->length, period = m->period;
+  Real curv_s[6];
+  Real curv_k[6];
+  Real curv_0[6];
   Real darg;
   Real arg0;
-  Real alpha, dalpha, beta, dbeta, amplitudeFactor, waveLength;
-  Real *rS, *rC, *vC;
-  Real *rK, *vK, *rT, *vT;
+  Real alpha, dalpha, beta, dbeta, amp, wavelen;
+  Real *rs, *rc, *vc;
+  Real *rk, *vk, *rt, *vt;
   int i;
-  if (0 < t && t < 0.1 * Tperiod) {
-    m->timeshift = (t - m->time0) / Tperiod + m->timeshift;
+  if (0 < t && t < 0.1 * period) {
+    m->timeshift = (t - m->time0) / period + m->timeshift;
     m->time0 = t;
   }
-  curvaturePoints[0] = 0.0;
-  curvaturePoints[1] = 0.15 * length;
-  curvaturePoints[2] = 0.4 * length;
-  curvaturePoints[3] = 0.65 * length;
-  curvaturePoints[4] = 0.9 * length;
-  curvaturePoints[5] = length;
-  curvatureValues[0] = 0.82014 / length;
-  curvatureValues[1] = 1.46515 / length;
-  curvatureValues[2] = 2.57136 / length;
-  curvatureValues[3] = 3.75425 / length;
-  curvatureValues[4] = 5.09147 / length;
-  curvatureValues[5] = 5.70449 / length;
-  curvatureZeros[0] = 0;
-  curvatureZeros[1] = 0;
-  curvatureZeros[2] = 0;
-  curvatureZeros[3] = 0;
-  curvatureZeros[4] = 0;
-  curvatureZeros[5] = 0;
-  sched_transition(m, 0, 0, Tperiod, curvatureZeros, curvatureValues);
-  sched_gimme(m, t, curvaturePoints, Nm, m->rS, m->rC, m->vC);
-  darg = 2 * M_PI / Tperiod;
-  arg0 = 2 * M_PI * ((t - m->time0) / Tperiod + m->timeshift) + M_PI * m->phaseShift;
+  curv_s[0] = 0.0;
+  curv_s[1] = 0.15 * length;
+  curv_s[2] = 0.4 * length;
+  curv_s[3] = 0.65 * length;
+  curv_s[4] = 0.9 * length;
+  curv_s[5] = length;
+  curv_k[0] = 0.82014 / length;
+  curv_k[1] = 1.46515 / length;
+  curv_k[2] = 2.57136 / length;
+  curv_k[3] = 3.75425 / length;
+  curv_k[4] = 5.09147 / length;
+  curv_k[5] = 5.70449 / length;
+  curv_0[0] = 0;
+  curv_0[1] = 0;
+  curv_0[2] = 0;
+  curv_0[3] = 0;
+  curv_0[4] = 0;
+  curv_0[5] = 0;
+  sched_set(m, 0, 0, period, curv_0, curv_k);
+  sched_get(m, t, curv_s, nm, m->rs, m->rc, m->vc);
+  darg = 2 * M_PI / period;
+  arg0 = 2 * M_PI * ((t - m->time0) / period + m->timeshift) + M_PI * m->phase;
   alpha = m->alpha;
   dalpha = m->dalpha;
   beta = m->beta;
   dbeta = m->dbeta;
-  amplitudeFactor = m->amplitudeFactor;
-  waveLength = m->waveLength;
-  rS = m->rS;
-  rC = m->rC;
-  vC = m->vC;
-  rK = m->rK;
-  vK = m->vK;
-  rT = m->rT;
-  vT = m->vT;
+  amp = m->amp;
+  wavelen = m->wavelen;
+  rs = m->rs;
+  rc = m->rc;
+  vc = m->vc;
+  rk = m->rk;
+  vk = m->vk;
+  rt = m->rt;
+  vt = m->vt;
 #pragma omp parallel for
-  for (i = 0; i < Nm; ++i) {
-    Real arg = arg0 - 2 * M_PI * rS[i] / length / waveLength;
+  for (i = 0; i < nm; ++i) {
+    Real arg = arg0 - 2 * M_PI * rs[i] / length / wavelen;
     Real curv = sin(arg) + beta;
     Real dcurv = cos(arg) * darg + dbeta;
-    rK[i] = alpha * amplitudeFactor * rC[i] * curv;
-    vK[i] =
-        alpha * amplitudeFactor * (vC[i] * curv + rC[i] * dcurv) + dalpha * amplitudeFactor * rC[i] * curv;
-    rT[i] = 0;
-    vT[i] = 0;
+    rk[i] = alpha * amp * rc[i] * curv;
+    vk[i] = alpha * amp * (vc[i] * curv + rc[i] * dcurv) + dalpha * amp * rc[i] * curv;
+    rt[i] = 0;
+    vt[i] = 0;
   }
-  frenet_solve(m);
-  perform_pitching_motion(m);
+  mid_frenet(m);
+  mid_pitch(m);
 }
 
-static void integrate_linear_momentum(struct Midline *m) {
-  int Nm = m->Nm;
-  Real *rS = m->rS, *width = m->width, *height = m->height;
-  Real(*r)[3] = m->r, (*v)[3] = m->v, (*nor)[3] = m->nor, (*vNor)[3] = m->vNor, (*bin)[3] = m->bin,
-  (*vBin)[3] = m->vBin;
+static void mid_lin(struct Midline *m) {
+  int nm = m->nm;
+  Real *rs = m->rs, *width = m->width, *height = m->height;
+  Real(*r)[3] = m->r, (*v)[3] = m->v, (*nor)[3] = m->nor, (*vnor)[3] = m->vnor, (*bin)[3] = m->bin,
+  (*vbin)[3] = m->vbin;
   Real V = 0, cm[3] = {0, 0, 0}, lm[3] = {0, 0, 0};
   int i;
   Real volume;
   Real aux;
   int d;
 
-  for (i = 0; i < Nm; ++i) {
+  for (i = 0; i < nm; ++i) {
     Real ds =
-        0.5 * ((i == 0) ? rS[1] - rS[0] : ((i == Nm - 1) ? rS[Nm - 1] - rS[Nm - 2] : rS[i + 1] - rS[i - 1]));
+        0.5 * ((i == 0) ? rs[1] - rs[0] : ((i == nm - 1) ? rs[nm - 1] - rs[nm - 2] : rs[i + 1] - rs[i - 1]));
     Real c[3], xdot[3], ndot[3], bdot[3];
     int d;
     Real w;
@@ -979,9 +978,9 @@ static void integrate_linear_momentum(struct Midline *m) {
     Real aux3;
     cross3(c, nor[i], bin[i]);
     for (d = 0; d < 3; d++) {
-      xdot[d] = d_ds(m, i, r, d, Nm);
-      ndot[d] = d_ds(m, i, nor, d, Nm);
-      bdot[d] = d_ds(m, i, bin, d, Nm);
+      xdot[d] = mid_dds(m, i, r, d, nm);
+      ndot[d] = mid_dds(m, i, nor, d, nm);
+      bdot[d] = mid_dds(m, i, bin, d, nm);
     }
     w = width[i];
     H = height[i];
@@ -991,7 +990,7 @@ static void integrate_linear_momentum(struct Midline *m) {
     V += aux1;
     for (d = 0; d < 3; d++) {
       cm[d] += r[i][d] * aux1 + nor[i][d] * aux2 + bin[i][d] * aux3;
-      lm[d] += v[i][d] * aux1 + vNor[i][d] * aux2 + vBin[i][d] * aux3;
+      lm[d] += v[i][d] * aux1 + vnor[i][d] * aux2 + vbin[i][d] * aux3;
     }
   }
   volume = V * M_PI;
@@ -1001,7 +1000,7 @@ static void integrate_linear_momentum(struct Midline *m) {
     lm[d] *= aux;
   }
 #pragma omp parallel for schedule(static)
-  for (i = 0; i < Nm; ++i) {
+  for (i = 0; i < nm; ++i) {
     int d;
     for (d = 0; d < 3; d++) {
       r[i][d] -= cm[d];
@@ -1029,10 +1028,10 @@ static void quat_rate(Real q[4], Real w[3], Real dq[4]) {
   dq[3] = 0.5 * (+w[0] * q[2] - w[1] * q[1] + w[2] * q[0]);
 }
 static void quat_normalize(Real q[4]) {
-  Real invD = 1.0 / sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
+  Real inv_d = 1.0 / sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
   int d;
   for (d = 0; d < 4; d++)
-    q[d] *= invD;
+    q[d] *= inv_d;
 }
 static void quat_to_rotation(Real q[4], Real R[3][3]) {
   R[0][0] = 1 - 2 * (q[2] * q[2] + q[3] * q[3]);
@@ -1065,13 +1064,13 @@ static void inertia_add(Real *J, Real f, Real p[3]) {
   J[4] -= f * p[0] * p[2];
   J[5] -= f * p[1] * p[2];
 }
-static void integrate_angular_momentum(struct Midline *m, Real dt) {
-  int Nm = m->Nm;
-  Real *rS = m->rS, *width = m->width, *height = m->height;
-  Real(*r)[3] = m->r, (*v)[3] = m->v, (*nor)[3] = m->nor, (*vNor)[3] = m->vNor, (*bin)[3] = m->bin,
-  (*vBin)[3] = m->vBin;
-  Real *quaternion_internal = m->quaternion_internal;
-  Real *angvel_internal = m->angvel_internal;
+static void mid_ang(struct Midline *m, Real dt) {
+  int nm = m->nm;
+  Real *rs = m->rs, *width = m->width, *height = m->height;
+  Real(*r)[3] = m->r, (*v)[3] = m->v, (*nor)[3] = m->nor, (*vnor)[3] = m->vnor, (*bin)[3] = m->bin,
+  (*vbin)[3] = m->vbin;
+  Real *quat_int = m->quat_int;
+  Real *omega_int = m->omega_int;
   Real Jd[3] = {0, 0, 0};
   Real Jo[3] = {0, 0, 0};
   Real AM[3] = {0, 0, 0};
@@ -1089,40 +1088,40 @@ static void integrate_angular_momentum(struct Midline *m, Real dt) {
   Real dqdt[4];
   Real R[3][3];
 
-  for (i = 0; i < Nm; ++i) {
+  for (i = 0; i < nm; ++i) {
     Real ds =
-        0.5 * ((i == 0) ? rS[1] - rS[0] : ((i == Nm - 1) ? rS[Nm - 1] - rS[Nm - 2] : rS[i + 1] - rS[i - 1]));
+        0.5 * ((i == 0) ? rs[1] - rs[0] : ((i == nm - 1) ? rs[nm - 1] - rs[nm - 2] : rs[i + 1] - rs[i - 1]));
     Real c[3], xdot[3], ndot[3], bdot[3];
     int d;
     Real M00;
     Real M11;
     Real M22;
-    Real cR;
-    Real cN;
-    Real cB;
+    Real c_r;
+    Real c_n;
+    Real c_b;
     Real XX;
     Real YY;
     Real ZZ;
     cross3(c, nor[i], bin[i]);
     for (d = 0; d < 3; d++) {
-      xdot[d] = d_ds(m, i, r, d, Nm);
-      ndot[d] = d_ds(m, i, nor, d, Nm);
-      bdot[d] = d_ds(m, i, bin, d, Nm);
+      xdot[d] = mid_dds(m, i, r, d, nm);
+      ndot[d] = mid_dds(m, i, nor, d, nm);
+      bdot[d] = mid_dds(m, i, bin, d, nm);
     }
     M00 = width[i] * height[i];
     M11 = 0.25 * width[i] * width[i] * width[i] * height[i];
     M22 = 0.25 * width[i] * height[i] * height[i] * height[i];
-    cR = dot3(c, xdot);
-    cN = dot3(c, ndot);
-    cB = dot3(c, bdot);
+    c_r = dot3(c, xdot);
+    c_n = dot3(c, ndot);
+    c_b = dot3(c, bdot);
 #define J2(a, b)                                                                                             \
-  (cR * (r[i][a] * r[i][b] * M00 + nor[i][a] * nor[i][b] * M11 + bin[i][a] * bin[i][b] * M22) +              \
-   cN * M11 * (r[i][a] * nor[i][b] + r[i][b] * nor[i][a]) +                                                  \
-   cB * M22 * (r[i][a] * bin[i][b] + r[i][b] * bin[i][a]))
+  (c_r * (r[i][a] * r[i][b] * M00 + nor[i][a] * nor[i][b] * M11 + bin[i][a] * bin[i][b] * M22) +             \
+   c_n * M11 * (r[i][a] * nor[i][b] + r[i][b] * nor[i][a]) +                                                 \
+   c_b * M22 * (r[i][a] * bin[i][b] + r[i][b] * bin[i][a]))
 #define K(a, b)                                                                                              \
-  (cR * (v[i][a] * r[i][b] * M00 + vNor[i][a] * nor[i][b] * M11 + vBin[i][a] * bin[i][b] * M22) +            \
-   cN * M11 * (v[i][a] * nor[i][b] + r[i][b] * vNor[i][a]) +                                                 \
-   cB * M22 * (v[i][a] * bin[i][b] + r[i][b] * vBin[i][a]))
+  (c_r * (v[i][a] * r[i][b] * M00 + vnor[i][a] * nor[i][b] * M11 + vbin[i][a] * bin[i][b] * M22) +           \
+   c_n * M11 * (v[i][a] * nor[i][b] + r[i][b] * vnor[i][a]) +                                                \
+   c_b * M22 * (v[i][a] * bin[i][b] + r[i][b] * vbin[i][a]))
     Jo[0] += -ds * J2(0, 1);
     Jo[2] += -ds * J2(2, 0);
     Jo[1] += -ds * J2(1, 2);
@@ -1159,73 +1158,72 @@ static void integrate_angular_momentum(struct Midline *m, Real dt) {
   a12 = m01 * m02 - m00 * m12;
   a22 = m00 * m11 - m01 * m01;
   determinant = 1.0 / ((m00 * a00) + (m01 * a01) + (m02 * a02));
-  angvel_internal[0] = (a00 * AM[0] + a01 * AM[1] + a02 * AM[2]) * determinant;
-  angvel_internal[1] = (a01 * AM[0] + a11 * AM[1] + a12 * AM[2]) * determinant;
-  angvel_internal[2] = (a02 * AM[0] + a12 * AM[1] + a22 * AM[2]) * determinant;
-  quat_rate(quaternion_internal, angvel_internal, dqdt);
+  omega_int[0] = (a00 * AM[0] + a01 * AM[1] + a02 * AM[2]) * determinant;
+  omega_int[1] = (a01 * AM[0] + a11 * AM[1] + a12 * AM[2]) * determinant;
+  omega_int[2] = (a02 * AM[0] + a12 * AM[1] + a22 * AM[2]) * determinant;
+  quat_rate(quat_int, omega_int, dqdt);
   for (d = 0; d < 4; d++)
-    quaternion_internal[d] -= dt * dqdt[d];
-  quat_normalize(quaternion_internal);
-  quat_to_rotation(quaternion_internal, R);
-  for (i = 0; i < Nm; ++i) {
-    rotate_pair(R, angvel_internal, r[i], v[i]);
-    rotate_pair(R, angvel_internal, nor[i], vNor[i]);
-    rotate_pair(R, angvel_internal, bin[i], vBin[i]);
+    quat_int[d] -= dt * dqdt[d];
+  quat_normalize(quat_int);
+  quat_to_rotation(quat_int, R);
+  for (i = 0; i < nm; ++i) {
+    rotate_pair(R, omega_int, r[i], v[i]);
+    rotate_pair(R, omega_int, nor[i], vnor[i]);
+    rotate_pair(R, omega_int, bin[i], vbin[i]);
   }
 }
 static void fish_init(struct Fish *f) {
-  Real planarAngle = f->planarAngle / 180 * M_PI;
+  Real angle = f->angle / 180 * M_PI;
   Real *q = f->quaternion;
-  Real enforcedVelocity[3];
+  Real enforced_velocity[3];
   int d;
-  int anyVelForced;
-  q[0] = cos(0.5 * planarAngle);
+  int any_vel_forced;
+  q[0] = cos(0.5 * angle);
   q[1] = 0;
   q[2] = 0;
-  q[3] = sin(0.5 * planarAngle);
+  q[3] = sin(0.5 * angle);
   for (d = 0; d < 3; d++) {
-    enforcedVelocity[d] = -f->transVel_imposed[d];
-    f->absPos[d] = f->position[d];
-    f->transVel[d] = f->angVel[d] = f->transVel_imposed[d] = 0;
-    f->bBlockRotation[d] = 0;
+    enforced_velocity[d] = -f->vel_imposed[d];
+    f->abs_pos[d] = f->position[d];
+    f->vel[d] = f->omega[d] = f->vel_imposed[d] = 0;
+    f->block_rot[d] = 0;
   }
   if (f->length < 5 * DBL_EPSILON)
     fatal("fish length %g must be positive", f->length);
   for (d = 0; d < 3; ++d) {
-    if (f->bForcedInSimFrame[d]) {
-      f->transVel_imposed[d] = f->transVel[d] = enforcedVelocity[d];
+    if (f->forced[d]) {
+      f->vel_imposed[d] = f->vel[d] = enforced_velocity[d];
     }
   }
-  anyVelForced = f->bForcedInSimFrame[0] || f->bForcedInSimFrame[1] || f->bForcedInSimFrame[2];
-  if (anyVelForced)
-    f->bBlockRotation[0] = f->bBlockRotation[1] = f->bBlockRotation[2] = 1;
-  if (f->bFixToPlanar) {
-    f->bForcedInSimFrame[2] = 1;
-    f->transVel_imposed[2] = 0;
-    f->bBlockRotation[1] = 1;
-    f->bBlockRotation[0] = 1;
+  any_vel_forced = f->forced[0] || f->forced[1] || f->forced[2];
+  if (any_vel_forced)
+    f->block_rot[0] = f->block_rot[1] = f->block_rot[2] = 1;
+  if (f->planar) {
+    f->forced[2] = 1;
+    f->vel_imposed[2] = 0;
+    f->block_rot[1] = 1;
+    f->block_rot[0] = 1;
   }
-  if ((f->bCorrectPosition || f->bCorrectPositionZ || f->bCorrectRoll) && fabs(f->quaternion[0] - 1) > 1e-6)
+  if ((f->correct_pos || f->correct_z || f->correct_roll) && fabs(f->quaternion[0] - 1) > 1e-6)
     fatal("PID controller only works for zero initial angles");
-  midline_init(&f->m, f->length, sim.hmin);
-  profile_apply(height_profiles, NHEIGHT, "height", f->heightProfile, f->length, f->m.rS, f->m.height,
-                f->m.Nm);
-  profile_apply(width_profiles, NWIDTH, "width", f->widthProfile, f->length, f->m.rS, f->m.width, f->m.Nm);
+  mid_init(&f->m, f->length, sim.hmin);
+  profile_set(height_profiles, NHEIGHT, "height", f->hprof, f->length, f->m.rs, f->m.height, f->m.nm);
+  profile_set(width_profiles, NWIDTH, "width", f->wprof, f->length, f->m.rs, f->m.width, f->m.nm);
 
-  for (d = 1; d < f->m.Nm - 1; d++) {
+  for (d = 1; d < f->m.nm - 1; d++) {
     if (f->m.height[d] <= 0)
       f->m.height[d] = 1e-10;
     if (f->m.width[d] <= 0)
       f->m.width[d] = 1e-10;
   }
-  f->origC[0] = f->position[0];
-  f->origC[1] = f->position[1];
-  f->origC[2] = f->position[2];
+  f->orig[0] = f->position[0];
+  f->orig[1] = f->position[1];
+  f->orig[2] = f->position[2];
   if (sim.rank == 0)
-    printf("nMidline=%d, length=%f, Tperiod=%f, phaseShift=%f, height=%s, width=%s\n", f->m.Nm, f->length,
-           f->m.Tperiod, f->m.phaseShift, f->heightProfile, f->widthProfile);
+    printf("nMidline=%d, length=%f, Tperiod=%f, phaseShift=%f, height=%s, width=%s\n", f->m.nm, f->length,
+           f->m.period, f->m.phase, f->hprof, f->wprof);
 }
-static void add_obstacles(char *content) {
+static void fish_parse(char *content) {
   char *text = strdup(content);
   char *save;
   char *line;
@@ -1235,7 +1233,7 @@ static void add_obstacles(char *content) {
     char *save2;
     char *tok;
     struct Fish *fish;
-    int seen[NFISHP];
+    int seen[N_FISHP];
     while (isspace(*line))
       line++;
     if (*line == '\0' || *line == '#')
@@ -1249,9 +1247,9 @@ static void add_obstacles(char *content) {
       if (eq == NULL || eq == tok)
         param_fail(tok, "", "expected key=value");
       *eq = '\0';
-      param_apply(fish_params, NFISHP, fish, tok, eq + 1, seen);
+      param_apply(fish_params, N_FISHP, fish, tok, eq + 1, seen);
     }
-    param_check(fish_params, NFISHP, seen, "fish");
+    param_check(fish_params, N_FISHP, seen, "fish");
     fish_init(fish);
     sim.nfish++;
   }
@@ -1261,7 +1259,7 @@ static void add_obstacles(char *content) {
 }
 
 static struct Sfc {
-  int BX, BY, BZ, levelMax, isRegular, base_level;
+  int BX, BY, BZ, level_max, is_regular, base_level;
   long long *Zsave;
   int *i_inv, *j_inv, *k_inv;
 } sfc;
@@ -1370,7 +1368,7 @@ static void sfc_init(int BX, int BY, int BZ, int lmax) {
   sfc.BX = BX;
   sfc.BY = BY;
   sfc.BZ = BZ;
-  sfc.levelMax = lmax;
+  sfc.level_max = lmax;
   n_max = BX > BY ? BX : BY;
   if (BZ > n_max)
     n_max = BZ;
@@ -1384,7 +1382,7 @@ static void sfc_init(int BX, int BY, int BZ, int lmax) {
   sfc.k_inv = emalloc(n0 * sizeof *sfc.k_inv);
   for (i = 0; i < n0; i++)
     sfc.Zsave[i] = sfc.i_inv[i] = sfc.j_inv[i] = sfc.k_inv[i] = -1;
-  sfc.isRegular = 1;
+  sfc.is_regular = 1;
   for (k = 0; k < BZ; k++)
     for (j = 0; j < BY; j++)
       for (i = 0; i < BX; i++) {
@@ -1400,7 +1398,7 @@ static void sfc_init(int BX, int BY, int BZ, int lmax) {
         }
         index -= substract;
         if (substract > 0)
-          sfc.isRegular = 0;
+          sfc.is_regular = 0;
         sfc.i_inv[index] = i;
         sfc.j_inv[index] = j;
         sfc.k_inv[index] = k;
@@ -1410,9 +1408,9 @@ static void sfc_init(int BX, int BY, int BZ, int lmax) {
 static long long sfc_forward(int l, int i, int j, int k) {
   int aux = 1 << l;
   long long retval;
-  if (l >= sfc.levelMax)
+  if (l >= sfc.level_max)
     return 0;
-  if (!sfc.isRegular) {
+  if (!sfc.is_regular) {
     int I = i / aux;
     int J = j / aux;
     int K = k / aux;
@@ -1426,7 +1424,7 @@ static long long sfc_forward(int l, int i, int j, int k) {
   return retval;
 }
 static void sfc_inverse(long long Z, int l, int *i, int *j, int *k) {
-  if (sfc.isRegular) {
+  if (sfc.is_regular) {
     long long X[3] = {0, 0, 0};
     transpose_to_axes(Z, X, l + sfc.base_level);
     *i = X[0];
@@ -1471,7 +1469,7 @@ static void mpi_check(int err, char *what) {
   fatal("%s: %s", what, msg);
 }
 
-static void write_raw(char *path, float *buf, long n, int m, long off) {
+static void io_write(char *path, float *buf, long n, int m, long off) {
   MPI_File fp;
   MPI_Datatype t;
   MPI_Type_contiguous(m, MPI_FLOAT, &t);
@@ -1482,8 +1480,8 @@ static void write_raw(char *path, float *buf, long n, int m, long off) {
   mpi_check(MPI_File_close(&fp), path);
   MPI_Type_free(&t);
 }
-static void compute_vorticity(void);
-static void dump(Real time, char *path) {
+static void vorticity(void);
+static void io_dump(Real time, char *path) {
   long i, j, l, m, ncell, nblk_total, offset, boff;
   char attr_path[FILENAME_MAX], vort_path[FILENAME_MAX], blk_path[FILENAME_MAX], xdmf_path[FILENAME_MAX],
       *attr_base, *vort_base, *blk_base;
@@ -1491,7 +1489,7 @@ static void dump(Real time, char *path) {
   float *attr, *vort, *blk, *all;
   int *cnt, *dsp;
   int n, r, root;
-  compute_vorticity();
+  vorticity();
   snprintf(attr_path, sizeof attr_path, "%s.attr.raw", path);
   snprintf(vort_path, sizeof vort_path, "%s.vort.raw", path);
   snprintf(blk_path, sizeof blk_path, "%s.blk.raw", path);
@@ -1583,15 +1581,15 @@ static void dump(Real time, char *path) {
       attr[l++] = chi[j];
     }
   }
-  write_raw(attr_path, attr, ncell, 1, offset);
+  io_write(attr_path, attr, ncell, 1, offset);
   free(attr);
-  write_raw(vort_path, vort, ncell, 3, offset);
+  io_write(vort_path, vort, ncell, 3, offset);
   free(vort);
-  write_raw(blk_path, blk, sta.nblk, 6, boff);
+  io_write(blk_path, blk, sta.nblk, 6, boff);
   free(blk);
 }
-static char *parse_arguments(int argc, char **argv) {
-  int seen[NSIMP];
+static char *param_parse(int argc, char **argv) {
+  int seen[N_SIMP];
   char *content = NULL;
   int i;
   int aux;
@@ -1607,14 +1605,14 @@ static char *parse_arguments(int argc, char **argv) {
         param_fail("factory-content", "", "given twice");
       content = argv[i + 1];
     } else
-      param_apply(sim_params, NSIMP, NULL, argv[i] + 1, argv[i + 1], seen);
+      param_apply(sim_params, N_SIMP, NULL, argv[i] + 1, argv[i + 1], seen);
   }
-  param_check(sim_params, NSIMP, seen, "command line");
+  param_check(sim_params, N_SIMP, seen, "command line");
   if (content == NULL)
     fatal("command line: missing parameter 'factory-content'");
   if (sim.bpdx < 1 || sim.bpdy < 1 || sim.bpdz < 1)
     fatal("invalid bpd: %d x %d x %d", sim.bpdx, sim.bpdy, sim.bpdz);
-  aux = 1 << (sim.levelMax - 1);
+  aux = 1 << (sim.level_max - 1);
   NFE[0] = (Real)sim.bpdx * aux * BS;
   NFE[1] = (Real)sim.bpdy * aux * BS;
   NFE[2] = (Real)sim.bpdz * aux * BS;
@@ -1628,18 +1626,18 @@ static char *parse_arguments(int argc, char **argv) {
     maxb = sim.bpdy;
   if (sim.bpdz > maxb)
     maxb = sim.bpdz;
-  sim.h0 = sim.maxextent / maxb / BS;
-  sim.extents[0] = (NFE[0] / maxbpd) * sim.maxextent;
-  sim.extents[1] = (NFE[1] / maxbpd) * sim.maxextent;
-  sim.extents[2] = (NFE[2] / maxbpd) * sim.maxextent;
+  sim.h0 = sim.extent_max / maxb / BS;
+  sim.extents[0] = (NFE[0] / maxbpd) * sim.extent_max;
+  sim.extents[1] = (NFE[1] / maxbpd) * sim.extent_max;
+  sim.extents[2] = (NFE[2] / maxbpd) * sim.extent_max;
   sim.hmin = sim.extents[0] / NFE[0];
   return content;
 }
 static void sta_init(void) {
-  sta.coefU[0] = 1.5;
-  sta.coefU[1] = -2.0;
-  sta.coefU[2] = 0.5;
-  sta.MeshChanged = 1;
+  sta.coef_u[0] = 1.5;
+  sta.coef_u[1] = -2.0;
+  sta.coef_u[2] = 0.5;
+  sta.mesh_changed = 1;
 }
 
 static Real min3(Real a, Real b, Real c) {
@@ -1671,7 +1669,7 @@ static Real min4(Real a, Real b, Real c, Real d) {
   return m;
 }
 static void seg_normalize(struct Segment *s) {
-  Real *n[3] = {s->normalI, s->normalJ, s->normalK};
+  Real *n[3] = {s->ni, s->nj, s->nk};
   int k;
   for (k = 0; k < 3; k++) {
     Real inv = (Real)1 / sqrt(dot3(n[k], n[k]));
@@ -1685,15 +1683,15 @@ static void seg_prepare(struct Segment *s, int s0, int s1, Real bbox[3][2], Real
   s->safe_distance = (1 + 2) * h;
   s->s0 = s0;
   s->s1 = s1;
-  s->normalI[0] = 1;
-  s->normalI[1] = 0;
-  s->normalI[2] = 0;
-  s->normalJ[0] = 0;
-  s->normalJ[1] = 1;
-  s->normalJ[2] = 0;
-  s->normalK[0] = 0;
-  s->normalK[1] = 0;
-  s->normalK[2] = 1;
+  s->ni[0] = 1;
+  s->ni[1] = 0;
+  s->ni[2] = 0;
+  s->nj[0] = 0;
+  s->nj[1] = 1;
+  s->nj[2] = 0;
+  s->nk[0] = 0;
+  s->nk[1] = 0;
+  s->nk[2] = 1;
   for (i = 0; i < 3; ++i) {
     s->w[i] = (bbox[i][1] - bbox[i][0]) / 2 + s->safe_distance;
     s->c[i] = (bbox[i][1] + bbox[i][0]) / 2;
@@ -1704,18 +1702,18 @@ static void seg_to_frame(struct Segment *s, Real position[3], Real quaternion[4]
   int i;
   quat_to_rotation(quaternion, R);
   mat3_apply(R, s->c);
-  mat3_apply(R, s->normalI);
-  mat3_apply(R, s->normalJ);
-  mat3_apply(R, s->normalK);
+  mat3_apply(R, s->ni);
+  mat3_apply(R, s->nj);
+  mat3_apply(R, s->nk);
   for (i = 0; i < 3; ++i)
     s->c[i] += position[i];
   seg_normalize(s);
   for (i = 0; i < 3; ++i) {
-    Real wx = s->w[0] * s->normalI[i], wy = s->w[1] * s->normalJ[i], wz = s->w[2] * s->normalK[i];
-    s->objBoxLabFr[i][0] = s->c[i] - wx - wy - wz;
-    s->objBoxLabFr[i][1] = s->c[i] + wx + wy + wz;
-    s->objBoxObjFr[i][0] = s->c[i] - s->w[i];
-    s->objBoxObjFr[i][1] = s->c[i] + s->w[i];
+    Real wx = s->w[0] * s->ni[i], wy = s->w[1] * s->nj[i], wz = s->w[2] * s->nk[i];
+    s->box_lab[i][0] = s->c[i] - wx - wy - wz;
+    s->box_lab[i][1] = s->c[i] + wx + wy + wz;
+    s->box_obj[i][0] = s->c[i] - s->w[i];
+    s->box_obj[i][1] = s->c[i] + s->w[i];
   }
 }
 static int seg_intersects(struct Segment *s, Real start[3], Real end[3]) {
@@ -1727,24 +1725,24 @@ static int seg_intersects(struct Segment *s, Real start[3], Real end[3]) {
                          {AABB_c[2] - AABB_w[2], AABB_c[2] + AABB_w[2]}};
   int d;
   Real *N[3];
-  Real boxBox[3][2];
+  Real box[3][2];
   for (d = 0; d < 3; d++) {
-    Real lo = s->objBoxLabFr[d][0] > AABB_box[d][0] ? s->objBoxLabFr[d][0] : AABB_box[d][0];
-    Real hi = s->objBoxLabFr[d][1] < AABB_box[d][1] ? s->objBoxLabFr[d][1] : AABB_box[d][1];
+    Real lo = s->box_lab[d][0] > AABB_box[d][0] ? s->box_lab[d][0] : AABB_box[d][0];
+    Real hi = s->box_lab[d][1] < AABB_box[d][1] ? s->box_lab[d][1] : AABB_box[d][1];
     if (hi - lo < 0)
       return 0;
   }
-  N[0] = s->normalI;
-  N[1] = s->normalJ;
-  N[2] = s->normalK;
+  N[0] = s->ni;
+  N[1] = s->nj;
+  N[2] = s->nk;
   for (d = 0; d < 3; d++) {
     Real wx = AABB_w[0] * N[d][0], wy = AABB_w[1] * N[d][1], wz = AABB_w[2] * N[d][2];
-    boxBox[d][0] = AABB_c[d] - wx - wy - wz;
-    boxBox[d][1] = AABB_c[d] + wx + wy + wz;
+    box[d][0] = AABB_c[d] - wx - wy - wz;
+    box[d][1] = AABB_c[d] + wx + wy + wz;
   }
   for (d = 0; d < 3; d++) {
-    Real lo = boxBox[d][0] > s->objBoxObjFr[d][0] ? boxBox[d][0] : s->objBoxObjFr[d][0];
-    Real hi = boxBox[d][1] < s->objBoxObjFr[d][1] ? boxBox[d][1] : s->objBoxObjFr[d][1];
+    Real lo = box[d][0] > s->box_obj[d][0] ? box[d][0] : s->box_obj[d][0];
+    Real hi = box[d][1] < s->box_obj[d][1] ? box[d][1] : s->box_obj[d][1];
     if (hi - lo < 0)
       return 0;
   }
@@ -1786,36 +1784,36 @@ static Real dist_plane(Real p1[3], Real p2[3], Real p3[3], Real s[3], Real IN[3]
   Real v[3] = {p3[0] - p1[0], p3[1] - p1[1], p3[2] - p1[2]};
   Real i[3] = {IN[0] - p1[0], IN[1] - p1[1], IN[2] - p1[2]};
   Real n[3] = {u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]};
-  Real projInner = i[0] * n[0] + i[1] * n[1] + i[2] * n[2];
-  Real signIn = projInner > 0 ? 1 : -1;
+  Real proj_inner = i[0] * n[0] + i[1] * n[1] + i[2] * n[2];
+  Real sign_in = proj_inner > 0 ? 1 : -1;
   Real norm = sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
-  return signIn * (t[0] * n[0] + t[1] * n[1] + t[2] * n[2]) / norm;
+  return sign_in * (t[0] * n[0] + t[1] * n[1] + t[2] * n[2]) / norm;
 }
-static void construct_internal(struct Frame *fr, Real h, Real ox, Real oy, Real oz,
-                               struct ObstacleBlock *defblock, struct Segment **vSegments, int nseg) {
+static void geom_in(struct Frame *fr, Real h, Real ox, Real oy, Real oz, struct ObstacleBlock *defblock,
+                    struct Segment **segs, int nseg) {
   struct Midline *cfish = fr->m;
   Real org[3] = {ox - h, oy - h, oz - h};
   Real invh = 1.0 / h;
   int BSP[3] = {BS + 2, BS + 2, BS + 2};
-  Real(*r)[3] = cfish->r, (*v)[3] = cfish->v, (*nor)[3] = cfish->nor, (*vNor)[3] = cfish->vNor,
-  (*bin)[3] = cfish->bin, (*vBin)[3] = cfish->vBin;
+  Real(*r)[3] = cfish->r, (*v)[3] = cfish->v, (*nor)[3] = cfish->nor, (*vnor)[3] = cfish->vnor,
+  (*bin)[3] = cfish->bin, (*vbin)[3] = cfish->vbin;
   Real *width = cfish->width, *height = cfish->height;
   int i;
   for (i = 0; i < nseg; ++i) {
-    int firstSegm = vSegments[i]->s0 > 1 ? vSegments[i]->s0 : 1;
-    int lastSegm = vSegments[i]->s1 < cfish->Nm - 2 ? vSegments[i]->s1 : cfish->Nm - 2;
+    int first_segm = segs[i]->s0 > 1 ? segs[i]->s0 : 1;
+    int last_segm = segs[i]->s1 < cfish->nm - 2 ? segs[i]->s1 : cfish->nm - 2;
     int ss;
-    for (ss = firstSegm; ss <= lastSegm; ++ss) {
-      Real myWidth = width[ss], myHeight = height[ss];
-      int Nh = floor(myHeight / h);
+    for (ss = first_segm; ss <= last_segm; ++ss) {
+      Real my_width = width[ss], my_height = height[ss];
+      int Nh = floor(my_height / h);
       int ih;
       for (ih = -Nh + 1; ih < Nh; ++ih) {
-        Real offsetH = ih * h;
-        Real currWidth = myWidth * sqrt(1 - pow(offsetH / myHeight, 2));
-        int Nw = floor(currWidth / h);
+        Real offset_h = ih * h;
+        Real curr_width = my_width * sqrt(1 - pow(offset_h / my_height, 2));
+        int Nw = floor(curr_width / h);
         int iw;
         for (iw = -Nw + 1; iw < Nw; ++iw) {
-          Real offsetW = iw * h;
+          Real offset_w = iw * h;
           Real xp[3], udef[3];
           int d;
           Real ap[3];
@@ -1832,8 +1830,8 @@ static void construct_internal(struct Frame *fr, Real h, Real ox, Real oy, Real 
           int idy;
           int idx;
           for (d = 0; d < 3; d++) {
-            xp[d] = r[ss][d] + offsetW * nor[ss][d] + offsetH * bin[ss][d];
-            udef[d] = v[ss][d] + offsetW * vNor[ss][d] + offsetH * vBin[ss][d];
+            xp[d] = r[ss][d] + offset_w * nor[ss][d] + offset_h * bin[ss][d];
+            udef[d] = v[ss][d] + offset_w * vnor[ss][d] + offset_h * vbin[ss][d];
           }
           to_frame(fr, xp);
           for (d = 0; d < 3; d++)
@@ -1874,8 +1872,8 @@ static void construct_internal(struct Frame *fr, Real h, Real ox, Real oy, Real 
                     defblock->udef[idz - 1][idy - 1][idx - 1][d] += wxwywz * udef[d];
                   defblock->chi[idz - 1][idy - 1][idx - 1] += wxwywz;
                 }
-                if (fabs(defblock->sdfLab[idz][idy][idx] + 1) < DBL_EPSILON)
-                  defblock->sdfLab[idz][idy][idx] = 1;
+                if (fabs(defblock->sdf[idz][idy][idx] + 1) < DBL_EPSILON)
+                  defblock->sdf[idz][idy][idx] = 1;
               }
         }
       }
@@ -1895,10 +1893,10 @@ static void ellipse_offset(struct Midline *m, int s, Real costh, Real sinth, Rea
 static void ellipse_velocity(struct Midline *m, int s, Real costh, Real sinth, Real out[3]) {
   int d;
   for (d = 0; d < 3; d++)
-    out[d] = m->v[s][d] + m->width[s] * costh * m->vNor[s][d] + m->height[s] * sinth * m->vBin[s][d];
+    out[d] = m->v[s][d] + m->width[s] * costh * m->vnor[s][d] + m->height[s] * sinth * m->vbin[s][d];
 }
-static void construct_surface(struct Frame *fr, Real h, Real ox, Real oy, Real oz,
-                              struct ObstacleBlock *defblock, struct Segment **vSegments, int nseg) {
+static void geom_surf(struct Frame *fr, Real h, Real ox, Real oy, Real oz, struct ObstacleBlock *defblock,
+                      struct Segment **segs, int nseg) {
   struct Midline *cfish = fr->m;
   Real(*r)[3] = cfish->r, (*nor)[3] = cfish->nor, (*bin)[3] = cfish->bin;
   Real *width = cfish->width;
@@ -1906,13 +1904,13 @@ static void construct_surface(struct Frame *fr, Real h, Real ox, Real oy, Real o
   Real org[3] = {ox - h, oy - h, oz - h};
   Real invh = 1.0 / h;
   int BSP[3] = {BS + 2, BS + 2, BS + 2};
-  Real myP[3];
+  Real pc[3];
   int i;
   for (i = 0; i < nseg; ++i) {
-    int firstSegm = vSegments[i]->s0 > 1 ? vSegments[i]->s0 : 1;
-    int lastSegm = vSegments[i]->s1 < cfish->Nm - 2 ? vSegments[i]->s1 : cfish->Nm - 2;
+    int first_segm = segs[i]->s0 > 1 ? segs[i]->s0 : 1;
+    int last_segm = segs[i]->s1 < cfish->nm - 2 ? segs[i]->s1 : cfish->nm - 2;
     int ss;
-    for (ss = firstSegm; ss <= lastSegm; ++ss) {
+    for (ss = first_segm; ss <= last_segm; ++ss) {
       Real major_axis;
       Real dtheta_tgt;
       int Ntheta;
@@ -1933,18 +1931,18 @@ static void construct_surface(struct Frame *fr, Real h, Real ox, Real oy, Real o
         int nei;
         int ST[3];
         int EN[3];
-        Real pP[3], pM[3], udef[3];
+        Real p_p[3], p_m[3], udef[3];
         int z0, z1;
         int y0, y1;
         int x0, x1;
         int sz;
         int sy;
         int sx;
-        ellipse_point(cfish, ss, costh, sinth, myP);
-        to_frame(fr, myP);
-        iap[0] = (int)floor((myP[0] - org[0]) * invh);
-        iap[1] = (int)floor((myP[1] - org[1]) * invh);
-        iap[2] = (int)floor((myP[2] - org[2]) * invh);
+        ellipse_point(cfish, ss, costh, sinth, pc);
+        to_frame(fr, pc);
+        iap[0] = (int)floor((pc[0] - org[0]) * invh);
+        iap[1] = (int)floor((pc[1] - org[1]) * invh);
+        iap[2] = (int)floor((pc[2] - org[2]) * invh);
         nei = 3;
         ST[0] = iap[0] - nei;
         ST[1] = iap[1] - nei;
@@ -1958,10 +1956,10 @@ static void construct_surface(struct Frame *fr, Real h, Real ox, Real oy, Real o
           continue;
         if (EN[2] <= 0 || ST[2] > BSP[2])
           continue;
-        ellipse_point(cfish, ss + 1, costh, sinth, pP);
-        ellipse_point(cfish, ss - 1, costh, sinth, pM);
-        to_frame(fr, pM);
-        to_frame(fr, pP);
+        ellipse_point(cfish, ss + 1, costh, sinth, p_p);
+        ellipse_point(cfish, ss - 1, costh, sinth, p_m);
+        to_frame(fr, p_m);
+        to_frame(fr, p_p);
         ellipse_velocity(cfish, ss, costh, sinth, udef);
         vel_to_frame(fr, udef);
         z0 = ST[2] > 0 ? ST[2] : 0;
@@ -1975,38 +1973,38 @@ static void construct_surface(struct Frame *fr, Real h, Real ox, Real oy, Real o
             for (sx = x0; sx < x1; ++sx) {
               Real p[3];
               Real dist0;
-              Real distP;
-              Real distM;
+              Real dp;
+              Real dm;
               int close_s, secnd_s;
               Real dist1, dist2;
               Real Wc;
               Real W;
-              int inRange;
+              int in_range;
               Real R1[3], nn[3], P1[3], P2[3], center_close[3], center_second[3];
               int d;
-              Real normR1;
+              Real norm_r1;
               Real base1;
               Real base2;
               Real radius_close;
               Real radius_second;
-              Real dSsq;
+              Real ds2;
               Real corr;
               p[0] = ox + h * (sx - 1 + 0.5);
               p[1] = oy + h * (sy - 1 + 0.5);
               p[2] = oz + h * (sz - 1 + 0.5);
-              dist0 = euler_dist_sq(p, myP);
-              distP = euler_dist_sq(p, pP);
-              distM = euler_dist_sq(p, pM);
-              if (fabs(defblock->sdfLab[sz][sy][sx]) < min3(dist0, distP, distM))
+              dist0 = euler_dist_sq(p, pc);
+              dp = euler_dist_sq(p, p_p);
+              dm = euler_dist_sq(p, p_m);
+              if (fabs(defblock->sdf[sz][sy][sx]) < min3(dist0, dp, dm))
                 continue;
-              if (min3(dist0, distP, distM) > 4 * h * h)
+              if (min3(dist0, dp, dm) > 4 * h * h)
                 continue;
               from_frame(fr, p);
               close_s = ss;
-              secnd_s = ss + (distP < distM ? 1 : -1);
+              secnd_s = ss + (dp < dm ? 1 : -1);
               dist1 = dist0;
-              dist2 = distP < distM ? distP : distM;
-              if (distP < dist0 || distM < dist0) {
+              dist2 = dp < dm ? dp : dm;
+              if (dp < dist0 || dm < dist0) {
                 dist1 = dist2;
                 dist2 = dist0;
                 close_s = secnd_s;
@@ -2014,9 +2012,9 @@ static void construct_surface(struct Frame *fr, Real h, Real ox, Real oy, Real o
               }
               Wc = 1 - sqrt(dist1) * (invh / 3);
               W = Wc > (Real)0 ? Wc : (Real)0;
-              inRange =
+              in_range =
                   (sz - 1 >= 0 && sz - 1 < BS && sy - 1 >= 0 && sy - 1 < BS && sx - 1 >= 0 && sx - 1 < BS);
-              if (inRange) {
+              if (in_range) {
                 int d;
                 for (d = 0; d < 3; d++)
                   defblock->udef[sz - 1][sy - 1][sx - 1][d] = W * udef[d];
@@ -2024,70 +2022,70 @@ static void construct_surface(struct Frame *fr, Real h, Real ox, Real oy, Real o
               }
               for (d = 0; d < 3; d++)
                 R1[d] = r[secnd_s][d] - r[close_s][d];
-              normR1 = 1.0 / (1e-21 + sqrt(dot3(R1, R1)));
+              norm_r1 = 1.0 / (1e-21 + sqrt(dot3(R1, R1)));
               for (d = 0; d < 3; d++)
-                nn[d] = R1[d] * normR1;
+                nn[d] = R1[d] * norm_r1;
               ellipse_offset(cfish, close_s, costh, sinth, P1);
               ellipse_offset(cfish, secnd_s, costh, sinth, P2);
-              base1 = dot3(P1, R1) * normR1;
-              base2 = dot3(P2, R1) * normR1;
+              base1 = dot3(P1, R1) * norm_r1;
+              base2 = dot3(P2, R1) * norm_r1;
               radius_close = pow(width[close_s] * costh, 2) + pow(height[close_s] * sinth, 2) - base1 * base1;
               radius_second =
                   pow(width[secnd_s] * costh, 2) + pow(height[secnd_s] * sinth, 2) - base2 * base2;
-              dSsq = 0;
+              ds2 = 0;
               for (d = 0; d < 3; d++) {
                 center_close[d] = r[close_s][d] - nn[d] * base1;
                 center_second[d] = r[secnd_s][d] + nn[d] * base2;
-                dSsq += pow(center_close[d] - center_second[d], 2);
+                ds2 += pow(center_close[d] - center_second[d], 2);
               }
               corr = 2 * sqrt(radius_close * radius_second);
-              if (close_s == cfish->Nm - 2 || secnd_s == cfish->Nm - 2) {
-                int TT = cfish->Nm - 1, TS = cfish->Nm - 2;
+              if (close_s == cfish->nm - 2 || secnd_s == cfish->nm - 2) {
+                int TT = cfish->nm - 1, TS = cfish->nm - 2;
                 Real *PC = r[TT], *PF = r[TS];
-                Real projW = 0, projH = 0, PT[3], PP[3];
+                Real proj_w = 0, proj_h = 0, PT[3], PP[3];
                 int d;
-                int signW;
-                int signH;
+                int sign_w;
+                int sign_h;
                 Real dplane;
                 for (d = 0; d < 3; d++) {
-                  projW += (width[TS] * nor[TS][d]) * (p[d] - PF[d]);
-                  projH += (height[TS] * bin[TS][d]) * (p[d] - PF[d]);
+                  proj_w += (width[TS] * nor[TS][d]) * (p[d] - PF[d]);
+                  proj_h += (height[TS] * bin[TS][d]) * (p[d] - PF[d]);
                 }
-                signW = projW > 0 ? 1 : -1;
-                signH = projH > 0 ? 1 : -1;
+                sign_w = proj_w > 0 ? 1 : -1;
+                sign_h = proj_h > 0 ? 1 : -1;
                 for (d = 0; d < 3; d++) {
-                  PT[d] = r[TS][d] + signH * height[TS] * bin[TS][d];
-                  PP[d] = r[TS][d] + signW * width[TS] * nor[TS][d];
+                  PT[d] = r[TS][d] + sign_h * height[TS] * bin[TS][d];
+                  PP[d] = r[TS][d] + sign_w * width[TS] * nor[TS][d];
                 }
                 dplane = dist_plane(PC, PT, PP, p, PF);
-                defblock->sdfLab[sz][sy][sx] = dplane * fabs(dplane);
-              } else if (dSsq >= radius_close + radius_second - corr) {
-                Real grd2ML = euler_dist_sq(p, r[close_s]);
-                Real sign = grd2ML > radius_close ? -1 : 1;
-                defblock->sdfLab[sz][sy][sx] = sign * dist1;
+                defblock->sdf[sz][sy][sx] = dplane * fabs(dplane);
+              } else if (ds2 >= radius_close + radius_second - corr) {
+                Real grd2_ml = euler_dist_sq(p, r[close_s]);
+                Real sign = grd2_ml > radius_close ? -1 : 1;
+                defblock->sdf[sz][sy][sx] = sign * dist1;
               } else {
-                Real Rsq = (radius_close + radius_second - corr + dSsq) *
-                           (radius_close + radius_second + corr + dSsq) / 4 / dSsq;
-                Real maxAx = radius_close > radius_second ? radius_close : radius_second;
-                Real d = sqrt((Rsq - maxAx) / dSsq);
+                Real Rsq = (radius_close + radius_second - corr + ds2) *
+                           (radius_close + radius_second + corr + ds2) / 4 / ds2;
+                Real max_ax = radius_close > radius_second ? radius_close : radius_second;
+                Real d = sqrt((Rsq - max_ax) / ds2);
                 Real *big = radius_close > radius_second ? center_close : center_second;
                 Real *small = radius_close > radius_second ? center_second : center_close;
-                Real xMidl[3];
+                Real x_midl[3];
                 int k;
-                Real grd2Core;
+                Real grd2_core;
                 Real sign;
                 for (k = 0; k < 3; k++)
-                  xMidl[k] = big[k] + (big[k] - small[k]) * d;
-                grd2Core = euler_dist_sq(p, xMidl);
-                sign = grd2Core > Rsq ? -1 : 1;
-                defblock->sdfLab[sz][sy][sx] = sign * dist1;
+                  x_midl[k] = big[k] + (big[k] - small[k]) * d;
+                grd2_core = euler_dist_sq(p, x_midl);
+                sign = grd2_core > Rsq ? -1 : 1;
+                defblock->sdf[sz][sy][sx] = sign * dist1;
               }
             }
       }
     }
   }
 }
-static void signed_distance_sqrt(struct ObstacleBlock *defblock) {
+static void geom_end(struct ObstacleBlock *defblock) {
   int iz;
   int iy;
   int ix;
@@ -2102,56 +2100,55 @@ static void signed_distance_sqrt(struct ObstacleBlock *defblock) {
             defblock->udef[iz][iy][ix][2] *= normfac;
           }
         }
-        defblock->sdfLab[iz][iy][ix] = defblock->sdfLab[iz][iy][ix] >= 0
-                                           ? sqrt(defblock->sdfLab[iz][iy][ix])
-                                           : -sqrt(-defblock->sdfLab[iz][iy][ix]);
+        defblock->sdf[iz][iy][ix] = defblock->sdf[iz][iy][ix] >= 0 ? sqrt(defblock->sdf[iz][iy][ix])
+                                                                   : -sqrt(-defblock->sdf[iz][iy][ix]);
       }
 }
-static void put_fish(struct Frame *fr, Real h, Real ox, Real oy, Real oz, struct ObstacleBlock *o,
-                     struct Segment **vSegments, int nseg) {
+static void geom_blk(struct Frame *fr, Real h, Real ox, Real oy, Real oz, struct ObstacleBlock *o,
+                     struct Segment **segs, int nseg) {
   Real *sdf;
   int i;
   memset(o->chi, 0, sizeof o->chi);
   memset(o->udef, 0, sizeof o->udef);
-  sdf = &o->sdfLab[0][0][0];
+  sdf = &o->sdf[0][0][0];
   for (i = 0; i < (BS + 2) * (BS + 2) * (BS + 2); i++)
     sdf[i] = -1.;
-  construct_internal(fr, h, ox, oy, oz, o, vSegments, nseg);
-  construct_surface(fr, h, ox, oy, oz, o, vSegments, nseg);
-  signed_distance_sqrt(o);
+  geom_in(fr, h, ox, oy, oz, o, segs, nseg);
+  geom_surf(fr, h, ox, oy, oz, o, segs, nseg);
+  geom_end(o);
 }
 static struct ObstacleBlock *oblock(struct Fish *f, long long i) {
   int k = f->slot[i];
   return k < 0 ? NULL : &f->pool[k];
 }
-static void fish_clear_blocks(struct Fish *f) {
+static void fish_free_blk(struct Fish *f) {
   free(f->pool);
   free(f->slot);
   f->pool = NULL;
   f->slot = NULL;
 }
-static void create_geometry(struct Fish *f) {
+static void fish_geom(struct Fish *f) {
   struct Midline *m = &f->m;
-  int Nm;
+  int nm;
   int Nsegments;
-  struct Segment *vSegments;
+  struct Segment *segs;
   int i;
   long long i2;
   struct Frame fr;
   int j;
   int *myblk, *seg_start, *seg_idx;
-  int nmyblk, nseg_idx;
+  int nmyblk, nseg_idx, cap_blk, cap_seg;
   int d;
   Real fb[3][2];
-  compute_midline(m, sta.time);
-  integrate_linear_momentum(m);
-  integrate_angular_momentum(m, sta.dt);
-  Nm = m->Nm;
-  Nsegments = ceil((Nm - 1.) / 8);
-  vSegments = emalloc(Nsegments * sizeof *vSegments);
+  mid_step(m, sta.time);
+  mid_lin(m);
+  mid_ang(m, sta.dt);
+  nm = m->nm;
+  Nsegments = ceil((nm - 1.) / 8);
+  segs = emalloc(Nsegments * sizeof *segs);
   for (i = 0; i < Nsegments; ++i) {
-    int nextidx = (i + 1) * (Nm - 1) / Nsegments;
-    int idx = i * (Nm - 1) / Nsegments;
+    int nextidx = (i + 1) * (nm - 1) / Nsegments;
+    int idx = i * (nm - 1) / Nsegments;
     Real bbox[3][2] = {{1e9, -1e9}, {1e9, -1e9}, {1e9, -1e9}};
     int ss;
     for (ss = idx; ss <= nextidx; ++ss) {
@@ -2166,24 +2163,26 @@ static void create_geometry(struct Fish *f) {
         bbox[d][1] = mx > bbox[d][1] ? mx : bbox[d][1];
       }
     }
-    seg_prepare(&vSegments[i], idx, nextidx, bbox, sim.hmin);
-    seg_to_frame(&vSegments[i], f->position, f->quaternion);
+    seg_prepare(&segs[i], idx, nextidx, bbox, sim.hmin);
+    seg_to_frame(&segs[i], f->position, f->quaternion);
   }
-  fish_clear_blocks(f);
+  fish_free_blk(f);
   f->slot = emalloc(sta.nblk * sizeof *f->slot);
-  myblk = emalloc(sta.nblk * sizeof *myblk);
-  seg_start = emalloc((sta.nblk + 1) * sizeof *seg_start);
-  seg_idx = emalloc(sta.nblk * Nsegments * sizeof *seg_idx);
+  cap_blk = 64;
+  cap_seg = 512;
+  myblk = emalloc(cap_blk * sizeof *myblk);
+  seg_start = emalloc((cap_blk + 1) * sizeof *seg_start);
+  seg_idx = emalloc(cap_seg * sizeof *seg_idx);
   nmyblk = 0;
   nseg_idx = 0;
   for (d = 0; d < 3; d++) {
-    fb[d][0] = vSegments[0].objBoxLabFr[d][0];
-    fb[d][1] = vSegments[0].objBoxLabFr[d][1];
+    fb[d][0] = segs[0].box_lab[d][0];
+    fb[d][1] = segs[0].box_lab[d][1];
     for (i = 1; i < Nsegments; ++i) {
-      if (vSegments[i].objBoxLabFr[d][0] < fb[d][0])
-        fb[d][0] = vSegments[i].objBoxLabFr[d][0];
-      if (vSegments[i].objBoxLabFr[d][1] > fb[d][1])
-        fb[d][1] = vSegments[i].objBoxLabFr[d][1];
+      if (segs[i].box_lab[d][0] < fb[d][0])
+        fb[d][0] = segs[i].box_lab[d][0];
+      if (segs[i].box_lab[d][1] > fb[d][1])
+        fb[d][1] = segs[i].box_lab[d][1];
     }
   }
   for (i2 = 0; i2 < sta.nblk; ++i2) {
@@ -2195,7 +2194,7 @@ static void create_geometry(struct Fish *f) {
     blk_pos(b, BS - 1, BS - 1, BS - 1, MAXP);
     f->slot[i2] = -1;
     for (d = 0; d < 3; d++) {
-      Real w = (MAXP[d] - MINP[d]) / 2 + vSegments[0].safe_distance, c = (MAXP[d] + MINP[d]) / 2;
+      Real w = (MAXP[d] - MINP[d]) / 2 + segs[0].safe_distance, c = (MAXP[d] + MINP[d]) / 2;
       Real lo = fb[d][0] > c - w ? fb[d][0] : c - w, hi = fb[d][1] < c + w ? fb[d][1] : c + w;
       if (hi - lo < 0)
         out = 1;
@@ -2203,12 +2202,21 @@ static void create_geometry(struct Fish *f) {
     if (out)
       continue;
     for (s = 0; s < Nsegments; ++s)
-      if (seg_intersects(&vSegments[s], MINP, MAXP)) {
+      if (seg_intersects(&segs[s], MINP, MAXP)) {
         if (f->slot[i2] < 0) {
+          if (nmyblk == cap_blk) {
+            cap_blk *= 2;
+            myblk = erealloc(myblk, cap_blk * sizeof *myblk);
+            seg_start = erealloc(seg_start, (cap_blk + 1) * sizeof *seg_start);
+          }
           f->slot[i2] = nmyblk;
           myblk[nmyblk] = i2;
           seg_start[nmyblk] = nseg_idx;
           nmyblk++;
+        }
+        if (nseg_idx == cap_seg) {
+          cap_seg *= 2;
+          seg_idx = erealloc(seg_idx, cap_seg * sizeof *seg_idx);
         }
         seg_idx[nseg_idx++] = s;
       }
@@ -2223,18 +2231,18 @@ static void create_geometry(struct Fish *f) {
     int k;
     struct Blk *b;
     for (k = 0; k < n; k++)
-      S[k] = &vSegments[seg_idx[seg_start[j] + k]];
+      S[k] = &segs[seg_idx[seg_start[j] + k]];
     b = &sta.blk[myblk[j]];
-    put_fish(&fr, b->h, b->origin[0], b->origin[1], b->origin[2], &f->pool[j], S, n);
+    geom_blk(&fr, b->h, b->origin[0], b->origin[1], b->origin[2], &f->pool[j], S, n);
     free(S);
   }
-  free(vSegments);
+  free(segs);
   free(myblk);
   free(seg_start);
   free(seg_idx);
 }
-static void clip_quantities(Real fmax, Real dfmax, Real dt, int zero, Real fcandidate, Real dfcandidate,
-                            Real *f, Real *df) {
+static void clip(Real fmax, Real dfmax, Real dt, int zero, Real fcandidate, Real dfcandidate, Real *f,
+                 Real *df) {
   if (zero) {
     *f = 0;
     *df = 0;
@@ -2250,8 +2258,8 @@ static void clip_quantities(Real fmax, Real dfmax, Real dt, int zero, Real fcand
   }
 }
 static void fish_create(struct Fish *f) {
-  struct Midline *cFish = &f->m;
-  int Nm = cFish->Nm;
+  struct Midline *mid = &f->m;
+  int nm = mid->nm;
   Real *q = f->quaternion;
   Real R[3][3], dv[3];
   int d;
@@ -2264,7 +2272,7 @@ static void fish_create(struct Fish *f) {
   int yaw_is_small;
   quat_to_rotation(q, R);
   for (d = 0; d < 3; d++)
-    dv[d] = cFish->r[0][d] - cFish->r[Nm / 2][d];
+    dv[d] = mid->r[0][d] - mid->r[nm / 2][d];
   dn = pow(dot3(dv, dv), 0.5) + 1e-21;
   xx2 = R[2][0] * (dv[0] / dn) + R[2][1] * (dv[1] / dn) + R[2][2] * (dv[2] / dn);
   xx2 = xx2 > 1 ? 1 : (xx2 < -1 ? -1 : xx2);
@@ -2273,120 +2281,120 @@ static void fish_create(struct Fish *f) {
   yaw = atan2(2.0 * (q[3] * q[0] + q[1] * q[2]), -1.0 + 2.0 * (q[0] * q[0] + q[1] * q[1]));
   roll_is_small = fabs(roll) < M_PI / 9.;
   yaw_is_small = fabs(yaw) < M_PI / 9.;
-  if (f->bCorrectPosition) {
+  if (f->correct_pos) {
     Real y;
     Real ytgt;
     Real dy;
-    Real signY;
+    Real sign_y;
     Real yaw_tgt;
     Real dphi;
     Real b;
     Real dbdt;
-    cFish->alpha = 1.0 + (f->position[0] - f->origC[0]) / f->length;
-    cFish->dalpha = (f->transVel[0] + sta.uinf[0]) / f->length;
+    mid->alpha = 1.0 + (f->position[0] - f->orig[0]) / f->length;
+    mid->dalpha = (f->vel[0] + sta.uinf[0]) / f->length;
     if (roll_is_small == 0) {
-      cFish->alpha = 1.0;
-      cFish->dalpha = 0.0;
-    } else if (cFish->alpha < 0.9) {
-      cFish->alpha = 0.9;
-      cFish->dalpha = 0.0;
-    } else if (cFish->alpha > 1.1) {
-      cFish->alpha = 1.1;
-      cFish->dalpha = 0.0;
+      mid->alpha = 1.0;
+      mid->dalpha = 0.0;
+    } else if (mid->alpha < 0.9) {
+      mid->alpha = 0.9;
+      mid->dalpha = 0.0;
+    } else if (mid->alpha > 1.1) {
+      mid->alpha = 1.1;
+      mid->dalpha = 0.0;
     }
-    y = f->absPos[1];
-    ytgt = f->origC[1];
+    y = f->abs_pos[1];
+    ytgt = f->orig[1];
     dy = (ytgt - y) / f->length;
-    signY = dy > 0 ? 1 : -1;
+    sign_y = dy > 0 ? 1 : -1;
     yaw_tgt = 0;
     dphi = yaw - yaw_tgt;
-    b = roll_is_small ? f->wyp * signY * dy * dphi : 0;
-    dbdt = sta.step > 1 ? (b - cFish->beta) / sta.dt : 0;
-    clip_quantities(1.0, 5.0, sta.dt, 0, b, dbdt, &cFish->beta, &cFish->dbeta);
+    b = roll_is_small ? f->wyp * sign_y * dy * dphi : 0;
+    dbdt = sta.step > 1 ? (b - mid->beta) / sta.dt : 0;
+    clip(1.0, 5.0, sta.dt, 0, b, dbdt, &mid->beta, &mid->dbeta);
   }
-  if (f->bCorrectPositionZ) {
+  if (f->correct_z) {
     Real pitch_tgt = 0;
     Real dphi = pitch - pitch_tgt;
-    Real z = f->absPos[2];
-    Real ztgt = f->origC[2];
+    Real z = f->abs_pos[2];
+    Real ztgt = f->orig[2];
     Real dz = (ztgt - z) / f->length;
-    Real signZ = dz > 0 ? 1 : -1;
-    Real g = (roll_is_small && yaw_is_small) ? -f->wzp * dphi * dz * signZ : 0.0;
-    Real dgdt = sta.step > 1 ? (g - cFish->gamma) / sta.dt : 0.0;
+    Real sign_z = dz > 0 ? 1 : -1;
+    Real g = (roll_is_small && yaw_is_small) ? -f->wzp * dphi * dz * sign_z : 0.0;
+    Real dgdt = sta.step > 1 ? (g - mid->gamma) / sta.dt : 0.0;
     Real gmax = 0.10 / f->length;
-    Real dRdtmax = 0.1 * f->length / cFish->Tperiod;
-    Real dgdtmax = fabs(gmax * gmax * dRdtmax);
-    clip_quantities(gmax, dgdtmax, sta.dt, 0, g, dgdt, &cFish->gamma, &cFish->dgamma);
+    Real d_rdtmax = 0.1 * f->length / mid->period;
+    Real dgdtmax = fabs(gmax * gmax * d_rdtmax);
+    clip(gmax, dgdtmax, sta.dt, 0, g, dgdt, &mid->gamma, &mid->dgamma);
   }
-  create_geometry(f);
+  fish_geom(f);
 }
 static void fish_update(struct Fish *f) {
-  Real *position = f->position, *absPos = f->absPos, *quaternion = f->quaternion;
-  Real *angVel = f->angVel, *transVel = f->transVel;
+  Real *position = f->position, *abs_pos = f->abs_pos, *quaternion = f->quaternion;
+  Real *omega = f->omega, *vel = f->vel;
   Real dqdt[4];
-  quat_rate(quaternion, angVel, dqdt);
+  quat_rate(quaternion, omega, dqdt);
   if (sta.step < STEP_2ND) {
     int d;
     for (d = 0; d < 3; d++) {
       f->old_position[d] = position[d];
-      f->old_absPos[d] = absPos[d];
+      f->old_abs_pos[d] = abs_pos[d];
     }
     for (d = 0; d < 4; d++)
       f->old_quaternion[d] = quaternion[d];
-    position[0] += sta.dt * (transVel[0] + sta.uinf[0]);
-    position[1] += sta.dt * (transVel[1] + sta.uinf[1]);
-    position[2] += sta.dt * (transVel[2] + sta.uinf[2]);
-    absPos[0] += sta.dt * transVel[0];
-    absPos[1] += sta.dt * transVel[1];
-    absPos[2] += sta.dt * transVel[2];
+    position[0] += sta.dt * (vel[0] + sta.uinf[0]);
+    position[1] += sta.dt * (vel[1] + sta.uinf[1]);
+    position[2] += sta.dt * (vel[2] + sta.uinf[2]);
+    abs_pos[0] += sta.dt * vel[0];
+    abs_pos[1] += sta.dt * vel[1];
+    abs_pos[2] += sta.dt * vel[2];
     quaternion[0] += sta.dt * dqdt[0];
     quaternion[1] += sta.dt * dqdt[1];
     quaternion[2] += sta.dt * dqdt[2];
     quaternion[3] += sta.dt * dqdt[3];
   } else {
-    Real aux = 1.0 / sta.coefU[0];
-    Real temp[10] = {position[0], position[1],   position[2],   absPos[0],     absPos[1],
-                     absPos[2],   quaternion[0], quaternion[1], quaternion[2], quaternion[3]};
+    Real aux = 1.0 / sta.coef_u[0];
+    Real temp[10] = {position[0], position[1],   position[2],   abs_pos[0],    abs_pos[1],
+                     abs_pos[2],  quaternion[0], quaternion[1], quaternion[2], quaternion[3]};
     int d;
     for (d = 0; d < 3; d++)
-      position[d] = aux * (sta.dt * (transVel[d] + sta.uinf[d]) +
-                           (-sta.coefU[1] * position[d] - sta.coefU[2] * f->old_position[d]));
+      position[d] = aux * (sta.dt * (vel[d] + sta.uinf[d]) +
+                           (-sta.coef_u[1] * position[d] - sta.coef_u[2] * f->old_position[d]));
     for (d = 0; d < 3; d++)
-      absPos[d] =
-          aux * (sta.dt * (transVel[d]) + (-sta.coefU[1] * absPos[d] - sta.coefU[2] * f->old_absPos[d]));
+      abs_pos[d] =
+          aux * (sta.dt * (vel[d]) + (-sta.coef_u[1] * abs_pos[d] - sta.coef_u[2] * f->old_abs_pos[d]));
     for (d = 0; d < 4; d++)
-      quaternion[d] =
-          aux * (sta.dt * (dqdt[d]) + (-sta.coefU[1] * quaternion[d] - sta.coefU[2] * f->old_quaternion[d]));
+      quaternion[d] = aux * (sta.dt * (dqdt[d]) +
+                             (-sta.coef_u[1] * quaternion[d] - sta.coef_u[2] * f->old_quaternion[d]));
     for (d = 0; d < 3; d++) {
       f->old_position[d] = temp[d];
-      f->old_absPos[d] = temp[3 + d];
+      f->old_abs_pos[d] = temp[3 + d];
     }
     for (d = 0; d < 4; d++)
       f->old_quaternion[d] = temp[6 + d];
   }
   quat_normalize(quaternion);
 }
-static void update_uinf(void) {
-  int nSum[3] = {0, 0, 0};
-  Real uSum[3] = {0, 0, 0};
+static void sta_uinf(void) {
+  int n_sum[3] = {0, 0, 0};
+  Real u_sum[3] = {0, 0, 0};
   int i;
   int d;
   for (i = 0; i < sim.nfish; i++) {
     struct Fish *f = &sta.fish[i];
     int d;
     for (d = 0; d < 3; d++)
-      if (f->bFixFrameOfRef[d]) {
-        nSum[d] += 1;
-        uSum[d] -= f->transVel[d];
+      if (f->fix[d]) {
+        n_sum[d] += 1;
+        u_sum[d] -= f->vel[d];
       }
   }
   for (d = 0; d < 3; d++)
-    if (nSum[d] > 0)
-      uSum[d] = uSum[d] / nSum[d];
+    if (n_sum[d] > 0)
+      u_sum[d] = u_sum[d] / n_sum[d];
   for (d = 0; d < 3; d++)
-    sta.uinf[d] = uSum[d];
+    sta.uinf[d] = u_sum[d];
 }
-static void characteristic_function(long long i) {
+static void geom_chi(long long i) {
   struct Blk *blk = &sta.blk[i];
   Real *b = fld(i, F_CHI);
   Real h = blk->h, inv2h = .5 / h, vol = h * h * h;
@@ -2399,57 +2407,57 @@ static void characteristic_function(long long i) {
     int x;
     if (o == NULL)
       continue;
-    o->CoM_x = 0;
-    o->CoM_y = 0;
-    o->CoM_z = 0;
+    o->com[0] = 0;
+    o->com[1] = 0;
+    o->com[2] = 0;
     o->mass = 0;
     for (z = 0; z < BS; ++z)
       for (y = 0; y < BS; ++y)
         for (x = 0; x < BS; ++x) {
           Real p[3];
           int j;
-          if (o->sdfLab[z + 1][y + 1][x + 1] > +gp * h || o->sdfLab[z + 1][y + 1][x + 1] < -gp * h) {
-            o->chi[z][y][x] = o->sdfLab[z + 1][y + 1][x + 1] > 0 ? 1 : 0;
+          if (o->sdf[z + 1][y + 1][x + 1] > +gp * h || o->sdf[z + 1][y + 1][x + 1] < -gp * h) {
+            o->chi[z][y][x] = o->sdf[z + 1][y + 1][x + 1] > 0 ? 1 : 0;
           } else {
-            Real gradU[3], gradI[3];
+            Real grad_u[3], grad_i[3];
             int a;
-            Real gradUSq;
+            Real grad_usq;
             for (a = 0; a < 3; a++) {
-              Real dP = o->sdfLab[z + 1 + (a == 2)][y + 1 + (a == 1)][x + 1 + (a == 0)];
-              Real dM = o->sdfLab[z + 1 - (a == 2)][y + 1 - (a == 1)][x + 1 - (a == 0)];
-              gradU[a] = inv2h * (dP - dM);
-              gradI[a] = inv2h * ((dP > 0.0 ? dP : 0.0) - (dM > 0.0 ? dM : 0.0));
+              Real d_p = o->sdf[z + 1 + (a == 2)][y + 1 + (a == 1)][x + 1 + (a == 0)];
+              Real d_m = o->sdf[z + 1 - (a == 2)][y + 1 - (a == 1)][x + 1 - (a == 0)];
+              grad_u[a] = inv2h * (d_p - d_m);
+              grad_i[a] = inv2h * ((d_p > 0.0 ? d_p : 0.0) - (d_m > 0.0 ? d_m : 0.0));
             }
-            gradUSq = dot3(gradU, gradU) + DBL_EPSILON;
-            o->chi[z][y][x] = dot3(gradI, gradU) / gradUSq;
+            grad_usq = dot3(grad_u, grad_u) + DBL_EPSILON;
+            o->chi[z][y][x] = dot3(grad_i, grad_u) / grad_usq;
           }
           blk_pos(blk, x, y, z, p);
           j = z * BS * BS + y * BS + x;
           b[j] = o->chi[z][y][x] < b[j] ? b[j] : o->chi[z][y][x];
-          o->CoM_x += o->chi[z][y][x] * vol * p[0];
-          o->CoM_y += o->chi[z][y][x] * vol * p[1];
-          o->CoM_z += o->chi[z][y][x] * vol * p[2];
+          o->com[0] += o->chi[z][y][x] * vol * p[0];
+          o->com[1] += o->chi[z][y][x] * vol * p[1];
+          o->com[2] += o->chi[z][y][x] * vol * p[2];
           o->mass += o->chi[z][y][x] * vol;
         }
   }
 }
 static void invert_sym(Real J[6], Real inv[6]) {
-  Real detJ = J[0] * (J[1] * J[2] - J[5] * J[5]) + J[3] * (J[4] * J[5] - J[2] * J[3]) +
+  Real jdet = J[0] * (J[1] * J[2] - J[5] * J[5]) + J[3] * (J[4] * J[5] - J[2] * J[3]) +
               J[4] * (J[3] * J[5] - J[1] * J[4]);
-  if (fabs(detJ) <= DBL_MIN) {
+  if (fabs(jdet) <= DBL_MIN) {
     int q;
     for (q = 0; q < 6; q++)
       inv[q] = 0;
   } else {
-    inv[0] = (J[1] * J[2] - J[5] * J[5]) / detJ;
-    inv[1] = (J[0] * J[2] - J[4] * J[4]) / detJ;
-    inv[2] = (J[0] * J[1] - J[3] * J[3]) / detJ;
-    inv[3] = (J[4] * J[5] - J[2] * J[3]) / detJ;
-    inv[4] = (J[3] * J[5] - J[1] * J[4]) / detJ;
-    inv[5] = (J[3] * J[4] - J[0] * J[5]) / detJ;
+    inv[0] = (J[1] * J[2] - J[5] * J[5]) / jdet;
+    inv[1] = (J[0] * J[2] - J[4] * J[4]) / jdet;
+    inv[2] = (J[0] * J[1] - J[3] * J[3]) / jdet;
+    inv[3] = (J[4] * J[5] - J[2] * J[3]) / jdet;
+    inv[4] = (J[3] * J[5] - J[1] * J[4]) / jdet;
+    inv[5] = (J[3] * J[4] - J[0] * J[5]) / jdet;
   }
 }
-static void compute_grid_com(void) {
+static void fish_com(void) {
   int k;
   for (k = 0; k < sim.nfish; k++) {
     struct Fish *f = &sta.fish[k];
@@ -2460,19 +2468,19 @@ static void compute_grid_com(void) {
       if (o == NULL)
         continue;
       com[0] += o->mass;
-      com[1] += o->CoM_x;
-      com[2] += o->CoM_y;
-      com[3] += o->CoM_z;
+      com[1] += o->com[0];
+      com[2] += o->com[1];
+      com[3] += o->com[2];
     }
     MPI_Allreduce(MPI_IN_PLACE, com, 4, MPI_Real, MPI_SUM, sim.comm);
     if (com[0] <= 0)
       continue;
-    f->centerOfMass[0] = com[1] / com[0];
-    f->centerOfMass[1] = com[2] / com[0];
-    f->centerOfMass[2] = com[3] / com[0];
+    f->com[0] = com[1] / com[0];
+    f->com[1] = com[2] / com[0];
+    f->com[2] = com[3] / com[0];
   }
 }
-static void integrate_udef_momenta(long long i) {
+static void fish_udef_blk(long long i) {
   struct Blk *b = &sta.blk[i];
   int k;
   for (k = 0; k < sim.nfish; k++) {
@@ -2486,7 +2494,7 @@ static void integrate_udef_momenta(long long i) {
     int x;
     if (o == NULL)
       continue;
-    CM = f->centerOfMass;
+    CM = f->com;
     M = o->mom;
     for (q = 0; q < 13; q++)
       M[q] = 0;
@@ -2496,7 +2504,7 @@ static void integrate_udef_momenta(long long i) {
           Real p[3];
           Real dv, X;
           Real *U;
-          Real pxU[3];
+          Real px_u[3];
           int d;
           if (o->chi[z][y][x] <= 0)
             continue;
@@ -2507,12 +2515,12 @@ static void integrate_udef_momenta(long long i) {
           p[0] -= CM[0];
           p[1] -= CM[1];
           p[2] -= CM[2];
-          cross3(pxU, p, U);
+          cross3(px_u, p, U);
           M[M_V] += X * dv;
           for (d = 0; d < 3; d++) {
             int b = d == 0 ? 1 : 0, c = d == 2 ? 1 : 2;
             M[M_FX + d] += X * U[d] * dv;
-            M[M_TX + d] += X * pxU[d] * dv;
+            M[M_TX + d] += X * px_u[d] * dv;
             M[M_J0 + d] += X * (p[b] * p[b] + p[c] * p[c]) * dv;
           }
           M[M_J3] -= X * p[0] * p[1] * dv;
@@ -2521,7 +2529,7 @@ static void integrate_udef_momenta(long long i) {
         }
   }
 }
-static void accumulate_udef_momenta(void) {
+static void fish_udef_mom(void) {
   int k;
   for (k = 0; k < sim.nfish; k++) {
     struct Fish *f = &sta.fish[k];
@@ -2529,7 +2537,7 @@ static void accumulate_udef_momenta(void) {
     long long i;
     Real AM[3];
     Real J[6];
-    Real invJ[6];
+    Real jinv[6];
     int q;
     for (i = 0; i < sta.nblk; i++) {
       struct ObstacleBlock *o = oblock(f, i);
@@ -2545,7 +2553,7 @@ static void accumulate_udef_momenta(void) {
       int q;
       f->mass = 0;
       for (d = 0; d < 3; d++)
-        f->transVel_correction[d] = f->angVel_correction[d] = 0;
+        f->vel_corr[d] = f->omega_corr[d] = 0;
       for (q = 0; q < 6; q++)
         f->J[q] = 0;
       continue;
@@ -2559,25 +2567,25 @@ static void accumulate_udef_momenta(void) {
     J[3] = M[10];
     J[4] = M[11];
     J[5] = M[12];
-    invert_sym(J, invJ);
+    invert_sym(J, jinv);
     f->mass = M[0];
-    f->transVel_correction[0] = M[1] / M[0];
-    f->transVel_correction[1] = M[2] / M[0];
-    f->transVel_correction[2] = M[3] / M[0];
+    f->vel_corr[0] = M[1] / M[0];
+    f->vel_corr[1] = M[2] / M[0];
+    f->vel_corr[2] = M[3] / M[0];
     for (q = 0; q < 6; q++)
       f->J[q] = J[q];
-    f->angVel_correction[0] = invJ[0] * AM[0] + invJ[3] * AM[1] + invJ[4] * AM[2];
-    f->angVel_correction[1] = invJ[3] * AM[0] + invJ[1] * AM[1] + invJ[5] * AM[2];
-    f->angVel_correction[2] = invJ[4] * AM[0] + invJ[5] * AM[1] + invJ[2] * AM[2];
+    f->omega_corr[0] = jinv[0] * AM[0] + jinv[3] * AM[1] + jinv[4] * AM[2];
+    f->omega_corr[1] = jinv[3] * AM[0] + jinv[1] * AM[1] + jinv[5] * AM[2];
+    f->omega_corr[2] = jinv[4] * AM[0] + jinv[5] * AM[1] + jinv[2] * AM[2];
   }
 }
-static void remove_udef_momenta(void) {
+static void fish_udef_fix(void) {
   int k;
   for (k = 0; k < sim.nfish; k++) {
     struct Fish *f = &sta.fish[k];
-    Real *av = f->angVel_correction;
-    Real *tv = f->transVel_correction;
-    Real *CM = f->centerOfMass;
+    Real *av = f->omega_corr;
+    Real *tv = f->vel_corr;
+    Real *CM = f->com;
     long long i;
 #pragma omp parallel for schedule(dynamic, 1)
     for (i = 0; i < sta.nblk; i++) {
@@ -2606,36 +2614,36 @@ static void remove_udef_momenta(void) {
     }
   }
 }
-static void create_obstacles(void) {
+static void fish_build(void) {
   long long i;
   int k;
   if (sim.nfish == 0)
     return;
-  if (sta.MeshChanged == 0 && sim.StaticObstacles)
+  if (sta.mesh_changed == 0 && sim.static_obst)
     return;
-  sta.MeshChanged = 0;
+  sta.mesh_changed = 0;
 #pragma omp parallel for schedule(static)
   for (i = 0; i < sta.nblk; ++i) {
     memset(fld(i, F_CHI), 0, BS3 * sizeof(Real));
   }
-  update_uinf();
+  sta_uinf();
   for (k = 0; k < sim.nfish; k++)
     fish_update(&sta.fish[k]);
   for (k = 0; k < sim.nfish; k++)
     fish_create(&sta.fish[k]);
 #pragma omp parallel for
   for (i = 0; i < sta.nblk; ++i) {
-    characteristic_function(i);
+    geom_chi(i);
   }
-  compute_grid_com();
+  fish_com();
 #pragma omp parallel for schedule(dynamic, 1)
   for (i = 0; i < sta.nblk; ++i) {
-    integrate_udef_momenta(i);
+    fish_udef_blk(i);
   }
-  accumulate_udef_momenta();
-  remove_udef_momenta();
+  fish_udef_mom();
+  fish_udef_fix();
 }
-enum { Leave = 0, Refine = 1, Compress = -1 };
+enum { TAG_KEEP = 0, TAG_REF = 1, TAG_COMP = -1 };
 struct Node {
   long long key;
   int pos;
@@ -2686,7 +2694,7 @@ static struct Node *node_find(long long key, int create) {
       nd->pos = -3;
       nd->local = -1;
       nd->halo = -1;
-      nd->state = Leave;
+      nd->state = TAG_KEEP;
       nodes.n++;
       return nd;
     }
@@ -2705,8 +2713,8 @@ static void nodes_reset(void) {
 }
 static void nodes_init(void) {
   int m;
-  nodes.level_base = emalloc(sim.levelMax * sizeof(long long));
-  for (m = 0; m < sim.levelMax; m++) {
+  nodes.level_base = emalloc(sim.level_max * sizeof(long long));
+  for (m = 0; m < sim.level_max; m++) {
     long long TwoPower = 1 << m;
     long long Ntot = (long long)sim.bpdx * sim.bpdy * sim.bpdz * TwoPower * TwoPower * TwoPower;
     nodes.level_base[m] = m == 0 ? Ntot : nodes.level_base[m - 1] + Ntot;
@@ -2736,7 +2744,7 @@ static long long zchild(struct Blk *b, int i, int j, int k) {
   return sfc_forward(b->level + 1, 2 * b->ix + i, 2 * b->iy + j, 2 * b->iz + k);
 }
 static long long encode(int level, long long Z, int ix, int iy, int iz) {
-  int lmax = sim.levelMax;
+  int lmax = sim.level_max;
   long long retval = 0;
   int l;
   int i, j, k;
@@ -2956,7 +2964,7 @@ static void tree_sync(void) {
       int i;
       blk_fill(&b, level, Z);
       node(level, Z)->pos = r;
-      if (level < sim.levelMax - 1)
+      if (level < sim.level_max - 1)
         for (k = 0; k < 2; k++)
           for (jj = 0; jj < 2; jj++)
             for (i = 0; i < 2; i++)
@@ -3268,16 +3276,16 @@ static void fc_fill(int f, int nc) {
     }
   memset(fc.data, 0, (size_t)fc.nface * 3 * BS * BS * sizeof(Real));
 }
-static void grid_init(void) {
+static void mesh_init(void) {
   int level;
   long long aux;
   long long total;
   long long my_blocks;
   long long n_start;
   long long Z;
-  sfc_init(sim.bpdx, sim.bpdy, sim.bpdz, sim.levelMax);
+  sfc_init(sim.bpdx, sim.bpdy, sim.bpdz, sim.level_max);
   nodes_init();
-  level = sim.levelStart;
+  level = sim.level_start;
   aux = 1 << level;
   total = (long long)sim.bpdx * sim.bpdy * sim.bpdz * aux * aux * aux;
   my_blocks = total / sim.size;
@@ -3314,7 +3322,7 @@ struct LabTab {
   struct Op *ops;
 };
 static struct LabTab lab_tab[4];
-static void lab_tables_init(void) {
+static void lab_tables(void) {
   static int cfg[4][2] = {{1, 1}, {1, 0}, {2, 1}, {3, 0}};
   int k;
   for (k = 0; k < 4; k++) {
@@ -3452,43 +3460,43 @@ static void lab_exec(struct Lab *l, int32_t sec[2], Real **nb) {
       int c;
       for (c = 0; c < nc; c++) {
 #define CO(OFF) (l->coarse[(o->src + (OFF)) * nc + c])
-        Real x1D, x2D;
+        Real x1_d, x2_d;
         double mixed_coef = 1.0;
         int P1, M1, P2, M2;
         Real mixed;
         Real v;
         int first;
         if (a[1] == 0) {
-          x1D = (c1[6] * CO(-s1) + c1[8] * CO(s1)) + c1[7] * CO(0);
+          x1_d = (c1[6] * CO(-s1) + c1[8] * CO(s1)) + c1[7] * CO(0);
           P1 = s1;
           M1 = -s1;
           mixed_coef *= 0.5;
         } else if (a[1] == 1) {
-          x1D = (c1[0] * CO(2 * s1) + c1[1] * CO(s1)) + c1[2] * CO(0);
+          x1_d = (c1[0] * CO(2 * s1) + c1[1] * CO(s1)) + c1[2] * CO(0);
           P1 = s1;
           M1 = 0;
         } else {
-          x1D = (c1[3] * CO(-2 * s1) + c1[4] * CO(-s1)) + c1[5] * CO(0);
+          x1_d = (c1[3] * CO(-2 * s1) + c1[4] * CO(-s1)) + c1[5] * CO(0);
           P1 = 0;
           M1 = -s1;
         }
         if (a[2] == 0) {
-          x2D = (c2[6] * CO(-s2) + c2[8] * CO(s2)) + c2[7] * CO(0);
+          x2_d = (c2[6] * CO(-s2) + c2[8] * CO(s2)) + c2[7] * CO(0);
           P2 = s2;
           M2 = -s2;
           mixed_coef *= 0.5;
         } else if (a[2] == 1) {
-          x2D = (c2[0] * CO(2 * s2) + c2[1] * CO(s2)) + c2[2] * CO(0);
+          x2_d = (c2[0] * CO(2 * s2) + c2[1] * CO(s2)) + c2[2] * CO(0);
           P2 = s2;
           M2 = 0;
         } else {
-          x2D = (c2[3] * CO(-2 * s2) + c2[4] * CO(-s2)) + c2[5] * CO(0);
+          x2_d = (c2[3] * CO(-2 * s2) + c2[4] * CO(-s2)) + c2[5] * CO(0);
           P2 = 0;
           M2 = -s2;
         }
         mixed = mixed_coef * d1 * d2 * ((CO(M1 + M2) + CO(P1 + P2)) - (CO(P1 + M2) + CO(M1 + P2)));
 #undef CO
-        v = (x1D + x2D) + mixed;
+        v = (x1_d + x2_d) + mixed;
         first = a[6] == 1 ? a[7] == 0 : a[7] == 1;
         v = first ? (1.0 / 15.0) * (8.0 * v + (10.0 * bb[c] - 3.0 * cq[c]))
                   : (1.0 / 15.0) * (24.0 * v + (-15.0 * bb[c] + 6 * cq[c]));
@@ -3619,11 +3627,11 @@ static void stencil_apply(struct Stencil *st) {
   if (st->outc > 0)
     fc_fill(st->out, st->outc);
 }
-static void kernel_gradchi(struct Lab *l, long long ib) {
+static void k_gradchi(struct Lab *l, long long ib) {
   struct Blk *b = &sta.blk[ib];
   Real *TMP0 = fld(ib, F_TMP), *TMP1 = TMP0 + BS3, *TMP2 = TMP1 + BS3;
   int done = 0;
-  int offset = (b->level == sim.levelMax - 1) ? 2 : 1;
+  int offset = (b->level == sim.level_max - 1) ? 2 : 1;
   int z;
   int y;
   int x;
@@ -3650,8 +3658,8 @@ static void kernel_gradchi(struct Lab *l, long long ib) {
         }
       }
 }
-static struct Stencil st_gradchi = {F_CHI, 1, 2, 1, -1, 0, 0, kernel_gradchi};
-static int tag_block(long long i) {
+static struct Stencil st_gradchi = {F_CHI, 1, 2, 1, -1, 0, 0, k_gradchi};
+static int mesh_tag_blk(long long i) {
   Real *u0 = fld(i, F_TMP), *u1 = u0 + BS3, *u2 = u1 + BS3;
   double Linf = 0.0;
   int j;
@@ -3659,56 +3667,56 @@ static int tag_block(long long i) {
     double m = fabs(sqrt(u0[j] * u0[j] + u1[j] * u1[j] + u2[j] * u2[j]));
     Linf = m > Linf ? m : Linf;
   }
-  if (Linf > sim.Rtol)
-    return Refine;
-  else if (Linf < sim.Ctol)
-    return Compress;
-  return Leave;
+  if (Linf > sim.rtol)
+    return TAG_REF;
+  else if (Linf < sim.ctol)
+    return TAG_COMP;
+  return TAG_KEEP;
 }
 static void set_state(long long i, int st) { node_get(sta.blk[i].level, sta.blk[i].Z)->state = st; }
 static int get_state(long long i) { return node_get(sta.blk[i].level, sta.blk[i].Z)->state; }
-static int tag_all(void) {
+static int mesh_tag(void) {
   int changed = 0;
   long long i;
 #pragma omp parallel for reduction(| : changed)
   for (i = 0; i < sta.nblk; i++) {
-    int st = tag_block(i);
+    int st = mesh_tag_blk(i);
     int level = sta.blk[i].level;
-    if ((st == Refine && level == sim.levelMax - 1) || (st == Compress && level == 0))
-      st = Leave;
+    if ((st == TAG_REF && level == sim.level_max - 1) || (st == TAG_COMP && level == 0))
+      st = TAG_KEEP;
     set_state(i, st);
-    if (st != Leave)
+    if (st != TAG_KEEP)
       changed = 1;
   }
   return changed;
 }
-static void valid_states(void) {
-  int levelMin = 0;
-  int levelMax = sim.levelMax;
+static void mesh_fix(void) {
+  int level_min = 0;
+  int level_max = sim.level_max;
   long long j;
   int m;
   for (j = 0; j < sta.nblk; j++) {
     int st = get_state(j);
-    if ((st == Refine && sta.blk[j].level == levelMax - 1) ||
-        (st == Compress && sta.blk[j].level == levelMin))
-      set_state(j, Leave);
+    if ((st == TAG_REF && sta.blk[j].level == level_max - 1) ||
+        (st == TAG_COMP && sta.blk[j].level == level_min))
+      set_state(j, TAG_KEEP);
   }
-  for (m = levelMax - 1; m >= levelMin; m--) {
+  for (m = level_max - 1; m >= level_min; m--) {
     long long j;
     for (j = 0; j < sta.nblk; j++) {
       struct Blk *b = &sta.blk[j];
-      if (b->level == m && get_state(j) != Refine && b->level != levelMax - 1) {
+      if (b->level == m && get_state(j) != TAG_REF && b->level != level_max - 1) {
         int icode = -1, code[3];
         while (nei_next(b, &icode, code)) {
-          if (get_state(j) == Refine)
+          if (get_state(j) == TAG_REF)
             break;
           if (node(m, znei(b, code[0], code[1], code[2]))->pos == -1) {
             int B;
-            if (get_state(j) == Compress)
-              set_state(j, Leave);
+            if (get_state(j) == TAG_COMP)
+              set_state(j, TAG_KEEP);
             for (B = 0; B <= 3; B += nei_bstep(code))
-              if (node(m + 1, nei_fine(b, code, B))->state == Refine) {
-                set_state(j, Refine);
+              if (node(m + 1, nei_fine(b, code, B))->state == TAG_REF) {
+                set_state(j, TAG_REF);
                 break;
               }
           }
@@ -3716,16 +3724,16 @@ static void valid_states(void) {
       }
     }
     states_sync();
-    if (m == levelMin)
+    if (m == level_min)
       break;
     for (j = 0; j < sta.nblk; j++) {
       struct Blk *b = &sta.blk[j];
-      if (b->level == m && get_state(j) == Compress) {
+      if (b->level == m && get_state(j) == TAG_COMP) {
         int icode = -1, code[3];
         while (nei_next(b, &icode, code)) {
           struct Node *nd = node(m, znei(b, code[0], code[1], code[2]));
-          if (nd->pos >= 0 && nd->state == Refine) {
-            set_state(j, Leave);
+          if (nd->pos >= 0 && nd->state == TAG_REF) {
+            set_state(j, TAG_KEEP);
             break;
           }
         }
@@ -3743,10 +3751,10 @@ static void valid_states(void) {
       for (jj = 2 * (b->iy / 2); jj <= 2 * (b->iy / 2) + 1 && !found; jj++)
         for (kk = 2 * (b->iz / 2); kk <= 2 * (b->iz / 2) + 1; kk++) {
           struct Node *nd = node(m, zforward(m, ii, jj, kk));
-          if (nd->pos < 0 || nd->state != Compress) {
+          if (nd->pos < 0 || nd->state != TAG_COMP) {
             found = 1;
-            if (get_state(j) == Compress)
-              set_state(j, Leave);
+            if (get_state(j) == TAG_COMP)
+              set_state(j, TAG_KEEP);
             break;
           }
         }
@@ -3755,14 +3763,14 @@ static void valid_states(void) {
         for (jj = 2 * (b->iy / 2); jj <= 2 * (b->iy / 2) + 1; jj++)
           for (kk = 2 * (b->iz / 2); kk <= 2 * (b->iz / 2) + 1; kk++) {
             struct Node *nd = node(m, zforward(m, ii, jj, kk));
-            if (nd->pos >= 0 && nd->state == Compress)
-              nd->state = Leave;
+            if (nd->pos >= 0 && nd->state == TAG_COMP)
+              nd->state = TAG_KEEP;
           }
   }
 }
-static void refine_blocks(struct Lab *l, long long B[8], int f, int nc) {
+static void mesh_refine(struct Lab *l, long long B[8], int f, int nc) {
   int nx = BS, ny = BS, nz = BS;
-  int offsetX[2] = {0, nx / 2}, offsetY[2] = {0, ny / 2}, offsetZ[2] = {0, nz / 2};
+  int offset_x[2] = {0, nx / 2}, offset_y[2] = {0, ny / 2}, offset_z[2] = {0, nz / 2};
   int K;
   int J;
   int I;
@@ -3776,9 +3784,9 @@ static void refine_blocks(struct Lab *l, long long B[8], int f, int nc) {
         for (k = 0; k < nz; k += 2)
           for (j = 0; j < ny; j += 2)
             for (i = 0; i < nx; i += 2) {
-              int x = i / 2 + offsetX[I];
-              int y = j / 2 + offsetY[J];
-              int z = k / 2 + offsetZ[K];
+              int x = i / 2 + offset_x[I];
+              int y = j / 2 + offset_y[J];
+              int z = k / 2 + offset_z[K];
               int c;
               for (c = 0; c < nc; c++) {
 #define L(X, Y, Z) (LAB(l, (X) - l->ss[0], (Y) - l->ss[1], (Z) - l->ss[2])[c])
@@ -3824,7 +3832,7 @@ static void blk_remove_key(int level, long long Z) {
   if (nd->local >= 0)
     blk_remove(nd->local);
 }
-enum { PK = BLK_S + 2 };
+enum { PACK_S = BLK_S + 2 };
 static void blk_migrate(int *dst) {
   struct Xch x = {NULL, NULL, NULL, NULL};
   int *fill = ecalloc(sim.size, sizeof *fill);
@@ -3843,26 +3851,26 @@ static void blk_migrate(int *dst) {
   xch_dsp(&x);
   ns = xch_nsend(&x);
   nr = xch_nrecv(&x);
-  sbuf = emalloc(ns * PK * sizeof(Real));
-  rbuf = emalloc(nr * PK * sizeof(Real));
+  sbuf = emalloc(ns * PACK_S * sizeof(Real));
+  rbuf = emalloc(nr * PACK_S * sizeof(Real));
   for (i = 0; i < sta.nblk; i++)
     if (dst[i] >= 0)
-      blk_pack(sbuf + (long long)(x.sdsp[dst[i]] + fill[dst[i]]++) * PK, i);
-  xch_exec(&x, sbuf, rbuf, PK, MPI_Real);
+      blk_pack(sbuf + (long long)(x.sdsp[dst[i]] + fill[dst[i]]++) * PACK_S, i);
+  xch_exec(&x, sbuf, rbuf, PACK_S, MPI_Real);
   for (r = 0; r < sim.size; r++)
     for (k = 0; k < x.scnt[r]; k++) {
-      Real *p = sbuf + (long long)(x.sdsp[r] + k) * PK;
+      Real *p = sbuf + (long long)(x.sdsp[r] + k) * PACK_S;
       blk_remove_key((int)p[0], (long long)p[1]);
       node((int)p[0], (long long)p[1])->pos = r;
     }
   for (k2 = 0; k2 < nr; k2++)
-    blk_unpack(rbuf + k2 * PK);
+    blk_unpack(rbuf + k2 * PACK_S);
   free(sbuf);
   free(rbuf);
   free(fill);
   xch_free(&x);
 }
-static void prepare_compression(void) {
+static void mesh_gather(void) {
   int *dst = emalloc(sta.nblk * sizeof *dst);
   long long i;
   for (i = 0; i < sta.nblk; i++) {
@@ -3870,13 +3878,13 @@ static void prepare_compression(void) {
     long long zb = zforward(b->level, 2 * (b->ix / 2), 2 * (b->iy / 2), 2 * (b->iz / 2));
     struct Node *base = node(b->level, zb);
     dst[i] = -1;
-    if (base->pos >= 0 && base->state == Compress && b->Z != zb && base->pos != sim.rank)
+    if (base->pos >= 0 && base->state == TAG_COMP && b->Z != zb && base->pos != sim.rank)
       dst[i] = base->pos;
   }
   blk_migrate(dst);
   free(dst);
 }
-static int balance_global(long long *all_b) {
+static int mesh_bal_all(long long *all_b) {
   int size = sim.size, rank = sim.rank;
   long long total_load;
   int r;
@@ -3920,7 +3928,7 @@ static int balance_global(long long *all_b) {
   free(index_start);
   return 1;
 }
-static int balance_diffusion(long long *dist) {
+static int mesh_bal(long long *dist) {
   int size = sim.size, rank = sim.rank;
   int right;
   int left;
@@ -3943,7 +3951,7 @@ static int balance_diffusion(long long *dist) {
     }
     ratio = (double)max_b / min_b;
     if (ratio > 1.01 || min_b == 0)
-      return balance_global(dist);
+      return mesh_bal_all(dist);
   }
   right = (rank == size - 1) ? MPI_PROC_NULL : rank + 1;
   left = (rank == 0) ? MPI_PROC_NULL : rank - 1;
@@ -3970,8 +3978,8 @@ static int balance_diffusion(long long *dist) {
   MPI_Allreduce(MPI_IN_PLACE, &moved, 1, MPI_INT, MPI_SUM, sim.comm);
   return moved >= 1;
 }
-static void compute_vorticity(void);
-static void adapt_mesh(void) {
+static void vorticity(void);
+static void mesh_adapt(void) {
   int changed;
   long long nref, ncom;
   long long *ref;
@@ -3987,12 +3995,12 @@ static void adapt_mesh(void) {
   Real *tmp;
   long long d;
   int moved;
-  compute_vorticity();
+  vorticity();
   stencil_apply(&st_gradchi);
-  changed = tag_all();
+  changed = mesh_tag();
   MPI_Allreduce(MPI_IN_PLACE, &changed, 1, MPI_INT, MPI_SUM, sim.comm);
   if (changed)
-    valid_states();
+    mesh_fix();
   states_sync();
   nref = 0;
   ncom = 0;
@@ -4002,12 +4010,12 @@ static void adapt_mesh(void) {
   for (i = 0; i < sta.nblk; i++) {
     struct Blk *b = &sta.blk[i];
     int st = get_state(i);
-    if (st == Refine) {
+    if (st == TAG_REF) {
       ref[nref++] = node_key(b->level, b->Z);
       blocks_after += 7;
-    } else if (st == Compress && b->ix % 2 == 0 && b->iy % 2 == 0 && b->iz % 2 == 0)
+    } else if (st == TAG_COMP && b->ix % 2 == 0 && b->iy % 2 == 0 && b->iz % 2 == 0)
       com[ncom++] = node_key(b->level, b->Z);
-    else if (st == Compress)
+    else if (st == TAG_COMP)
       blocks_after--;
   }
   temp[0] = (int)nref;
@@ -4026,7 +4034,7 @@ static void adapt_mesh(void) {
     int j;
     int i;
     int q;
-    pn->state = Leave;
+    pn->state = TAG_KEEP;
     lab_load(&lab, ip);
     for (k = 0; k < 2; k++)
       for (j = 0; j < 2; j++)
@@ -4034,13 +4042,13 @@ static void adapt_mesh(void) {
           long long nc = zchild(&parent, i, j, k);
           long long ic = blk_alloc(parent.level + 1, nc);
           struct Node *cn = node(parent.level + 1, nc);
-          cn->state = Leave;
+          cn->state = TAG_KEEP;
           cn->pos = -2;
           B[k * 4 + j * 2 + i] = ic;
         }
     for (q = 0; q < 8; q++)
       memset(BLK(B[q]), 0, BLK_S * sizeof(Real));
-    refine_blocks(&lab, B, F_PRES, 4);
+    mesh_refine(&lab, B, F_PRES, 4);
   }
   for (r = 0; r < nref; r++) {
     struct Node *pn = node_find(ref[r], 1);
@@ -4049,14 +4057,14 @@ static void adapt_mesh(void) {
     int j;
     int i;
     pn->pos = -1;
-    pn->state = Leave;
+    pn->state = TAG_KEEP;
     for (k = 0; k < 2; k++)
       for (j = 0; j < 2; j++)
         for (i = 0; i < 2; i++) {
           long long nc = zchild(&parent, i, j, k);
           struct Node *cn = node(parent.level + 1, nc);
           cn->pos = sim.rank;
-          if (parent.level + 2 < sim.levelMax) {
+          if (parent.level + 2 < sim.level_max) {
             struct Blk cb = sta.blk[cn->local];
             int i0;
             int i1;
@@ -4073,7 +4081,7 @@ static void adapt_mesh(void) {
     if (nd->local >= 0)
       blk_remove(nd->local);
   }
-  prepare_compression();
+  mesh_gather();
   dead = emalloc(7 * ncom * sizeof *dead);
   ndead = 0;
   tmp = emalloc(BLK_S * sizeof(Real));
@@ -4120,7 +4128,7 @@ static void adapt_mesh(void) {
     np = zforward(level - 1, info.ix / 2, info.iy / 2, info.iz / 2);
     pn = node(level - 1, np);
     pn->pos = sim.rank;
-    pn->state = Leave;
+    pn->state = TAG_KEEP;
     if (level - 2 >= 0) {
       struct Blk pb;
       blk_fill(&pb, level - 1, np);
@@ -4140,7 +4148,7 @@ static void adapt_mesh(void) {
           else
             cn->local = -1;
           cn->pos = -2;
-          cn->state = Leave;
+          cn->state = TAG_KEEP;
         }
   }
   free(tmp);
@@ -4149,8 +4157,8 @@ static void adapt_mesh(void) {
     if (nd->local >= 0)
       blk_remove(nd->local);
   }
-  moved = balance_diffusion(dist);
-  sta.MeshChanged = result[0] > 0 || result[1] > 0 || moved;
+  moved = mesh_bal(dist);
+  sta.mesh_changed = result[0] > 0 || result[1] > 0 || moved;
   free(ref);
   free(com);
   free(dead);
@@ -4160,7 +4168,7 @@ static void adapt_mesh(void) {
   halo_build();
   fc_prepare();
 }
-static void zero_fields(void) {
+static void sta_zero(void) {
   long long i;
 #pragma omp parallel for
   for (i = 0; i < sta.nblk; i++) {
@@ -4170,16 +4178,16 @@ static void zero_fields(void) {
     memset(fld(i, F_LHS), 0, BS3 * sizeof(Real));
   }
 }
-static void init_fields(void) {
+static void sta_fields(void) {
   int lmax;
   int l;
-  create_obstacles();
-  zero_fields();
-  lmax = sim.StaticObstacles ? sim.levelMax : 3 * sim.levelMax;
+  fish_build();
+  sta_zero();
+  lmax = sim.static_obst ? sim.level_max : 3 * sim.level_max;
   for (l = 0; l < lmax; l++) {
-    adapt_mesh();
-    create_obstacles();
-    zero_fields();
+    mesh_adapt();
+    fish_build();
+    sta_zero();
   }
 }
 #define L(X, Y, Z, C) (LAB(l, (X) - l->ss[0], (Y) - l->ss[1], (Z) - l->ss[2])[C])
@@ -4223,7 +4231,7 @@ static void face_sum(struct Lab *l, long long i, int f, int in, int out, Real co
     F[k] = s * (LC(n, in) + LC(c, in));
   }
 }
-static void kernel_lhs(struct Lab *l, long long i) {
+static void k_lhs(struct Lab *l, long long i) {
   Real h = sta.blk[i].h;
   Real *o = fld(i, F_LHS);
   int z;
@@ -4236,33 +4244,33 @@ static void kernel_lhs(struct Lab *l, long long i) {
                                L(x, y, z - 1, 0) + L(x, y, z + 1, 0) - 6.0 * L(x, y, z, 0));
   face_grad(l, i, 0, h);
 }
-static struct Stencil st_lhs = {F_PRES, 1, 1, 0, -1, F_LHS, 1, kernel_lhs};
-static void compute_lhs(void) {
-  Real avgP = 0;
+static struct Stencil st_lhs = {F_PRES, 1, 1, 0, -1, F_LHS, 1, k_lhs};
+static void pois_op(void) {
+  Real avg_p = 0;
   long long index = -1;
-  if (sim.bMeanConstraint <= 2 && sim.bMeanConstraint > 0) {
+  if (sim.mean_constraint <= 2 && sim.mean_constraint > 0) {
     long long i;
     for (i = 0; i < sta.nblk; ++i)
       if (sta.blk[i].ix == 0 && sta.blk[i].iy == 0 && sta.blk[i].iz == 0)
         index = i;
-#pragma omp parallel for reduction(+ : avgP)
+#pragma omp parallel for reduction(+ : avg_p)
     for (i = 0; i < sta.nblk; ++i) {
       struct Blk *b = &sta.blk[i];
       Real *Z = fld(i, F_PRES);
       Real h3 = b->h * b->h * b->h;
       int j;
       for (j = 0; j < BS3; j++)
-        avgP += Z[j] * h3;
+        avg_p += Z[j] * h3;
     }
-    MPI_Allreduce(MPI_IN_PLACE, &avgP, 1, MPI_Real, MPI_SUM, sim.comm);
+    MPI_Allreduce(MPI_IN_PLACE, &avg_p, 1, MPI_Real, MPI_SUM, sim.comm);
   }
   stencil_apply(&st_lhs);
-  if (sim.bMeanConstraint == 0)
+  if (sim.mean_constraint == 0)
     return;
-  if (sim.bMeanConstraint <= 2 && sim.bMeanConstraint > 0) {
-    if (sim.bMeanConstraint == 1 && index != -1) {
-      fld(index, F_LHS)[0] = avgP;
-    } else if (sim.bMeanConstraint == 2) {
+  if (sim.mean_constraint <= 2 && sim.mean_constraint > 0) {
+    if (sim.mean_constraint == 1 && index != -1) {
+      fld(index, F_LHS)[0] = avg_p;
+    } else if (sim.mean_constraint == 2) {
       long long i;
 #pragma omp parallel for
       for (i = 0; i < sta.nblk; ++i) {
@@ -4270,7 +4278,7 @@ static void compute_lhs(void) {
         Real h3 = sta.blk[i].h * sta.blk[i].h * sta.blk[i].h;
         int j;
         for (j = 0; j < BS3; j++)
-          LHS[j] += avgP * h3;
+          LHS[j] += avg_p * h3;
       }
     }
   } else {
@@ -4283,14 +4291,14 @@ static void compute_lhs(void) {
   }
 }
 enum { XPAD = 4 };
-static Real getz_inner(Real p[BS + 2][BS + 2][BS + 2 * XPAD], Real Ax[BS3], Real r[BS3], Real *block,
-                       Real sqrNorm0, Real rr) {
-  Real kDivEpsilon = 1e-55;
-  Real kNormRelCriterion = 1e-7;
-  Real kNormAbsCriterion = 1e-16;
-  Real kSqrNormRelCriterion = kNormRelCriterion * kNormRelCriterion;
-  Real kSqrNormAbsCriterion = kNormAbsCriterion * kNormAbsCriterion;
-  Real a2Partial[BS] = {0};
+static Real pois_pre_cg(Real p[BS + 2][BS + 2][BS + 2 * XPAD], Real Ax[BS3], Real r[BS3], Real *block,
+                        Real norm2_0, Real rr) {
+  Real eps_div = 1e-55;
+  Real tol_rel = 1e-7;
+  Real tol_abs = 1e-16;
+  Real tol_rel2 = tol_rel * tol_rel;
+  Real tol_abs2 = tol_abs * tol_abs;
+  Real a2_partial[BS] = {0};
   int iz;
   int iy;
   Real a2;
@@ -4298,34 +4306,34 @@ static Real getz_inner(Real p[BS + 2][BS + 2][BS + 2 * XPAD], Real Ax[BS3], Real
   Real a;
   Real s[16];
   int jy;
-  Real sqrSum;
+  Real sum2;
   int jx;
   Real beta;
-  Real sqrNorm;
+  Real norm2;
   for (iz = 0; iz < BS; ++iz)
     for (iy = 0; iy < BS; ++iy) {
-      Real tmpAx[BS];
+      Real ax[BS];
       int ix;
       for (ix = 0; ix < BS; ++ix)
-        tmpAx[ix] = p[iz + 1][iy + 1][ix + XPAD - 1] + p[iz + 1][iy + 1][ix + XPAD + 1] -
-                    6 * p[iz + 1][iy + 1][ix + XPAD];
+        ax[ix] = p[iz + 1][iy + 1][ix + XPAD - 1] + p[iz + 1][iy + 1][ix + XPAD + 1] -
+                 6 * p[iz + 1][iy + 1][ix + XPAD];
       for (ix = 0; ix < BS; ++ix)
-        tmpAx[ix] += p[iz + 1][iy][ix + XPAD];
+        ax[ix] += p[iz + 1][iy][ix + XPAD];
       for (ix = 0; ix < BS; ++ix)
-        tmpAx[ix] += p[iz + 1][iy + 2][ix + XPAD];
+        ax[ix] += p[iz + 1][iy + 2][ix + XPAD];
       for (ix = 0; ix < BS; ++ix)
-        tmpAx[ix] += p[iz][iy + 1][ix + XPAD];
+        ax[ix] += p[iz][iy + 1][ix + XPAD];
       for (ix = 0; ix < BS; ++ix)
-        tmpAx[ix] += p[iz + 2][iy + 1][ix + XPAD];
+        ax[ix] += p[iz + 2][iy + 1][ix + XPAD];
       for (ix = 0; ix < BS; ++ix)
-        Ax[IDX(ix, iy, iz)] = tmpAx[ix];
+        Ax[IDX(ix, iy, iz)] = ax[ix];
       for (ix = 0; ix < BS; ++ix)
-        a2Partial[ix] += p[iz + 1][iy + 1][ix + XPAD] * tmpAx[ix];
+        a2_partial[ix] += p[iz + 1][iy + 1][ix + XPAD] * ax[ix];
     }
   a2 = 0;
   for (ix = 0; ix < BS; ++ix)
-    a2 += a2Partial[ix];
-  a = rr / (a2 + kDivEpsilon);
+    a2 += a2_partial[ix];
+  a = rr / (a2 + eps_div);
   for (iz = 0; iz < BS; ++iz)
     for (iy = 0; iy < BS; ++iy)
       for (ix = 0; ix < BS; ++ix)
@@ -4338,20 +4346,20 @@ static Real getz_inner(Real p[BS + 2][BS + 2][BS + 2 * XPAD], Real Ax[BS3], Real
     for (jx = 0; jx < 16; ++jx)
       s[jx] += r[jy * 16 + jx] * r[jy * 16 + jx];
   }
-  sqrSum = 0;
+  sum2 = 0;
   for (jx = 0; jx < 16; ++jx)
-    sqrSum += s[jx];
-  beta = sqrSum / (rr + kDivEpsilon);
-  sqrNorm = (Real)1 / (BS3 * BS3) * sqrSum;
-  if (sqrNorm < kSqrNormRelCriterion * sqrNorm0 || sqrNorm < kSqrNormAbsCriterion)
+    sum2 += s[jx];
+  beta = sum2 / (rr + eps_div);
+  norm2 = (Real)1 / (BS3 * BS3) * sum2;
+  if (norm2 < tol_rel2 * norm2_0 || norm2 < tol_abs2)
     return -1.0;
   for (iz = 0; iz < BS; ++iz)
     for (iy = 0; iy < BS; ++iy)
       for (ix = 0; ix < BS; ++ix)
         p[iz + 1][iy + 1][ix + XPAD] = r[IDX(ix, iy, iz)] + beta * p[iz + 1][iy + 1][ix + XPAD];
-  return sqrSum;
+  return sum2;
 }
-static void getz(void) {
+static void pois_pre(void) {
 #pragma omp parallel
   {
     Real r[BS3], Ax[BS3], p[BS + 2][BS + 2][BS + 2 * XPAD];
@@ -4361,29 +4369,29 @@ static void getz(void) {
     for (i = 0; i < sta.nblk; ++i) {
       Real *block = fld(i, F_PRES);
       Real invh = 1 / sta.blk[i].h;
-      Real rrPartial[BS] = {0};
+      Real rr_partial[BS] = {0};
       int iz;
       int iy;
       int ix;
       Real rr;
-      Real sqrNorm0;
+      Real norm2_0;
       int k;
       for (iz = 0; iz < BS; ++iz)
         for (iy = 0; iy < BS; ++iy)
           for (ix = 0; ix < BS; ++ix) {
             r[IDX(ix, iy, iz)] = invh * block[IDX(ix, iy, iz)];
-            rrPartial[ix] += r[IDX(ix, iy, iz)] * r[IDX(ix, iy, iz)];
+            rr_partial[ix] += r[IDX(ix, iy, iz)] * r[IDX(ix, iy, iz)];
             p[iz + 1][iy + 1][ix + XPAD] = r[IDX(ix, iy, iz)];
             block[IDX(ix, iy, iz)] = 0;
           }
       rr = 0;
       for (ix = 0; ix < BS; ++ix)
-        rr += rrPartial[ix];
-      sqrNorm0 = (Real)1 / (BS3 * BS3) * rr;
-      if (sqrNorm0 < 1e-32)
+        rr += rr_partial[ix];
+      norm2_0 = (Real)1 / (BS3 * BS3) * rr;
+      if (norm2_0 < 1e-32)
         continue;
       for (k = 0; k < 100; ++k) {
-        rr = getz_inner(p, Ax, r, block, sqrNorm0, rr);
+        rr = pois_pre_cg(p, Ax, r, block, norm2_0, rr);
         if (rr <= 0)
           break;
       }
@@ -4404,65 +4412,66 @@ static void field_get(int f, Real *out) {
     memcpy(out + i * BS3, fld(i, f), BS3 * sizeof(Real));
   }
 }
-static void poisson_precond(Real *in, Real *out) {
+static void pois_pre_vec(Real *in, Real *out) {
   field_set(F_PRES, in);
-  getz();
+  pois_pre();
   field_get(F_PRES, out);
 }
-static void poisson_lhs(Real *in, Real *out) {
+static void pois_op_vec(Real *in, Real *out) {
   field_set(F_PRES, in);
-  compute_lhs();
+  pois_op();
   field_get(F_LHS, out);
 }
-static struct Krylov {
+static struct Pois {
   long long cap;
   Real *phat, *rhat, *shat, *what, *zhat, *qhat, *s, *w, *z, *t, *v, *q, *r, *y, *x, *r0, *b, *x_opt, *hw;
-} kr;
+} pois;
 enum { KR_MAXIT = 1000, KR_RESTART = 50, KR_MAXRESTART = 100 };
-static void krylov_resize(long long N) {
-  Real **all[18] = {&kr.phat, &kr.rhat, &kr.shat, &kr.what, &kr.zhat, &kr.qhat, &kr.s,  &kr.w, &kr.z,
-                    &kr.t,    &kr.v,    &kr.q,    &kr.r,    &kr.y,    &kr.x,    &kr.r0, &kr.b, &kr.x_opt};
+static void pois_alloc(long long N) {
+  Real **all[18] = {&pois.phat, &pois.rhat, &pois.shat, &pois.what, &pois.zhat, &pois.qhat,
+                    &pois.s,    &pois.w,    &pois.z,    &pois.t,    &pois.v,    &pois.q,
+                    &pois.r,    &pois.y,    &pois.x,    &pois.r0,   &pois.b,    &pois.x_opt};
   int k;
-  if (N <= kr.cap)
+  if (N <= pois.cap)
     return;
   for (k = 0; k < 18; k++) {
     free(*all[k]);
     *all[k] = ecalloc(N, sizeof(Real));
   }
-  free(kr.hw);
-  kr.hw = ecalloc(N / BS3, sizeof(Real));
-  kr.cap = N;
+  free(pois.hw);
+  pois.hw = ecalloc(N / BS3, sizeof(Real));
+  pois.cap = N;
 }
-static Real bicgstab_start(long long N, Real *alpha) {
+static Real pois_restart(long long N, Real *alpha) {
   Real eps = 1e-100;
   Real temp0;
   Real temp1;
   long long j;
   Real temporary[2];
-  poisson_precond(kr.r0, kr.rhat);
-  poisson_lhs(kr.rhat, kr.w);
+  pois_pre_vec(pois.r0, pois.rhat);
+  pois_op_vec(pois.rhat, pois.w);
   temp0 = 0.0;
   temp1 = 0.0;
 #pragma omp parallel for reduction(+ : temp0, temp1)
   for (j = 0; j < N; j++) {
-    temp0 += kr.r0[j] * kr.r0[j];
-    temp1 += kr.r0[j] * kr.w[j];
+    temp0 += pois.r0[j] * pois.r0[j];
+    temp1 += pois.r0[j] * pois.w[j];
   }
   temporary[0] = temp0;
   temporary[1] = temp1;
   MPI_Allreduce(MPI_IN_PLACE, temporary, 2, MPI_Real, MPI_SUM, sim.comm);
-  poisson_precond(kr.w, kr.what);
-  poisson_lhs(kr.what, kr.t);
+  pois_pre_vec(pois.w, pois.what);
+  pois_op_vec(pois.what, pois.t);
   *alpha = temporary[0] / (temporary[1] + eps);
   return temporary[0];
 }
-static void poisson_solve(void) {
+static void pois_solve(void) {
   long long N = sta.nblk * BS3;
   Real eps = 1e-100;
-  Real max_error = sim.PoissonErrorTol;
-  Real max_rel_error = sim.PoissonErrorTolRel;
+  Real max_error = sim.ptol;
+  Real max_rel_error = sim.ptol_rel;
   int serious_breakdown = 0;
-  int useXopt = 0;
+  int use_xopt = 0;
   int restarts = 0;
   Real min_norm = 1e50;
   Real norm_1 = 0.0;
@@ -4476,11 +4485,11 @@ static void poisson_solve(void) {
   Real r0r_prev;
   Real init_norm;
   int k;
-  krylov_resize(N);
+  pois_alloc(N);
   vol = 0;
   for (i = 0; i < sta.nblk; i++) {
     Real h3 = sta.blk[i].h * sta.blk[i].h * sta.blk[i].h;
-    kr.hw[i] = 1 / h3;
+    pois.hw[i] = 1 / h3;
     vol += BS3 * h3;
   }
 #pragma omp parallel for
@@ -4489,32 +4498,32 @@ static void poisson_solve(void) {
     Real *zz = fld(i, F_PRES);
     struct Blk *bb = &sta.blk[i];
     int j;
-    if (sim.bMeanConstraint == 1 || sim.bMeanConstraint > 2)
+    if (sim.mean_constraint == 1 || sim.mean_constraint > 2)
       if (bb->ix == 0 && bb->iy == 0 && bb->iz == 0)
         rhs[0] = 0.0;
     for (j = 0; j < BS3; j++) {
-      kr.b[i * BS3 + j] = rhs[j];
-      kr.r[i * BS3 + j] = rhs[j];
-      kr.x[i * BS3 + j] = zz[j];
+      pois.b[i * BS3 + j] = rhs[j];
+      pois.r[i * BS3 + j] = rhs[j];
+      pois.x[i * BS3 + j] = zz[j];
     }
   }
-  poisson_lhs(kr.x, kr.r0);
+  pois_op_vec(pois.x, pois.r0);
 #pragma omp parallel for
   for (i = 0; i < N; i++) {
-    kr.r0[i] = kr.r[i] - kr.r0[i];
-    kr.r[i] = kr.r0[i];
+    pois.r0[i] = pois.r[i] - pois.r0[i];
+    pois.r[i] = pois.r0[i];
   }
   alpha = 0.0;
   norm = 0.0;
   beta = 0.0;
   omega = 0.0;
-  r0r_prev = bicgstab_start(N, &alpha);
+  r0r_prev = pois_restart(N, &alpha);
   {
     long long j;
     Real temporary[2];
 #pragma omp parallel for reduction(+ : norm)
     for (j = 0; j < N; j++) {
-      norm += kr.r0[j] * kr.r0[j] * kr.hw[j / BS3];
+      norm += pois.r0[j] * pois.r0[j] * pois.hw[j / BS3];
     }
     temporary[0] = norm;
     temporary[1] = vol;
@@ -4535,34 +4544,34 @@ static void poisson_solve(void) {
     Real alphat;
 #pragma omp parallel for
     for (j = 0; j < N; j++) {
-      kr.phat[j] = kr.rhat[j] + beta * (kr.phat[j] - omega * kr.shat[j]);
+      pois.phat[j] = pois.rhat[j] + beta * (pois.phat[j] - omega * pois.shat[j]);
     }
     if (k % KR_RESTART != 0) {
       long long j;
 #pragma omp parallel for
       for (j = 0; j < N; j++) {
-        kr.s[j] = kr.w[j] + beta * (kr.s[j] - omega * kr.z[j]);
-        kr.shat[j] = kr.what[j] + beta * (kr.shat[j] - omega * kr.zhat[j]);
-        kr.z[j] = kr.t[j] + beta * (kr.z[j] - omega * kr.v[j]);
+        pois.s[j] = pois.w[j] + beta * (pois.s[j] - omega * pois.z[j]);
+        pois.shat[j] = pois.what[j] + beta * (pois.shat[j] - omega * pois.zhat[j]);
+        pois.z[j] = pois.t[j] + beta * (pois.z[j] - omega * pois.v[j]);
       }
     } else {
-      poisson_lhs(kr.phat, kr.s);
-      poisson_precond(kr.s, kr.shat);
-      poisson_lhs(kr.shat, kr.z);
+      pois_op_vec(pois.phat, pois.s);
+      pois_pre_vec(pois.s, pois.shat);
+      pois_op_vec(pois.shat, pois.z);
     }
 #pragma omp parallel for reduction(+ : qy, yy)
     for (j = 0; j < N; j++) {
-      kr.q[j] = kr.r[j] - alpha * kr.s[j];
-      kr.qhat[j] = kr.rhat[j] - alpha * kr.shat[j];
-      kr.y[j] = kr.w[j] - alpha * kr.z[j];
-      qy += kr.q[j] * kr.y[j];
-      yy += kr.y[j] * kr.y[j];
+      pois.q[j] = pois.r[j] - alpha * pois.s[j];
+      pois.qhat[j] = pois.rhat[j] - alpha * pois.shat[j];
+      pois.y[j] = pois.w[j] - alpha * pois.z[j];
+      qy += pois.q[j] * pois.y[j];
+      yy += pois.y[j] * pois.y[j];
     }
     quantities[0] = qy;
     quantities[1] = yy;
     MPI_Allreduce(MPI_IN_PLACE, quantities, 2, MPI_Real, MPI_SUM, sim.comm);
-    poisson_precond(kr.z, kr.zhat);
-    poisson_lhs(kr.zhat, kr.v);
+    pois_pre_vec(pois.z, pois.zhat);
+    pois_op_vec(pois.zhat, pois.v);
     qy = quantities[0];
     yy = quantities[1];
     omega = qy / (yy + eps);
@@ -4575,35 +4584,35 @@ static void poisson_solve(void) {
     norm_2 = 0.0;
 #pragma omp parallel for
     for (j = 0; j < N; j++) {
-      kr.x[j] = kr.x[j] + alpha * kr.phat[j] + omega * kr.qhat[j];
+      pois.x[j] = pois.x[j] + alpha * pois.phat[j] + omega * pois.qhat[j];
     }
     if (k % KR_RESTART != 0) {
       long long j;
 #pragma omp parallel for
       for (j = 0; j < N; j++) {
-        kr.r[j] = kr.q[j] - omega * kr.y[j];
-        kr.rhat[j] = kr.qhat[j] - omega * (kr.what[j] - alpha * kr.zhat[j]);
-        kr.w[j] = kr.y[j] - omega * (kr.t[j] - alpha * kr.v[j]);
+        pois.r[j] = pois.q[j] - omega * pois.y[j];
+        pois.rhat[j] = pois.qhat[j] - omega * (pois.what[j] - alpha * pois.zhat[j]);
+        pois.w[j] = pois.y[j] - omega * (pois.t[j] - alpha * pois.v[j]);
       }
     } else {
       long long j;
-      poisson_lhs(kr.x, kr.r);
+      pois_op_vec(pois.x, pois.r);
 #pragma omp parallel for
       for (j = 0; j < N; j++) {
-        kr.r[j] = kr.b[j] - kr.r[j];
+        pois.r[j] = pois.b[j] - pois.r[j];
       }
-      poisson_precond(kr.r, kr.rhat);
-      poisson_lhs(kr.rhat, kr.w);
+      pois_pre_vec(pois.r, pois.rhat);
+      pois_op_vec(pois.rhat, pois.w);
     }
 #pragma omp parallel for reduction(+ : r0r, r0w, r0s, r0z, norm_1, norm_2, norm)
     for (j = 0; j < N; j++) {
-      r0r += kr.r0[j] * kr.r[j];
-      r0w += kr.r0[j] * kr.w[j];
-      r0s += kr.r0[j] * kr.s[j];
-      r0z += kr.r0[j] * kr.z[j];
-      norm += kr.r[j] * kr.r[j] * kr.hw[j / BS3];
-      norm_1 += kr.r[j] * kr.r[j];
-      norm_2 += kr.r0[j] * kr.r0[j];
+      r0r += pois.r0[j] * pois.r[j];
+      r0w += pois.r0[j] * pois.w[j];
+      r0s += pois.r0[j] * pois.s[j];
+      r0z += pois.r0[j] * pois.z[j];
+      norm += pois.r[j] * pois.r[j] * pois.hw[j / BS3];
+      norm_1 += pois.r[j] * pois.r[j];
+      norm_2 += pois.r0[j] * pois.r0[j];
     }
     quantities[0] = r0r;
     quantities[1] = r0w;
@@ -4613,8 +4622,8 @@ static void poisson_solve(void) {
     quantities[5] = norm_2;
     quantities[6] = norm;
     MPI_Allreduce(MPI_IN_PLACE, quantities, 7, MPI_Real, MPI_SUM, sim.comm);
-    poisson_precond(kr.w, kr.what);
-    poisson_lhs(kr.what, kr.t);
+    pois_pre_vec(pois.w, pois.what);
+    pois_op_vec(pois.what, pois.t);
     r0r = quantities[0];
     r0w = quantities[1];
     r0s = quantities[2];
@@ -4635,25 +4644,25 @@ static void poisson_solve(void) {
       restarts++;
 #pragma omp parallel for
       for (i = 0; i < N; i++) {
-        kr.r0[i] = kr.r[i];
+        pois.r0[i] = pois.r[i];
       }
-      r0r_prev = bicgstab_start(N, &alpha);
+      r0r_prev = pois_restart(N, &alpha);
       beta = 0.0;
       omega = 0.0;
     }
     if (norm < min_norm) {
       long long i;
-      useXopt = 1;
+      use_xopt = 1;
       min_norm = norm;
 #pragma omp parallel for
       for (i = 0; i < N; i++) {
-        kr.x_opt[i] = kr.x[i];
+        pois.x_opt[i] = pois.x[i];
       }
     }
     if (norm < max_error || norm / (init_norm + eps) < max_rel_error)
       break;
   }
-  field_set(F_PRES, useXopt ? kr.x_opt : kr.x);
+  field_set(F_PRES, use_xopt ? pois.x_opt : pois.x);
 }
 static Real derivative(Real U, Real um3, Real um2, Real um1, Real u, Real up1, Real up2, Real up3) {
   if (U > 0)
@@ -4661,16 +4670,16 @@ static Real derivative(Real U, Real um3, Real um2, Real um1, Real u, Real up1, R
   else
     return (2 * up3 - 15 * up2 + 60 * up1 - 20 * u - 30 * um1 + 3 * um2) / 60.;
 }
-static void kernel_advect_diffuse(struct Lab *l, long long i) {
+static void k_advdiff(struct Lab *l, long long i) {
   Real dt = sta.dt;
   Real mu = sim.nu;
   Real coef = 1.0;
-  Real *uInf = sta.uinf;
+  Real *u_inf = sta.uinf;
   Real h = sta.blk[i].h;
   Real *o = fld(i, F_TMP);
   Real h3 = h * h * h;
-  Real facA = -dt / h * h3 * coef;
-  Real facD = (mu / h) * (dt / h) * h3 * coef;
+  Real fac_a = -dt / h * h3 * coef;
+  Real fac_d = (mu / h) * (dt / h) * h3 * coef;
   int z;
   int y;
   int x;
@@ -4678,7 +4687,7 @@ static void kernel_advect_diffuse(struct Lab *l, long long i) {
   for (z = 0; z < BS; ++z)
     for (y = 0; y < BS; ++y)
       for (x = 0; x < BS; ++x) {
-        Real uAbs[3] = {L(x, y, z, 0) + uInf[0], L(x, y, z, 1) + uInf[1], L(x, y, z, 2) + uInf[2]};
+        Real u_abs[3] = {L(x, y, z, 0) + u_inf[0], L(x, y, z, 1) + u_inf[1], L(x, y, z, 2) + u_inf[2]};
         int c;
         for (c = 0; c < 3; c++) {
           Real dd[3], pair[3];
@@ -4687,22 +4696,22 @@ static void kernel_advect_diffuse(struct Lab *l, long long i) {
           Real adv;
           Real lap;
           for (a = 0; a < 3; a++) {
-            dd[a] = derivative(uAbs[a], LS(a, -3, c), LS(a, -2, c), LS(a, -1, c), LS(a, 0, c), LS(a, 1, c),
+            dd[a] = derivative(u_abs[a], LS(a, -3, c), LS(a, -2, c), LS(a, -1, c), LS(a, 0, c), LS(a, 1, c),
                                LS(a, 2, c), LS(a, 3, c));
             pair[a] = LS(a, 1, c) + LS(a, -1, c);
           }
           a1 = (c + 1) % 3;
           a2 = (c + 2) % 3;
-          adv = uAbs[c] * dd[c] + (uAbs[a1] * dd[a1] + uAbs[a2] * dd[a2]);
+          adv = u_abs[c] * dd[c] + (u_abs[a1] * dd[a1] + u_abs[a2] * dd[a2]);
           lap = (pair[c] + (pair[a1] + pair[a2])) - 6 * L(x, y, z, c);
-          o[c * BS3 + IDX(x, y, z)] += facA * adv + facD * lap;
+          o[c * BS3 + IDX(x, y, z)] += fac_a * adv + fac_d * lap;
         }
       }
   for (c = 0; c < 3; c++)
-    face_grad(l, i, c, facD);
+    face_grad(l, i, c, fac_d);
 }
-static struct Stencil st_advect = {F_VEL, 3, 3, 0, 0, F_TMP, 3, kernel_advect_diffuse};
-static void advection_diffusion(void) {
+static struct Stencil st_advdiff = {F_VEL, 3, 3, 0, 0, F_TMP, 3, k_advdiff};
+static void advdiff(void) {
   Real alpha[3] = {1.0 / 3.0, 15.0 / 16.0, 8.0 / 15.0};
   Real beta[3] = {-5.0 / 9.0, -153.0 / 128.0, 0.0};
   long long i;
@@ -4713,26 +4722,26 @@ static void advection_diffusion(void) {
   }
   for (RKstep = 0; RKstep < 3; RKstep++) {
     long long i;
-    stencil_apply(&st_advect);
+    stencil_apply(&st_advdiff);
 #pragma omp parallel for
     for (i = 0; i < sta.nblk; i++) {
       Real h = sta.blk[i].h;
       Real ih3 = alpha[RKstep] / (h * h * h);
-      Real *tmpV = fld(i, F_TMP);
+      Real *tmpv = fld(i, F_TMP);
       Real *V = fld(i, F_VEL);
       int j;
       for (j = 0; j < BS3; j++) {
-        V[0 * BS3 + j] += tmpV[0 * BS3 + j] * ih3;
-        V[1 * BS3 + j] += tmpV[1 * BS3 + j] * ih3;
-        V[2 * BS3 + j] += tmpV[2 * BS3 + j] * ih3;
-        tmpV[0 * BS3 + j] *= beta[RKstep];
-        tmpV[1 * BS3 + j] *= beta[RKstep];
-        tmpV[2 * BS3 + j] *= beta[RKstep];
+        V[0 * BS3 + j] += tmpv[0 * BS3 + j] * ih3;
+        V[1 * BS3 + j] += tmpv[1 * BS3 + j] * ih3;
+        V[2 * BS3 + j] += tmpv[2 * BS3 + j] * ih3;
+        tmpv[0 * BS3 + j] *= beta[RKstep];
+        tmpv[1 * BS3 + j] *= beta[RKstep];
+        tmpv[2 * BS3 + j] *= beta[RKstep];
       }
     }
   }
 }
-static void fluid_momenta_visit(long long i, struct Fish *f) {
+static void fish_mom_blk(long long i, struct Fish *f) {
   struct ObstacleBlock *o = oblock(f, i);
   struct Blk *b;
   Real lambda, dt;
@@ -4749,7 +4758,7 @@ static void fluid_momenta_visit(long long i, struct Fish *f) {
   b = &sta.blk[i];
   lambda = sta.lambda;
   dt = sta.dt;
-  CM = f->centerOfMass;
+  CM = f->com;
   V = fld(i, F_VEL);
   M = o->mom;
   for (q = 0; q < M_N; q++)
@@ -4764,7 +4773,7 @@ static void fluid_momenta_visit(long long i, struct Fish *f) {
         Real DiffU[3], pxu[3], pxdu[3];
         int d;
         Real X1;
-        Real penalFac;
+        Real pen_fac;
         if (o->chi[iz][iy][ix] <= 0)
           continue;
         blk_pos(b, ix, iy, iz, p);
@@ -4780,17 +4789,17 @@ static void fluid_momenta_visit(long long i, struct Fish *f) {
         cross3(pxu, p, u);
         cross3(pxdu, p, DiffU);
         X1 = o->chi[iz][iy][ix] > 0.5 ? 1.0 : 0.0;
-        penalFac = dv * lambdt * X1 / (1 + X1 * lambdt);
+        pen_fac = dv * lambdt * X1 / (1 + X1 * lambdt);
         M[M_V] += X * dv;
-        M[M_GfX] += penalFac;
+        M[M_GfX] += pen_fac;
         inertia_add(&M[M_J0], X * dv, p);
-        inertia_add(&M[M_Gj0], penalFac, p);
+        inertia_add(&M[M_Gj0], pen_fac, p);
         for (d = 0; d < 3; d++) {
           M[M_FX + d] += X * dv * u[d];
           M[M_TX + d] += X * dv * pxu[d];
-          M[M_GpX + d] += penalFac * p[d];
-          M[M_GuX + d] += penalFac * DiffU[d];
-          M[M_GaX + d] += penalFac * pxdu[d];
+          M[M_GpX + d] += pen_fac * p[d];
+          M[M_GuX + d] += pen_fac * DiffU[d];
+          M[M_GaX + d] += pen_fac * pxdu[d];
         }
       }
 }
@@ -4830,10 +4839,10 @@ static int solve6(double *A, double *b, double *x) {
   }
   return 0;
 }
-static void solve_velocities(struct Fish *f) {
+static void fish_solve6(struct Fish *f) {
   double A[36] = {0};
-  Real *penalCM = f->penalCM, *penalJ = f->penalJ;
-  Real penalM = f->penalM;
+  Real *pen_cm = f->pen_cm, *pen_j = f->pen_j;
+  Real pen_m = f->pen_m;
   int d;
   static int jidx[3][3] = {{0, 3, 4}, {3, 1, 5}, {4, 5, 2}};
   int a;
@@ -4841,71 +4850,71 @@ static void solve_velocities(struct Fish *f) {
   double b3[6];
   double x[6];
   for (d = 0; d < 3; d++)
-    A[d * 6 + d] = penalM;
-  A[0 * 6 + 4] = +penalCM[2];
-  A[0 * 6 + 5] = -penalCM[1];
-  A[1 * 6 + 3] = -penalCM[2];
-  A[1 * 6 + 5] = +penalCM[0];
-  A[2 * 6 + 3] = +penalCM[1];
-  A[2 * 6 + 4] = -penalCM[0];
-  A[3 * 6 + 1] = -penalCM[2];
-  A[3 * 6 + 2] = +penalCM[1];
-  A[4 * 6 + 0] = +penalCM[2];
-  A[4 * 6 + 2] = -penalCM[0];
-  A[5 * 6 + 0] = -penalCM[1];
-  A[5 * 6 + 1] = +penalCM[0];
+    A[d * 6 + d] = pen_m;
+  A[0 * 6 + 4] = +pen_cm[2];
+  A[0 * 6 + 5] = -pen_cm[1];
+  A[1 * 6 + 3] = -pen_cm[2];
+  A[1 * 6 + 5] = +pen_cm[0];
+  A[2 * 6 + 3] = +pen_cm[1];
+  A[2 * 6 + 4] = -pen_cm[0];
+  A[3 * 6 + 1] = -pen_cm[2];
+  A[3 * 6 + 2] = +pen_cm[1];
+  A[4 * 6 + 0] = +pen_cm[2];
+  A[4 * 6 + 2] = -pen_cm[0];
+  A[5 * 6 + 0] = -pen_cm[1];
+  A[5 * 6 + 1] = +pen_cm[0];
   for (a = 0; a < 3; a++)
     for (b = 0; b < 3; b++)
-      A[(3 + a) * 6 + 3 + b] = penalJ[jidx[a][b]];
-  b3[0] = f->penalLmom[0];
-  b3[1] = f->penalLmom[1];
-  b3[2] = f->penalLmom[2];
-  b3[3] = f->penalAmom[0];
-  b3[4] = f->penalAmom[1];
-  b3[5] = f->penalAmom[2];
+      A[(3 + a) * 6 + 3 + b] = pen_j[jidx[a][b]];
+  b3[0] = f->pen_lmom[0];
+  b3[1] = f->pen_lmom[1];
+  b3[2] = f->pen_lmom[2];
+  b3[3] = f->pen_amom[0];
+  b3[4] = f->pen_amom[1];
+  b3[5] = f->pen_amom[2];
   for (d = 0; d < 3; d++)
-    if (f->bForcedInSimFrame[d]) {
+    if (f->forced[d]) {
       int j;
       for (j = 0; j < 6; j++)
         if (j != d)
           A[d * 6 + j] = 0;
-      b3[d] = penalM * f->transVel_imposed[d];
+      b3[d] = pen_m * f->vel_imposed[d];
     }
   for (d = 0; d < 3; d++)
-    if (f->bBlockRotation[d]) {
+    if (f->block_rot[d]) {
       int j;
       for (j = 0; j < 6; j++)
         if (j != 3 + d)
           A[(3 + d) * 6 + j] = 0;
       b3[3 + d] = 0;
     }
-  x[0] = f->transVel[0];
-  x[1] = f->transVel[1];
-  x[2] = f->transVel[2];
-  x[3] = f->angVel[0];
-  x[4] = f->angVel[1];
-  x[5] = f->angVel[2];
-  if (penalM > 0)
+  x[0] = f->vel[0];
+  x[1] = f->vel[1];
+  x[2] = f->vel[2];
+  x[3] = f->omega[0];
+  x[4] = f->omega[1];
+  x[5] = f->omega[2];
+  if (pen_m > 0)
     solve6(A, b3, x);
   for (d = 0; d < 3; d++)
-    f->transVel[d] = f->bForcedInSimFrame[d] ? f->transVel_imposed[d] : x[d];
+    f->vel[d] = f->forced[d] ? f->vel_imposed[d] : x[d];
   for (d = 0; d < 3; d++)
-    f->angVel[d] = f->bBlockRotation[d] ? 0 : x[3 + d];
-  if (f->collision_counter > 0) {
+    f->omega[d] = f->block_rot[d] ? 0 : x[3 + d];
+  if (f->hit_time > 0) {
     int d;
-    f->collision_counter -= sta.dt;
+    f->hit_time -= sta.dt;
     for (d = 0; d < 3; d++) {
-      f->transVel[d] = f->u_collision[d];
-      f->angVel[d] = f->o_collision[d];
+      f->vel[d] = f->hit_vel[d];
+      f->omega[d] = f->hit_omega[d];
     }
   }
 }
-static void compute_velocities(struct Fish *f) {
-  solve_velocities(f);
-  if (f->bCorrectRoll) {
-    struct Midline *cFish = &f->m;
+static void fish_solve(struct Fish *f) {
+  fish_solve6(f);
+  if (f->correct_roll) {
+    struct Midline *mid = &f->m;
     Real *q = f->quaternion;
-    Real *o = f->angVel;
+    Real *o = f->omega;
     Real dq[4];
     Real nom;
     Real dnom;
@@ -4915,7 +4924,7 @@ static void compute_velocities(struct Fish *f) {
     Real darg;
     Real a;
     Real da;
-    int Nm;
+    int nm;
     Real dv[3];
     int d;
     Real dn;
@@ -4935,9 +4944,9 @@ static void compute_velocities(struct Fish *f) {
     darg = (dnom * denom - nom * ddenom) / denom / denom;
     a = atan2(2.0 * (q[3] * q[2] + q[0] * q[1]), 1.0 - 2.0 * (q[1] * q[1] + q[2] * q[2]));
     da = 1.0 / (1.0 + arg * arg) * darg;
-    Nm = cFish->Nm;
+    nm = mid->nm;
     for (d = 0; d < 3; d++)
-      dv[d] = cFish->r[0][d] - cFish->r[Nm - 1][d];
+      dv[d] = mid->r[0][d] - mid->r[nm - 1][d];
     dn = pow(dot3(dv, dv), 0.5) + 1e-21;
     f->r_axis = erealloc(f->r_axis, (f->nr_axis + 1) * sizeof *f->r_axis);
     for (d = 0; d < 3; d++)
@@ -4973,12 +4982,12 @@ static void compute_velocities(struct Fish *f) {
     omega_roll = dot3(o, roll_axis);
     for (d = 0; d < 3; d++)
       o[d] += -omega_roll * roll_axis[d];
-    clip_quantities(0.025, 1e4, sta.dt, 0, a + 0.05 * da, 0.0, &correction_magnitude, &dummy);
+    clip(0.025, 1e4, sta.dt, 0, a + 0.05 * da, 0.0, &correction_magnitude, &dummy);
     for (d = 0; d < 3; d++)
       o[d] += -correction_magnitude * roll_axis[d];
   }
 }
-static void update_obstacles(void) {
+static void fish_vel(void) {
   long long i;
   int k;
   if (sim.nfish == 0)
@@ -4987,7 +4996,7 @@ static void update_obstacles(void) {
   for (i = 0; i < sta.nblk; ++i) {
     int k;
     for (k = 0; k < sim.nfish; k++)
-      fluid_momenta_visit(i, &sta.fish[k]);
+      fish_mom_blk(i, &sta.fish[k]);
   }
   for (k = 0; k < sim.nfish; k++) {
     struct Fish *f = &sta.fish[k];
@@ -5003,22 +5012,22 @@ static void update_obstacles(void) {
         M[q] += o->mom[q];
     }
     MPI_Allreduce(MPI_IN_PLACE, M, M_N, MPI_Real, MPI_SUM, sim.comm);
-    f->penalM = M[M_GfX];
-    f->penalCM[0] = M[M_GpX];
-    f->penalCM[1] = M[M_GpY];
-    f->penalCM[2] = M[M_GpZ];
+    f->pen_m = M[M_GfX];
+    f->pen_cm[0] = M[M_GpX];
+    f->pen_cm[1] = M[M_GpY];
+    f->pen_cm[2] = M[M_GpZ];
     for (q = 0; q < 6; q++)
-      f->penalJ[q] = M[M_Gj0 + q];
-    f->penalLmom[0] = M[M_GuX];
-    f->penalLmom[1] = M[M_GuY];
-    f->penalLmom[2] = M[M_GuZ];
-    f->penalAmom[0] = M[M_GaX];
-    f->penalAmom[1] = M[M_GaY];
-    f->penalAmom[2] = M[M_GaZ];
-    compute_velocities(f);
+      f->pen_j[q] = M[M_Gj0 + q];
+    f->pen_lmom[0] = M[M_GuX];
+    f->pen_lmom[1] = M[M_GuY];
+    f->pen_lmom[2] = M[M_GuZ];
+    f->pen_amom[0] = M[M_GaX];
+    f->pen_amom[1] = M[M_GaY];
+    f->pen_amom[2] = M[M_GaZ];
+    fish_solve(f);
   }
 }
-static void compute_j(Real *Rc, Real *R, Real *N, Real *I, Real *J) {
+static void hit_lever(Real *Rc, Real *R, Real *N, Real *I, Real *J) {
   Real m00 = I[0];
   Real m01 = I[3];
   Real m02 = I[4];
@@ -5048,9 +5057,9 @@ static void compute_j(Real *Rc, Real *R, Real *N, Real *I, Real *J) {
   J[1] = a01 * aux_0 + a11 * aux_1 + a12 * aux_2;
   J[2] = a02 * aux_0 + a12 * aux_1 + a22 * aux_2;
 }
-static void elastic_collision(Real m1, Real m2, Real *I1, Real *I2, Real *v1, Real *v2, Real *o1, Real *o2,
-                              Real *C1, Real *C2, Real N[3], Real C[3], Real *vc1, Real *vc2, Real *hv1,
-                              Real *hv2, Real *ho1, Real *ho2) {
+static void hit_impulse(Real m1, Real m2, Real *I1, Real *I2, Real *v1, Real *v2, Real *o1, Real *o2,
+                        Real *C1, Real *C2, Real N[3], Real C[3], Real *vc1, Real *vc2, Real *hv1, Real *hv2,
+                        Real *ho1, Real *ho2) {
   Real e = 1.0;
   Real J1[3];
   Real J2[3];
@@ -5058,8 +5067,8 @@ static void elastic_collision(Real m1, Real m2, Real *I1, Real *I2, Real *v1, Re
   Real denom;
   Real impulse;
   int d;
-  compute_j(C, C1, N, I1, J1);
-  compute_j(C, C2, N, I2, J2);
+  hit_lever(C, C1, N, I1, J1);
+  hit_lever(C, C2, N, I2, J2);
   nom = (e + 1) * ((vc1[0] - vc2[0]) * N[0] + (vc1[1] - vc2[1]) * N[1] + (vc1[2] - vc2[2]) * N[2]);
   denom = -(1.0 / m1 + 1.0 / m2) +
           -((J1[1] * (C[2] - C1[2]) - J1[2] * (C[1] - C1[1])) * N[0] +
@@ -5083,9 +5092,9 @@ struct CollisionInfo {
   struct CollisionSide s[2];
 };
 typedef char collision_info_is_20_reals[sizeof(struct CollisionInfo) == 20 * sizeof(Real) ? 1 : -1];
-static void collide_cell(struct CollisionSide *cs, Real *magmax, struct Fish *f, struct ObstacleBlock *o,
-                         int x, int y, int z, Real p[3]) {
-  Real *U = f->transVel, *om = f->angVel, *C = f->centerOfMass, *ud = o->udef[z][y][x];
+static void hit_cell(struct CollisionSide *cs, Real *magmax, struct Fish *f, struct ObstacleBlock *o, int x,
+                     int y, int z, Real p[3]) {
+  Real *U = f->vel, *om = f->omega, *C = f->com, *ud = o->udef[z][y][x];
   Real Mom[3], vec[3];
   int d;
   Real mag;
@@ -5093,8 +5102,8 @@ static void collide_cell(struct CollisionSide *cs, Real *magmax, struct Fish *f,
   for (d = 0; d < 3; d++) {
     int e = (d + 1) % 3, f = (d + 2) % 3;
     Mom[d] = U[d] + om[e] * (p[f] - C[f]) - om[f] * (p[e] - C[e]) + ud[d];
-    vec[d] = o->sdfLab[z + 1 + (d == 2)][y + 1 + (d == 1)][x + 1 + (d == 0)] -
-             o->sdfLab[z + 1 - (d == 2)][y + 1 - (d == 1)][x + 1 - (d == 0)];
+    vec[d] = o->sdf[z + 1 + (d == 2)][y + 1 + (d == 1)][x + 1 + (d == 0)] -
+             o->sdf[z + 1 - (d == 2)][y + 1 - (d == 1)][x + 1 - (d == 0)];
   }
   mag = dot3(Mom, Mom);
   norm = 1.0 / (sqrt(dot3(vec, vec)) + 1e-21);
@@ -5110,7 +5119,7 @@ static void collide_cell(struct CollisionSide *cs, Real *magmax, struct Fish *f,
       cs->Mom[d] = Mom[d];
   }
 }
-static void pair_blocks(int N, long long **start_out, long long **blk_out) {
+static void fish_pairs(int N, long long **start_out, long long **blk_out) {
   long long nb = sta.nblk, k, q, npair = (long long)N * N;
   int *nfish = ecalloc(nb + 1, sizeof *nfish);
   int *fish;
@@ -5153,7 +5162,7 @@ static void pair_blocks(int N, long long **start_out, long long **blk_out) {
   *start_out = start;
   *blk_out = blk;
 }
-static void prevent_colliding_obstacles(void) {
+static void fish_hit(void) {
   int N = sim.nfish;
   struct CollisionInfo *collisions;
   int i;
@@ -5164,7 +5173,7 @@ static void prevent_colliding_obstacles(void) {
   if (N < 2)
     return;
   collisions = ecalloc(N, sizeof *collisions);
-  pair_blocks(N, &pair_start, &pair_blk);
+  fish_pairs(N, &pair_start, &pair_blk);
   for (i = 0; i < N; ++i) {
     struct CollisionInfo *coll = &collisions[i];
     struct Fish *fi = &sta.fish[i];
@@ -5194,8 +5203,8 @@ static void prevent_colliding_obstacles(void) {
               if (ib->chi[z][y][x] <= 0.0 || jb->chi[z][y][x] <= 0.0)
                 continue;
               blk_pos(&sta.blk[k], x, y, z, pos);
-              collide_cell(&coll->s[0], &imagmax, fi, ib, x, y, z, pos);
-              collide_cell(&coll->s[1], &jmagmax, fj, jb, x, y, z, pos);
+              hit_cell(&coll->s[0], &imagmax, fi, ib, x, y, z, pos);
+              hit_cell(&coll->s[1], &jmagmax, fj, jb, x, y, z, pos);
             }
       }
     }
@@ -5227,7 +5236,7 @@ static void prevent_colliding_obstacles(void) {
       Real m[3], Nn[3], C[3];
       int d;
       Real inorm;
-      Real projVel;
+      Real proj_vel;
       int iforced;
       int jforced;
       Real m1;
@@ -5248,40 +5257,40 @@ static void prevent_colliding_obstacles(void) {
       inorm = 1.0 / sqrt(m[0] * m[0] + m[1] * m[1] + m[2] * m[2]);
       for (d = 0; d < 3; d++)
         Nn[d] = m[d] * inorm;
-      projVel =
+      proj_vel =
           (b->Mom[0] - a->Mom[0]) * Nn[0] + (b->Mom[1] - a->Mom[1]) * Nn[1] + (b->Mom[2] - a->Mom[2]) * Nn[2];
-      if (projVel <= 0)
+      if (proj_vel <= 0)
         continue;
       for (d = 0; d < 3; d++)
         C[d] = 0.5 * (a->Pos[d] * (1.0 / a->M) + b->Pos[d] * (1.0 / b->M));
-      iforced = fi->bForcedInSimFrame[0] || fi->bForcedInSimFrame[1] || fi->bForcedInSimFrame[2];
-      jforced = fj->bForcedInSimFrame[0] || fj->bForcedInSimFrame[1] || fj->bForcedInSimFrame[2];
+      iforced = fi->forced[0] || fi->forced[1] || fi->forced[2];
+      jforced = fj->forced[0] || fj->forced[1] || fj->forced[2];
       m1 = iforced ? 1e10 * fi->mass : fi->mass;
       m2 = jforced ? 1e10 * fj->mass : fj->mass;
-      elastic_collision(m1, m2, fi->J, fj->J, fi->transVel, fj->transVel, fi->angVel, fj->angVel,
-                        fi->centerOfMass, fj->centerOfMass, Nn, C, a->Mom, b->Mom, hv1, hv2, ho1, ho2);
+      hit_impulse(m1, m2, fi->J, fj->J, fi->vel, fj->vel, fi->omega, fj->omega, fi->com, fj->com, Nn, C,
+                  a->Mom, b->Mom, hv1, hv2, ho1, ho2);
       for (d = 0; d < 3; d++) {
-        fi->transVel[d] = fi->u_collision[d] = hv1[d];
-        fj->transVel[d] = fj->u_collision[d] = hv2[d];
-        fi->angVel[d] = fi->o_collision[d] = ho1[d];
-        fj->angVel[d] = fj->o_collision[d] = ho2[d];
+        fi->vel[d] = fi->hit_vel[d] = hv1[d];
+        fj->vel[d] = fj->hit_vel[d] = hv2[d];
+        fi->omega[d] = fi->hit_omega[d] = ho1[d];
+        fj->omega[d] = fj->hit_omega[d] = ho2[d];
       }
-      fi->collision_counter = 0.01 * sta.dt;
-      fj->collision_counter = 0.01 * sta.dt;
+      fi->hit_time = 0.01 * sta.dt;
+      fj->hit_time = 0.01 * sta.dt;
     }
   free(mx);
   free(collisions);
 }
-static void penalization_visit(long long i, struct Fish *f) {
+static void fish_pen_blk(long long i, struct Fish *f) {
   struct ObstacleBlock *o = oblock(f, i);
   struct Blk *blk;
   Real dt, lambda;
   Real *b;
-  Real *bChi;
+  Real *b_chi;
   Real *CM;
   Real *vel;
   Real *omega;
-  Real lambdaFac;
+  Real lambda_fac;
   int iz;
   int iy;
   int ix;
@@ -5291,11 +5300,11 @@ static void penalization_visit(long long i, struct Fish *f) {
   dt = sta.dt;
   lambda = sta.lambda;
   b = fld(i, F_VEL);
-  bChi = fld(i, F_CHI);
-  CM = f->centerOfMass;
-  vel = f->transVel;
-  omega = f->angVel;
-  lambdaFac = lambda;
+  b_chi = fld(i, F_CHI);
+  CM = f->com;
+  vel = f->vel;
+  omega = f->omega;
+  lambda_fac = lambda;
   for (iz = 0; iz < BS; ++iz)
     for (iy = 0; iy < BS; ++iy)
       for (ix = 0; ix < BS; ++ix) {
@@ -5303,8 +5312,8 @@ static void penalization_visit(long long i, struct Fish *f) {
         int d;
         Real *U;
         Real X;
-        Real penalFac;
-        if (bChi[IDX(ix, iy, iz)] > o->chi[iz][iy][ix])
+        Real pen_fac;
+        if (b_chi[IDX(ix, iy, iz)] > o->chi[iz][iy][ix])
           continue;
         if (o->chi[iz][iy][ix] <= 0)
           continue;
@@ -5313,28 +5322,28 @@ static void penalization_visit(long long i, struct Fish *f) {
           p[d] -= CM[d];
         U = o->udef[iz][iy][ix];
         X = o->chi[iz][iy][ix] > 0.5 ? 1.0 : 0.0;
-        penalFac = X * lambdaFac / (1 + X * lambdaFac * dt);
+        pen_fac = X * lambda_fac / (1 + X * lambda_fac * dt);
         for (d = 0; d < 3; d++) {
           int e = (d + 1) % 3, f = (d + 2) % 3;
           Real U_TOT = vel[d] + omega[e] * p[f] - omega[f] * p[e] + U[d];
           Real *u = &b[d * BS3 + IDX(ix, iy, iz)];
-          *u = *u + dt * (penalFac * (U_TOT - *u));
+          *u = *u + dt * (pen_fac * (U_TOT - *u));
         }
       }
 }
-static void penalization(void) {
+static void fish_pen(void) {
   long long i;
   if (sim.nfish == 0)
     return;
-  prevent_colliding_obstacles();
+  fish_hit();
 #pragma omp parallel for schedule(dynamic, 1)
   for (i = 0; i < sta.nblk; ++i) {
     int k;
     for (k = 0; k < sim.nfish; k++)
-      penalization_visit(i, &sta.fish[k]);
+      fish_pen_blk(i, &sta.fish[k]);
   }
 }
-static void kernel_pressure_rhs(struct Lab *l, long long i) {
+static void k_prhs(struct Lab *l, long long i) {
   Real dt = sta.dt;
   Real h = sta.blk[i].h, fac = 0.5 * h * h / dt;
   Real *c = fld(i, F_CHI);
@@ -5346,12 +5355,12 @@ static void kernel_pressure_rhs(struct Lab *l, long long i) {
   for (z = 0; z < BS; ++z)
     for (y = 0; y < BS; ++y)
       for (x = 0; x < BS; ++x) {
-        Real divUs;
+        Real div_us;
         p[IDX(x, y, z)] = fac * (L(x + 1, y, z, 0) - L(x - 1, y, z, 0) + L(x, y + 1, z, 1) -
                                  L(x, y - 1, z, 1) + L(x, y, z + 1, 2) - L(x, y, z - 1, 2));
-        divUs = L(x + 1, y, z, 3) - L(x - 1, y, z, 3) + L(x, y + 1, z, 4) - L(x, y - 1, z, 4) +
-                L(x, y, z + 1, 5) - L(x, y, z - 1, 5);
-        p[IDX(x, y, z)] += -c[IDX(x, y, z)] * fac * divUs;
+        div_us = L(x + 1, y, z, 3) - L(x - 1, y, z, 3) + L(x, y + 1, z, 4) - L(x, y - 1, z, 4) +
+                 L(x, y, z + 1, 5) - L(x, y, z - 1, 5);
+        p[IDX(x, y, z)] += -c[IDX(x, y, z)] * fac * div_us;
       }
   for (f = 0; f < 6; f++) {
     Real *F = fc_face(i, f, 0);
@@ -5370,8 +5379,8 @@ static void kernel_pressure_rhs(struct Lab *l, long long i) {
     }
   }
 }
-static struct Stencil st_prhs = {F_VEL, 6, 1, 0, 0, F_LHS, 1, kernel_pressure_rhs};
-static void kernel_div_pressure(struct Lab *l, long long i) {
+static struct Stencil st_prhs = {F_VEL, 6, 1, 0, 0, F_LHS, 1, k_prhs};
+static void k_divp(struct Lab *l, long long i) {
   Real *b = fld(i, F_TMP);
   Real fac = sta.blk[i].h;
   int z;
@@ -5385,8 +5394,8 @@ static void kernel_div_pressure(struct Lab *l, long long i) {
                    L(x, y, z + 1, 0) + L(x, y, z - 1, 0) - 6.0 * L(x, y, z, 0));
   face_grad(l, i, 0, fac);
 }
-static struct Stencil st_divp = {F_PRES, 1, 1, 0, -1, F_TMP, 3, kernel_div_pressure};
-static void kernel_gradp(struct Lab *l, long long i) {
+static struct Stencil st_divp = {F_PRES, 1, 1, 0, -1, F_TMP, 3, k_divp};
+static void k_gradp(struct Lab *l, long long i) {
   Real dt = sta.dt;
   Real h = sta.blk[i].h;
   Real *o = fld(i, F_TMP);
@@ -5406,8 +5415,8 @@ static void kernel_gradp(struct Lab *l, long long i) {
   for (f = 0; f < 6; f++)
     face_sum(l, i, f, 0, f / 2, fac);
 }
-static struct Stencil st_gradp = {F_PRES, 1, 1, 0, -1, F_TMP, 3, kernel_gradp};
-static void kernel_vorticity(struct Lab *l, long long i) {
+static struct Stencil st_gradp = {F_PRES, 1, 1, 0, -1, F_TMP, 3, k_gradp};
+static void k_vort(struct Lab *l, long long i) {
   Real h = sta.blk[i].h;
   Real inv2h = .5 * h * h;
   Real *o = fld(i, F_TMP);
@@ -5432,8 +5441,8 @@ static void kernel_vorticity(struct Lab *l, long long i) {
         face_sum(l, i, f, 3 - a - d, a, d == (a + 1) % 3 ? inv2h : -inv2h);
   }
 }
-static struct Stencil st_vort = {F_VEL, 3, 1, 0, 0, F_TMP, 3, kernel_vorticity};
-static void compute_vorticity(void) {
+static struct Stencil st_vort = {F_VEL, 3, 1, 0, 0, F_TMP, 3, k_vort};
+static void vorticity(void) {
   long long i;
   stencil_apply(&st_vort);
 #pragma omp parallel for
@@ -5446,7 +5455,7 @@ static void compute_vorticity(void) {
       b[j] *= fac;
   }
 }
-static void update_tmpv(void) {
+static void fish_tmpv(void) {
   int k;
   for (k = 0; k < sim.nfish; k++) {
     struct Fish *f = &sta.fish[k];
@@ -5475,8 +5484,8 @@ static void update_tmpv(void) {
     }
   }
 }
-static void pressure_projection(void) {
-  static Real *pOld;
+static void projection(void) {
+  static Real *p_old;
   static long long cap;
   long long N = sta.nblk * BS3;
   long long i;
@@ -5484,17 +5493,17 @@ static void pressure_projection(void) {
   Real avg1;
   Real quantities[2];
   if (N > cap) {
-    free(pOld);
-    pOld = emalloc(N * sizeof(Real));
+    free(p_old);
+    p_old = emalloc(N * sizeof(Real));
     cap = N;
   }
 #pragma omp parallel for
   for (i = 0; i < sta.nblk; i++) {
-    memcpy(pOld + i * BS3, fld(i, F_PRES), BS3 * sizeof(Real));
+    memcpy(p_old + i * BS3, fld(i, F_PRES), BS3 * sizeof(Real));
     memset(fld(i, F_TMP), 0, 3 * BS3 * sizeof(Real));
   }
   if (sim.nfish > 0)
-    update_tmpv();
+    fish_tmpv();
   stencil_apply(&st_prhs);
   if (sta.step > STEP_2ND) {
     long long i;
@@ -5517,7 +5526,7 @@ static void pressure_projection(void) {
       memset(fld(i, F_PRES), 0, BS3 * sizeof(Real));
     }
   }
-  poisson_solve();
+  pois_solve();
   avg = 0;
   avg1 = 0;
 #pragma omp parallel for reduction(+ : avg, avg1)
@@ -5550,7 +5559,7 @@ static void pressure_projection(void) {
       Real *p = fld(i, F_PRES);
       int j;
       for (j = 0; j < BS3; j++)
-        p[j] += pOld[i * BS3 + j];
+        p[j] += p_old[i * BS3 + j];
     }
   }
   stencil_apply(&st_gradp);
@@ -5558,17 +5567,17 @@ static void pressure_projection(void) {
   for (i = 0; i < sta.nblk; i++) {
     Real h = sta.blk[i].h;
     Real fac = 1.0 / (h * h * h);
-    Real *gradP = fld(i, F_TMP);
+    Real *grad_p = fld(i, F_TMP);
     Real *v = fld(i, F_VEL);
     int j;
     for (j = 0; j < 3 * BS3; j++)
-      v[j] += fac * gradP[j];
+      v[j] += fac * grad_p[j];
   }
 }
-static Real find_max_u(void) {
-  Real maxU = 0;
+static Real sta_umax(void) {
+  Real umax = 0;
   long long i;
-#pragma omp parallel for reduction(max : maxU)
+#pragma omp parallel for reduction(max : umax)
   for (i = 0; i < sta.nblk; i++) {
     Real *b = fld(i, F_VEL);
     int j;
@@ -5576,47 +5585,47 @@ static Real find_max_u(void) {
       Real advu = fabs(b[0 * BS3 + j] + sta.uinf[0]);
       Real advv = fabs(b[1 * BS3 + j] + sta.uinf[1]);
       Real advw = fabs(b[2 * BS3 + j] + sta.uinf[2]);
-      Real maxUl = advu;
-      if (maxUl < advv)
-        maxUl = advv;
-      if (maxUl < advw)
-        maxUl = advw;
-      if (maxU < maxUl)
-        maxU = maxUl;
+      Real ul = advu;
+      if (ul < advv)
+        ul = advv;
+      if (ul < advw)
+        ul = advw;
+      if (umax < ul)
+        umax = ul;
     }
   }
-  MPI_Allreduce(MPI_IN_PLACE, &maxU, 1, MPI_Real, MPI_MAX, sim.comm);
-  return maxU;
+  MPI_Allreduce(MPI_IN_PLACE, &umax, 1, MPI_Real, MPI_MAX, sim.comm);
+  return umax;
 }
-static Real calc_max_timestep(void) {
+static Real sta_dt(void) {
   Real dt_old = sta.dt;
-  Real hMin;
-  Real CFL;
+  Real hmin;
+  Real cfl;
   sta.dt_old = sta.dt;
-  hMin = sim.hmin;
-  CFL = sim.CFL;
-  sta.uMax_measured = find_max_u();
-  if (sta.uMax_measured > sim.uMax_allowed)
-    fatal("maxU = %g exceeded umax = %g", sta.uMax_measured, sim.uMax_allowed);
-  if (CFL > 0) {
-    Real dtDiffusion = (1.0 / 6.0) * hMin * hMin / (sim.nu + (1.0 / 6.0) * hMin * sta.uMax_measured);
-    Real dtAdvection = hMin / (sta.uMax_measured + 1e-8);
+  hmin = sim.hmin;
+  cfl = sim.cfl;
+  sta.umax = sta_umax();
+  if (sta.umax > sim.umax)
+    fatal("maxU = %g exceeded umax = %g", sta.umax, sim.umax);
+  if (cfl > 0) {
+    Real dt_diffusion = (1.0 / 6.0) * hmin * hmin / (sim.nu + (1.0 / 6.0) * hmin * sta.umax);
+    Real dt_advection = hmin / (sta.umax + 1e-8);
     if (sta.step < sim.rampup) {
       Real x = sta.step / (Real)sim.rampup;
-      Real rampCFL = exp(log(1e-3) * (1 - x) + log(CFL) * x);
-      Real b = rampCFL * dtAdvection;
-      sta.dt = b < dtDiffusion ? b : dtDiffusion;
+      Real ramp_cfl = exp(log(1e-3) * (1 - x) + log(cfl) * x);
+      Real b = ramp_cfl * dt_advection;
+      sta.dt = b < dt_diffusion ? b : dt_diffusion;
     } else {
-      Real b = CFL * dtAdvection;
-      sta.dt = b < dtDiffusion ? b : dtDiffusion;
+      Real b = cfl * dt_advection;
+      sta.dt = b < dt_diffusion ? b : dt_diffusion;
     }
   } else {
-    CFL = (sta.uMax_measured + 1e-8) * sta.dt / hMin;
+    cfl = (sta.umax + 1e-8) * sta.dt / hmin;
   }
   if (sta.dt <= 0)
-    fatal("dt <= 0: CFL=%g hmin=%g umax=%g", CFL, hMin, sta.uMax_measured);
-  if (sim.DLM > 0)
-    sta.lambda = sim.DLM / sta.dt;
+    fatal("dt <= 0: CFL=%g hmin=%g umax=%g", cfl, hmin, sta.umax);
+  if (sim.dlm > 0)
+    sta.lambda = sim.dlm / sta.dt;
   if (sim.rank == 0)
     printf("main.c: step: %d, time: %f\n", sta.step, sta.time);
   if (sta.step >= STEP_2ND) {
@@ -5624,36 +5633,36 @@ static Real calc_max_timestep(void) {
     Real b = sta.dt;
     Real c1 = -(a + b) / (a * b);
     Real c2 = b / (a + b) / a;
-    sta.coefU[0] = -b * (c1 + c2);
-    sta.coefU[1] = b * c1;
-    sta.coefU[2] = b * c2;
+    sta.coef_u[0] = -b * (c1 + c2);
+    sta.coef_u[1] = b * c1;
+    sta.coef_u[2] = b * c2;
   }
   return sta.dt;
 }
 static int advance(Real dt) {
-  if (sim.dumpTime > 0 && sta.time >= sta.nextDumpTime) {
+  if (sim.tdump > 0 && sta.time >= sta.next_dump) {
     char path[FILENAME_MAX];
-    sta.nextDumpTime += sim.dumpTime;
+    sta.next_dump += sim.tdump;
     snprintf(path, sizeof path, "vel.%08d", sta.step);
     fprintf(stderr, "main.c: %s\n", path);
-    dump(sta.time, path);
+    io_dump(sta.time, path);
   }
   if (sta.step % 20 == 0 || sta.step < 10)
-    adapt_mesh();
-  create_obstacles();
-  advection_diffusion();
-  update_obstacles();
-  penalization();
-  pressure_projection();
+    mesh_adapt();
+  fish_build();
+  advdiff();
+  fish_vel();
+  fish_pen();
+  projection();
   sta.step++;
   sta.time += dt;
-  if ((sim.endTime > 0 && sta.time > sim.endTime) || (sim.nsteps != 0 && sta.step >= sim.nsteps))
+  if ((sim.tend > 0 && sta.time > sim.tend) || (sim.nsteps != 0 && sta.step >= sim.nsteps))
     return 1;
   return 0;
 }
 static void simulate(void) {
   for (;;) {
-    Real dt = calc_max_timestep();
+    Real dt = sta_dt();
     if (advance(dt))
       break;
   }
@@ -5665,12 +5674,12 @@ int main(int argc, char **argv) {
   sim.comm = MPI_COMM_WORLD;
   MPI_Comm_rank(MPI_COMM_WORLD, &sim.rank);
   MPI_Comm_size(MPI_COMM_WORLD, &sim.size);
-  content = parse_arguments(argc, argv);
+  content = param_parse(argc, argv);
   sta_init();
-  lab_tables_init();
-  add_obstacles(content);
-  grid_init();
-  init_fields();
+  lab_tables();
+  fish_parse(content);
+  mesh_init();
+  sta_fields();
   simulate();
   MPI_Finalize();
 }
