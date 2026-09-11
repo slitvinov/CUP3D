@@ -4,9 +4,9 @@ import numpy as np
 import amriso
 
 if len(sys.argv) < 3:
-    sys.stderr.write("usage: iso.py OMEGA FILE.xdmf2 [FILE.xdmf2 ...]\n")
+    sys.stderr.write("usage: iso.py LEVEL[,LEVEL...] FILE.xdmf2 [FILE.xdmf2 ...]\n")
     sys.exit(1)
-level = float(sys.argv[1])
+levels = [float(s) for s in sys.argv[1].split(",")]
 corner = np.array([[0, 0, 0], [0, 0, 1], [0, 1, 1], [0, 1, 0],
                    [1, 0, 0], [1, 0, 1], [1, 1, 1], [1, 1, 0]], np.float32)
 i = np.arange(512)
@@ -21,9 +21,10 @@ for path in sys.argv[2:]:
     coords = origin[:, None, None, :] + h[:, None, None, None] * (idx[None, :, None, :] + corner[None, None, :, :])
     coords = np.ascontiguousarray(coords.reshape(-1, 8, 3))
     omega = np.sqrt((vort * vort).sum(1))
-    x, t, a = amriso.extract3d(coords, omega, chi, level)
-    amriso.dump3d(base + ".omega", x, t, a)
-    sys.stderr.write("iso.py: %s.omega ntri=%d\n" % (base, len(t)))
     x, t, a = amriso.extract3d(coords, chi, omega, 0.5)
     amriso.dump3d(base + ".body", x, t, a)
     sys.stderr.write("iso.py: %s.body ntri=%d\n" % (base, len(t)))
+    for lv in levels:
+        x, t, a = amriso.extract3d(coords, omega, np.ascontiguousarray(vort[:, 2]), lv)
+        amriso.dump3d("%s.omega%g" % (base, lv), x, t, a)
+        sys.stderr.write("iso.py: %s.omega%g ntri=%d\n" % (base, lv, len(t)))
