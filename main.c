@@ -563,46 +563,6 @@ static void h_stefan(Real L, Real *rs, Real *res, int nm) {
     }
   }
 }
-static void w_larval(Real L, Real *rs, Real *res, int nm) {
-  Real sb = .0862 * L;
-  Real st = .3448 * L;
-  Real wh = .0635 * L;
-  Real wt = .0254 * L;
-  int i;
-  for (i = 0; i < nm; ++i) {
-    if (rs[i] <= 0 || rs[i] >= L)
-      res[i] = 0;
-    else {
-      Real s = rs[i];
-      res[i] = s < sb ? wh * sqrt(1 - pow((sb - s) / sb, 2))
-                      : (s < st ? (-2 * (wt - wh) - wt * (st - sb)) * pow((s - sb) / (st - sb), 3) +
-                                      (3 * (wt - wh) + wt * (st - sb)) * pow((s - sb) / (st - sb), 2) + wh
-                                : (wt - wt * (s - st) / (L - st)));
-    }
-  }
-}
-static void h_larval(Real L, Real *rs, Real *res, int nm) {
-  Real s1 = 0.287 * L;
-  Real h1 = 0.072 * L;
-  Real s2 = 0.844 * L;
-  Real h2 = 0.041 * L;
-  Real s3 = 0.957 * L;
-  Real h3 = 0.071 * L;
-  int i;
-  for (i = 0; i < nm; ++i) {
-    if (rs[i] <= 0 || rs[i] >= L)
-      res[i] = 0;
-    else {
-      Real s = rs[i];
-      res[i] = s < s1 ? (h1 * sqrt(1 - pow((s - s1) / s1, 2)))
-                      : (s < s2 ? -2 * (h2 - h1) * pow((s - s1) / (s2 - s1), 3) +
-                                      3 * (h2 - h1) * pow((s - s1) / (s2 - s1), 2) + h1
-                                : (s < s3 ? -2 * (h3 - h2) * pow((s - s2) / (s3 - s2), 3) +
-                                                3 * (h3 - h2) * pow((s - s2) / (s3 - s2), 2) + h2
-                                          : (h3 * sqrt(1 - pow((s - s3) / (L - s3), 3)))));
-    }
-  }
-}
 static void w_danio(Real L, Real *rs, Real *res, int nm) {
   enum { n_breaks_w = 11 };
   Real bw[n_breaks_w] = {0, 0.005, 0.01, 0.05, 0.1, 0.2, 0.4, 0.6, 0.8, 0.95, 1.0};
@@ -663,25 +623,10 @@ static void h_danio(Real L, Real *rs, Real *res, int nm) {
     }
   }
 }
-static void h_largefin(Real L, Real *rs, Real *res, int nm) {
-  Real x[8] = {0, 0, .2 * L, .4 * L, .6 * L, .8 * L, L, L};
-  Real y[8] = {0, .055 * L, .18 * L, .2 * L, .064 * L, .002 * L, .325 * L, 0};
-  integrate_bspline(x, y, 8, L, rs, res, nm);
-}
-static void h_tunaclone(Real L, Real *rs, Real *res, int nm) {
-  Real x[9] = {0, 0, 0.2 * L, .4 * L, .6 * L, .9 * L, .96 * L, L, L};
-  Real y[9] = {0, .05 * L, .14 * L, .15 * L, .11 * L, 0, .1 * L, .2 * L, 0};
-  integrate_bspline(x, y, 9, L, rs, res, nm);
-}
 static void h_default(Real L, Real *rs, Real *res, int nm) {
   Real x[8] = {0, 0, .2 * L, .4 * L, .6 * L, .8 * L, L, L};
   Real y[8] = {0, .055 * L, .068 * L, .076 * L, .064 * L, .0072 * L, .11 * L, 0};
   integrate_bspline(x, y, 8, L, rs, res, nm);
-}
-static void w_fatter(Real L, Real *rs, Real *res, int nm) {
-  Real x[6] = {0, 0, L / 3., 2 * L / 3., L, L};
-  Real y[6] = {0, 8.9e-2 * L, 7.0e-2 * L, 3.0e-2 * L, 2.0e-2 * L, 0};
-  integrate_bspline(x, y, 6, L, rs, res, nm);
 }
 static void w_default(Real L, Real *rs, Real *res, int nm) {
   Real x[6] = {0, 0, L / 3., 2 * L / 3., L, L};
@@ -693,12 +638,14 @@ struct Profile {
   void (*fn)(Real L, Real *rs, Real *res, int nm);
 };
 static struct Profile height_profiles[] = {
-    {"largefin", h_largefin}, {"tunaclone", h_tunaclone}, {"danio", h_danio},
-    {"stefan", h_stefan},     {"larval", h_larval},       {"default", h_default},
+    {"danio", h_danio},
+    {"stefan", h_stefan},
+    {"default", h_default},
 };
 static struct Profile width_profiles[] = {
-    {"fatter", w_fatter}, {"danio", w_danio},     {"stefan", w_stefan},
-    {"larval", w_larval}, {"default", w_default},
+    {"danio", w_danio},
+    {"stefan", w_stefan},
+    {"default", w_default},
 };
 enum {
   NHEIGHT = sizeof height_profiles / sizeof *height_profiles,
