@@ -4275,112 +4275,74 @@ static void pois_op(Real *in, Real *out) {
     out[pois_pin * BS3] = in[pois_pin * BS3];
   }
 }
-enum { XPAD = 4 };
-static Real pois_pre_cg(Real p[BS + 2][BS + 2][BS + 2 * XPAD], Real Ax[BS3], Real r[BS3], Real *block,
-                        Real norm2_0, Real rr) {
-  Real eps_div = 1e-55;
-  Real tol_rel = 1e-7;
-  Real tol_abs = 1e-16;
-  Real tol_rel2 = tol_rel * tol_rel;
-  Real tol_abs2 = tol_abs * tol_abs;
-  Real a2_partial[BS] = {0};
-  int iz;
-  int iy;
-  Real a2;
-  int ix;
-  Real a;
-  Real s[16];
-  int jy;
-  Real sum2;
-  int jx;
-  Real beta;
-  Real norm2;
-  for (iz = 0; iz < BS; ++iz)
-    for (iy = 0; iy < BS; ++iy) {
-      Real ax[BS];
-      int ix;
-      for (ix = 0; ix < BS; ++ix)
-        ax[ix] = p[iz + 1][iy + 1][ix + XPAD - 1] + p[iz + 1][iy + 1][ix + XPAD + 1] -
-                 6 * p[iz + 1][iy + 1][ix + XPAD];
-      for (ix = 0; ix < BS; ++ix)
-        ax[ix] += p[iz + 1][iy][ix + XPAD];
-      for (ix = 0; ix < BS; ++ix)
-        ax[ix] += p[iz + 1][iy + 2][ix + XPAD];
-      for (ix = 0; ix < BS; ++ix)
-        ax[ix] += p[iz][iy + 1][ix + XPAD];
-      for (ix = 0; ix < BS; ++ix)
-        ax[ix] += p[iz + 2][iy + 1][ix + XPAD];
-      for (ix = 0; ix < BS; ++ix)
-        Ax[IDX(ix, iy, iz)] = ax[ix];
-      for (ix = 0; ix < BS; ++ix)
-        a2_partial[ix] += p[iz + 1][iy + 1][ix + XPAD] * ax[ix];
-    }
-  a2 = 0;
-  for (ix = 0; ix < BS; ++ix)
-    a2 += a2_partial[ix];
-  a = rr / (a2 + eps_div);
-  for (iz = 0; iz < BS; ++iz)
-    for (iy = 0; iy < BS; ++iy)
-      for (ix = 0; ix < BS; ++ix)
-        block[IDX(ix, iy, iz)] += a * p[iz + 1][iy + 1][ix + XPAD];
-  memset(s, 0, sizeof s);
-  for (jy = 0; jy < BS3 / 16; ++jy) {
-    int jx;
-    for (jx = 0; jx < 16; ++jx)
-      r[jy * 16 + jx] -= a * Ax[jy * 16 + jx];
-    for (jx = 0; jx < 16; ++jx)
-      s[jx] += r[jy * 16 + jx] * r[jy * 16 + jx];
+static Real pre_s[BS][BS], pre_w[BS3];
+static void pois_init(void) {
+  int i, j, k;
+  Real lam[BS];
+  for (j = 0; j < BS; j++) {
+    lam[j] = 2 * cos(M_PI * (j + 1) / (BS + 1)) - 2;
+    for (k = 0; k < BS; k++)
+      pre_s[j][k] = sqrt(2.0 / (BS + 1)) * sin(M_PI * (j + 1) * (k + 1) / (BS + 1));
   }
-  sum2 = 0;
-  for (jx = 0; jx < 16; ++jx)
-    sum2 += s[jx];
-  beta = sum2 / (rr + eps_div);
-  norm2 = (Real)1 / (BS3 * BS3) * sum2;
-  if (norm2 < tol_rel2 * norm2_0 || norm2 < tol_abs2)
-    return -1.0;
-  for (iz = 0; iz < BS; ++iz)
-    for (iy = 0; iy < BS; ++iy)
-      for (ix = 0; ix < BS; ++ix)
-        p[iz + 1][iy + 1][ix + XPAD] = r[IDX(ix, iy, iz)] + beta * p[iz + 1][iy + 1][ix + XPAD];
-  return sum2;
+  for (k = 0; k < BS; k++)
+    for (j = 0; j < BS; j++)
+      for (i = 0; i < BS; i++)
+        pre_w[IDX(i, j, k)] = 1 / (lam[i] + lam[j] + lam[k]);
+}
+static void pre_x(Real *in, Real *out) {
+  int z, y, j, k;
+  for (z = 0; z < BS; z++)
+    for (y = 0; y < BS; y++)
+      for (j = 0; j < BS; j++) {
+        Real a = 0;
+        for (k = 0; k < BS; k++)
+          a += pre_s[j][k] * in[IDX(k, y, z)];
+        out[IDX(j, y, z)] = a;
+      }
+}
+static void pre_y(Real *in, Real *out) {
+  int z, x, j, k;
+  for (z = 0; z < BS; z++)
+    for (j = 0; j < BS; j++)
+      for (x = 0; x < BS; x++) {
+        Real a = 0;
+        for (k = 0; k < BS; k++)
+          a += pre_s[j][k] * in[IDX(x, k, z)];
+        out[IDX(x, j, z)] = a;
+      }
+}
+static void pre_z(Real *in, Real *out) {
+  int y, x, j, k;
+  for (j = 0; j < BS; j++)
+    for (y = 0; y < BS; y++)
+      for (x = 0; x < BS; x++) {
+        Real a = 0;
+        for (k = 0; k < BS; k++)
+          a += pre_s[j][k] * in[IDX(x, y, k)];
+        out[IDX(x, y, j)] = a;
+      }
 }
 static void pois_pre(Real *in, Real *out) {
 #pragma omp parallel
   {
-    Real r[BS3], Ax[BS3], p[BS + 2][BS + 2][BS + 2 * XPAD];
+    Real a[BS3], b[BS3];
     long long i;
-    memset(p, 0, sizeof p);
 #pragma omp for
     for (i = 0; i < sta.nblk; ++i) {
       Real *src = in + i * BS3;
-      Real *block = out + i * BS3;
+      Real *dst = out + i * BS3;
       Real invh = 1 / sta.blk[i].h;
-      Real rr_partial[BS] = {0};
-      int iz;
-      int iy;
-      int ix;
-      Real rr;
-      Real norm2_0;
-      int k;
-      for (iz = 0; iz < BS; ++iz)
-        for (iy = 0; iy < BS; ++iy)
-          for (ix = 0; ix < BS; ++ix) {
-            r[IDX(ix, iy, iz)] = invh * src[IDX(ix, iy, iz)];
-            rr_partial[ix] += r[IDX(ix, iy, iz)] * r[IDX(ix, iy, iz)];
-            p[iz + 1][iy + 1][ix + XPAD] = r[IDX(ix, iy, iz)];
-            block[IDX(ix, iy, iz)] = 0;
-          }
-      rr = 0;
-      for (ix = 0; ix < BS; ++ix)
-        rr += rr_partial[ix];
-      norm2_0 = (Real)1 / (BS3 * BS3) * rr;
-      if (norm2_0 < 1e-32)
-        continue;
-      for (k = 0; k < 100; ++k) {
-        rr = pois_pre_cg(p, Ax, r, block, norm2_0, rr);
-        if (rr <= 0)
-          break;
-      }
+      int j;
+      for (j = 0; j < BS3; j++)
+        a[j] = invh * src[j];
+      pre_x(a, b);
+      pre_y(b, a);
+      pre_z(a, b);
+      for (j = 0; j < BS3; j++)
+        b[j] *= pre_w[j];
+      pre_x(b, a);
+      pre_y(a, b);
+      pre_z(b, dst);
     }
   }
 }
@@ -5667,6 +5629,7 @@ int main(int argc, char **argv) {
   content = param_parse(argc, argv);
   sta_init();
   lab_tables();
+  pois_init();
   fish_parse(content);
   mesh_init();
   sta_fields();
