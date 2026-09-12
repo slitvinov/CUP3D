@@ -2892,13 +2892,16 @@ static void xch_exec(struct Xch *x, void *sbuf, void *rbuf, int m, MPI_Datatype 
 }
 #define HALO_BASE (1LL << 40)
 enum { NEI_MAX = 26 * 4 };
-static struct {
+struct Halo {
   int nhalo, nsend, f0, nc;
   struct Xch x;
   long long *send, *rkey;
   Real *buf, *sbuf;
   signed char *sst, *rst;
-} halo;
+};
+static struct Halo halo;
+static long long *slot;
+#define SLOT(i) (slot ? slot[i] : (i))
 static long long blk_avail(int level, long long Z) {
   struct Node *nd = node_get(level, Z);
   if (nd == NULL)
@@ -2958,7 +2961,7 @@ static void tree_sync(void) {
   free(mine);
   free(all);
 }
-static int blk_remote_neighbors(struct Blk *b, long long *keys, int *ranks) {
+static int blk_remote_neighbors(struct Blk *b, long long *keys, int *ranks, int *lv) {
   int n = 0;
   int icode = -1, code[3];
   while (nei_next(b, &icode, code)) {
@@ -2967,6 +2970,7 @@ static int blk_remote_neighbors(struct Blk *b, long long *keys, int *ranks) {
     if (nd->pos >= 0) {
       if (nd->pos != sim.rank) {
         keys[n] = node_key(b->level, zn);
+        lv[n] = b->level;
         ranks[n++] = nd->pos;
       }
     } else if (nd->pos == -2) {
@@ -2974,6 +2978,7 @@ static int blk_remote_neighbors(struct Blk *b, long long *keys, int *ranks) {
       struct Node *np = node(b->level - 1, zp);
       if (np->pos != sim.rank) {
         keys[n] = node_key(b->level - 1, zp);
+        lv[n] = b->level - 1;
         ranks[n++] = np->pos;
       }
     } else if (nd->pos == -1) {
@@ -2983,6 +2988,7 @@ static int blk_remote_neighbors(struct Blk *b, long long *keys, int *ranks) {
         struct Node *nf = node(b->level + 1, zf);
         if (nf->pos >= 0 && nf->pos != sim.rank) {
           keys[n] = node_key(b->level + 1, zf);
+          lv[n] = b->level + 1;
           ranks[n++] = nf->pos;
         }
       }
@@ -3007,6 +3013,7 @@ static long long pair_unique(long long *p, long long n) {
     }
   return m;
 }
+static int halo_lvl = -1;
 static void halo_build(void) {
   int k;
   long long cap;
@@ -3015,6 +3022,7 @@ static void halo_build(void) {
   long long ns, nr;
   long long keys[NEI_MAX];
   int ranks[NEI_MAX];
+  int lv[NEI_MAX];
   long long i;
   long long k2;
   for (k = 0; k < halo.nhalo; k++) {
@@ -3031,16 +3039,20 @@ static void halo_build(void) {
   ns = 0;
   nr = 0;
   for (i = 0; i < sta.nblk; i++) {
-    int n = blk_remote_neighbors(&sta.blk[i], keys, ranks);
+    int n = blk_remote_neighbors(&sta.blk[i], keys, ranks, lv);
     long long mykey = node_key(sta.blk[i].level, sta.blk[i].Z);
     int j;
     for (j = 0; j < n; j++) {
-      sp[2 * ns] = ranks[j];
-      sp[2 * ns + 1] = mykey;
-      ns++;
-      rp[2 * nr] = ranks[j];
-      rp[2 * nr + 1] = keys[j];
-      nr++;
+      if (halo_lvl < 0 || lv[j] == halo_lvl) {
+        sp[2 * ns] = ranks[j];
+        sp[2 * ns + 1] = mykey;
+        ns++;
+      }
+      if (halo_lvl < 0 || sta.blk[i].level == halo_lvl) {
+        rp[2 * nr] = ranks[j];
+        rp[2 * nr + 1] = keys[j];
+        nr++;
+      }
     }
   }
   qsort(sp, ns, 2 * sizeof *sp, pair_cmp);
@@ -3080,7 +3092,7 @@ static void halo_sync(int f, int nc) {
   halo.nc = nc;
 #pragma omp parallel for
   for (k = 0; k < halo.nsend; k++) {
-    memcpy(halo.sbuf + k * m, view_in ? view_in + halo.send[k] * BS3 : fld(halo.send[k], f),
+    memcpy(halo.sbuf + k * m, view_in ? view_in + SLOT(halo.send[k]) * BS3 : fld(halo.send[k], f),
            m * sizeof(Real));
   }
   xch_exec(&halo.x, halo.sbuf, halo.buf, (int)m, MPI_Real);
@@ -3097,12 +3109,12 @@ static void states_sync(void) {
 }
 static Real *fld_ptr(long long i, int f, int c) {
   if (i < HALO_BASE)
-    return view_in ? view_in + (i + c) * BS3 : BLK(i) + (f + c) * BS3;
+    return view_in ? view_in + (SLOT(i) + c) * BS3 : BLK(i) + (f + c) * BS3;
   return halo.buf + ((i - HALO_BASE) * halo.nc + (f - halo.f0) + c) * BS3;
 }
 #define CELL(i, f, c, x, y, z) (fld_ptr(i, f, c)[((z) * BS + (y)) * BS + (x)])
 static Real *out_ptr(long long i, int f, int c) {
-  return view_out ? view_out + (i + c) * BS3 : BLK(i) + (f + c) * BS3;
+  return view_out ? view_out + (SLOT(i) + c) * BS3 : BLK(i) + (f + c) * BS3;
 }
 #define OUT(i, f, c, x, y, z) (out_ptr(i, f, c)[((z) * BS + (y)) * BS + (x)])
 static struct {
@@ -3266,6 +3278,7 @@ static void fc_fill(int f, int nc) {
   }
   memset(fc.data, 0, (size_t)fc.nface * 3 * BS * BS * sizeof(Real));
 }
+static void mg_build(void);
 static void mesh_init(void) {
   int level;
   long long aux;
@@ -3299,6 +3312,7 @@ static void mesh_init(void) {
   tree_sync();
   halo_build();
   fc_prepare();
+  mg_build();
 }
 enum { OP_COPY, OP_AVG8, OP_INTERP, OP_FD, OP_BC };
 struct Op {
@@ -3601,15 +3615,16 @@ struct Stencil {
   int f, nc, ss, te, vflip, out, outc;
   void (*kernel)(struct Lab *, long long);
 };
-static void stencil_apply(struct Stencil *st) {
+static void stencil_run(struct Stencil *st, long long *list, long long n) {
   halo_sync(st->f, st->nc);
 #pragma omp parallel
   {
     struct Lab l;
-    long long i;
+    long long k;
     lab_init(&l, st->f, st->nc, st->ss, st->te, st->vflip);
 #pragma omp for schedule(dynamic, 1)
-    for (i = 0; i < sta.nblk; i++) {
+    for (k = 0; k < n; k++) {
+      long long i = list ? list[k] : k;
       lab_load(&l, i);
       st->kernel(&l, i);
     }
@@ -3617,6 +3632,7 @@ static void stencil_apply(struct Stencil *st) {
   if (st->outc > 0)
     fc_fill(st->out, st->outc);
 }
+static void stencil_apply(struct Stencil *st) { stencil_run(st, NULL, sta.nblk); }
 static void k_gradchi(struct Lab *l, long long ib) {
   struct Blk *b = &sta.blk[ib];
   Real *TMP0 = fld(ib, F_TMP), *TMP1 = TMP0 + BS3, *TMP2 = TMP1 + BS3;
@@ -4157,6 +4173,7 @@ static void mesh_adapt(void) {
   tree_sync();
   halo_build();
   fc_prepare();
+  mg_build();
 }
 static void sta_zero(void) {
   long long i;
@@ -4235,6 +4252,19 @@ static void k_lhs(struct Lab *l, long long i) {
   face_grad(l, i, 0, h);
 }
 static struct Stencil st_lhs = {F_PRES, 1, 1, 0, -1, F_LHS, 1, k_lhs};
+static void k_mg(struct Lab *l, long long i) {
+  Real h = sta.blk[i].h;
+  Real *o = out_ptr(i, F_LHS, 0);
+  int z;
+  int y;
+  int x;
+  for (z = 0; z < BS; ++z)
+    for (y = 0; y < BS; ++y)
+      for (x = 0; x < BS; ++x)
+        o[IDX(x, y, z)] = h * (L(x - 1, y, z, 0) + L(x + 1, y, z, 0) + L(x, y - 1, z, 0) + L(x, y + 1, z, 0) +
+                               L(x, y, z - 1, 0) + L(x, y, z + 1, 0) - 6.0 * L(x, y, z, 0));
+}
+static struct Stencil st_mg = {F_PRES, 1, 1, 0, -1, F_LHS, 0, k_mg};
 static long long pois_pin;
 static void pois_op(Real *in, Real *out) {
   Real avg_p = 0;
@@ -4322,29 +4352,18 @@ static void pre_z(Real *in, Real *out) {
         out[IDX(x, y, j)] = a;
       }
 }
-static void pois_pre(Real *in, Real *out) {
-#pragma omp parallel
-  {
-    Real a[BS3], b[BS3];
-    long long i;
-#pragma omp for
-    for (i = 0; i < sta.nblk; ++i) {
-      Real *src = in + i * BS3;
-      Real *dst = out + i * BS3;
-      Real invh = 1 / sta.blk[i].h;
-      int j;
-      for (j = 0; j < BS3; j++)
-        a[j] = invh * src[j];
-      pre_x(a, b);
-      pre_y(b, a);
-      pre_z(a, b);
-      for (j = 0; j < BS3; j++)
-        b[j] *= pre_w[j];
-      pre_x(b, a);
-      pre_y(a, b);
-      pre_z(b, dst);
-    }
-  }
+static void pre_blk(Real *src, Real *dst, Real invh, Real *a, Real *b) {
+  int j;
+  for (j = 0; j < BS3; j++)
+    a[j] = invh * src[j];
+  pre_x(a, b);
+  pre_y(b, a);
+  pre_z(a, b);
+  for (j = 0; j < BS3; j++)
+    b[j] *= pre_w[j];
+  pre_x(b, a);
+  pre_y(a, b);
+  pre_z(b, dst);
 }
 static void field_set(int f, Real *in) {
   long long i;
@@ -4360,72 +4379,492 @@ static void field_get(int f, Real *out) {
     memcpy(out + i * BS3, fld(i, f), BS3 * sizeof(Real));
   }
 }
-static void pois_pre_vec(Real *in, Real *out) { pois_pre(in, out); }
 static void pois_op_vec(Real *in, Real *out) { pois_op(in, out); }
 static struct Pois {
   long long cap;
-  Real *phat, *rhat, *shat, *what, *zhat, *qhat, *s, *w, *z, *t, *v, *q, *r, *y, *x, *r0, *b, *x_opt, *hw;
+  Real *x, *b, *r, *w, *z, *hw, *V;
 } pois;
-enum { KR_MAXIT = 1000, KR_RESTART = 50, KR_MAXRESTART = 100 };
+enum { KR_M = 30, KR_MAXIT = 1000 };
 static void pois_alloc(long long N) {
-  Real **all[18] = {&pois.phat, &pois.rhat, &pois.shat, &pois.what, &pois.zhat, &pois.qhat,
-                    &pois.s,    &pois.w,    &pois.z,    &pois.t,    &pois.v,    &pois.q,
-                    &pois.r,    &pois.y,    &pois.x,    &pois.r0,   &pois.b,    &pois.x_opt};
-  int k;
   if (N <= pois.cap)
     return;
-  for (k = 0; k < 18; k++) {
-    free(*all[k]);
-    *all[k] = ecalloc(N, sizeof(Real));
-  }
+  N += N / 4;
+  free(pois.x);
+  free(pois.b);
+  free(pois.r);
+  free(pois.w);
+  free(pois.z);
   free(pois.hw);
+  free(pois.V);
+  pois.x = ecalloc(N, sizeof(Real));
+  pois.b = ecalloc(N, sizeof(Real));
+  pois.r = ecalloc(N, sizeof(Real));
+  pois.w = ecalloc(N, sizeof(Real));
+  pois.z = ecalloc(N, sizeof(Real));
   pois.hw = ecalloc(N / BS3, sizeof(Real));
+  pois.V = ecalloc((KR_M + 1) * N, sizeof(Real));
   pois.cap = N;
 }
-static Real pois_restart(long long N, Real *alpha) {
-  Real eps = 1e-100;
-  Real temp0;
-  Real temp1;
-  long long j;
-  Real temporary[2];
-  pois_pre_vec(pois.r0, pois.rhat);
-  pois_op_vec(pois.rhat, pois.w);
-  temp0 = 0.0;
-  temp1 = 0.0;
-#pragma omp parallel for reduction(+ : temp0, temp1)
-  for (j = 0; j < N; j++) {
-    temp0 += pois.r0[j] * pois.r0[j];
-    temp1 += pois.r0[j] * pois.w[j];
+static void vec_copy(Real *dst, Real *src, long long n) {
+  long long i;
+#pragma omp parallel for
+  for (i = 0; i < n; i += BS3)
+    memcpy(dst + i, src + i, (n - i < BS3 ? n - i : BS3) * sizeof(Real));
+}
+static void vec_zero(Real *dst, long long n) {
+  long long i;
+#pragma omp parallel for
+  for (i = 0; i < n; i += BS3)
+    memset(dst + i, 0, (n - i < BS3 ? n - i : BS3) * sizeof(Real));
+}
+enum { MG_PRE = 2, MG_POST = 2, MG_BOT = 50, MG_M = 2 * BS3 / 8 };
+static Real mg_omega = 0.8;
+struct Ctx {
+  long long nblk;
+  struct Blk *blk;
+  long long *slot;
+  struct Node *tab;
+  long long cap, n;
+  struct Halo halo;
+};
+struct Lvl {
+  struct Ctx c;
+  long long nact, *act;
+  long long npar, *par;
+  long long *pslot, *pos;
+  int *oct, *dst;
+  struct Xch x, xr;
+  long long nsend, nrecv, *rslot;
+  int *roct;
+  Real *sbuf, *rbuf;
+};
+static struct {
+  int top, cur;
+  long long nslot, cap;
+  struct Lvl *lv;
+  Real *u, *f, *t, *us;
+} mg;
+static void ctx_swap(struct Ctx *c) {
+  struct Ctx t = {sta.nblk, sta.blk, slot, nodes.tab, nodes.cap, nodes.n, halo};
+  sta.nblk = c->nblk;
+  sta.blk = c->blk;
+  slot = c->slot;
+  nodes.tab = c->tab;
+  nodes.cap = c->cap;
+  nodes.n = c->n;
+  halo = c->halo;
+  *c = t;
+}
+static void mg_use(int L) {
+  if (mg.cur == L)
+    return;
+  if (mg.cur != mg.top)
+    ctx_swap(&mg.lv[mg.cur].c);
+  if (L != mg.top)
+    ctx_swap(&mg.lv[L].c);
+  mg.cur = L;
+}
+static void ctx_free(struct Ctx *c) {
+  free(c->blk);
+  free(c->slot);
+  free(c->tab);
+  free(c->halo.send);
+  free(c->halo.rkey);
+  free(c->halo.buf);
+  free(c->halo.sbuf);
+  free(c->halo.sst);
+  free(c->halo.rst);
+  xch_free(&c->halo.x);
+  memset(c, 0, sizeof *c);
+}
+static void mg_free(void) {
+  int L;
+  if (mg.lv == NULL)
+    return;
+  mg_use(mg.top);
+  for (L = 0; L <= mg.top; L++) {
+    struct Lvl *v = &mg.lv[L];
+    if (L < mg.top)
+      ctx_free(&v->c);
+    free(v->act);
+    free(v->par);
+    free(v->pslot);
+    free(v->pos);
+    free(v->oct);
+    free(v->dst);
+    free(v->rslot);
+    free(v->roct);
+    free(v->sbuf);
+    free(v->rbuf);
+    xch_free(&v->x);
+    xch_free(&v->xr);
   }
-  temporary[0] = temp0;
-  temporary[1] = temp1;
-  MPI_Allreduce(MPI_IN_PLACE, temporary, 2, MPI_Real, MPI_SUM, sim.comm);
-  pois_pre_vec(pois.w, pois.what);
-  pois_op_vec(pois.what, pois.t);
-  *alpha = temporary[0] / (temporary[1] + eps);
-  return temporary[0];
+  free(mg.lv);
+  mg.lv = NULL;
+}
+static int mg_cmp(const void *a, const void *b) {
+  long long *x = (long long *)a, *y = (long long *)b;
+  return (x[0] > y[0]) - (x[0] < y[0]);
+}
+static void mg_build(void) {
+  int L;
+  long long i;
+  mg_free();
+  mg.top = sim.level_max - 1;
+  mg.cur = mg.top;
+  mg.nslot = sta.nblk;
+  mg.lv = ecalloc(mg.top + 1, sizeof *mg.lv);
+  for (L = mg.top; L >= 0; L--) {
+    struct Lvl *v = &mg.lv[L];
+    struct Lvl *w;
+    long long *zp, *ent, *key;
+    long long npass, nz, k, m;
+    struct Blk *cb;
+    long long *cs;
+    mg_use(L);
+    v->act = emalloc((sta.nblk + 1) * sizeof *v->act);
+    v->nact = 0;
+    for (i = 0; i < sta.nblk; i++)
+      if (sta.blk[i].level == L)
+        v->act[v->nact++] = i;
+    if (L == 0)
+      break;
+    w = &mg.lv[L - 1];
+    zp = emalloc((v->nact + 1) * sizeof *zp);
+    v->oct = emalloc((v->nact + 1) * sizeof *v->oct);
+    v->dst = emalloc((v->nact + 1) * sizeof *v->dst);
+    v->pslot = emalloc((v->nact + 1) * sizeof *v->pslot);
+    v->pos = emalloc((v->nact + 1) * sizeof *v->pos);
+    ent = emalloc((v->nact + 1) * sizeof *ent);
+    nz = 0;
+    for (k = 0; k < v->nact; k++) {
+      struct Blk *b = &sta.blk[v->act[k]];
+      int owner = sim.size;
+      int I, J, K;
+      struct Blk pb;
+      zp[k] = zparent(b);
+      v->oct[k] = (b->ix & 1) + 2 * (b->iy & 1) + 4 * (b->iz & 1);
+      blk_fill(&pb, L - 1, zp[k]);
+      for (K = 0; K < 2; K++)
+        for (J = 0; J < 2; J++)
+          for (I = 0; I < 2; I++) {
+            struct Node *nd = node_get(L, zchild(&pb, I, J, K));
+            if (nd == NULL || nd->pos < 0)
+              fatal("mg_build: sibling of level %d Z %lld missing", L, b->Z);
+            owner = nd->pos < owner ? nd->pos : owner;
+          }
+      v->dst[k] = owner == sim.rank ? -1 : owner;
+      if (owner == sim.rank)
+        ent[nz++] = zp[k];
+    }
+    qsort(ent, nz, sizeof *ent, mg_cmp);
+    m = 0;
+    for (k = 0; k < nz; k++)
+      if (m == 0 || ent[m - 1] != ent[k])
+        ent[m++] = ent[k];
+    nz = m;
+    npass = sta.nblk - v->nact;
+    cb = emalloc((npass + nz + 1) * sizeof *cb);
+    cs = emalloc((npass + nz + 1) * sizeof *cs);
+    key = emalloc(2 * (npass + nz + 1) * sizeof *key);
+    m = 0;
+    for (i = 0; i < sta.nblk; i++)
+      if (sta.blk[i].level < L) {
+        cb[m] = sta.blk[i];
+        cs[m] = SLOT(i);
+        m++;
+      }
+    for (k = 0; k < nz; k++) {
+      blk_fill(&cb[m], L - 1, ent[k]);
+      cs[m] = mg.nslot++;
+      m++;
+    }
+    for (i = 0; i < m; i++) {
+      key[2 * i] = blk_id(&cb[i]);
+      key[2 * i + 1] = i;
+    }
+    qsort(key, m, 2 * sizeof *key, mg_cmp);
+    w->c.nblk = m;
+    w->c.blk = emalloc((m + 1) * sizeof *w->c.blk);
+    w->c.slot = emalloc((m + 1) * sizeof *w->c.slot);
+    for (i = 0; i < m; i++) {
+      w->c.blk[i] = cb[key[2 * i + 1]];
+      w->c.slot[i] = cs[key[2 * i + 1]];
+    }
+    free(cb);
+    free(cs);
+    free(key);
+    free(ent);
+    mg_use(L - 1);
+    tree_sync();
+    halo_lvl = L - 1;
+    halo_build();
+    halo_lvl = -1;
+    w->npar = 0;
+    w->par = emalloc((nz + 1) * sizeof *w->par);
+    for (i = 0; i < sta.nblk; i++)
+      if (sta.blk[i].level == L - 1 && slot[i] >= mg.nslot - nz)
+        w->par[w->npar++] = i;
+    xch_reset(&v->x);
+    for (k = 0; k < v->nact; k++) {
+      if (v->dst[k] >= 0) {
+        v->x.scnt[v->dst[k]]++;
+        v->pslot[k] = -1;
+      } else {
+        struct Node *nd = node_get(L - 1, zp[k]);
+        v->pslot[k] = slot[nd->local];
+      }
+    }
+    MPI_Alltoall(v->x.scnt, 1, MPI_INT, v->x.rcnt, 1, MPI_INT, sim.comm);
+    xch_dsp(&v->x);
+    v->nsend = xch_nsend(&v->x);
+    v->nrecv = xch_nrecv(&v->x);
+    {
+      long long *sk = emalloc(2 * (v->nsend + 1) * sizeof *sk);
+      long long *rk = emalloc(2 * (v->nrecv + 1) * sizeof *rk);
+      int *fill = ecalloc(sim.size, sizeof *fill);
+      for (k = 0; k < v->nact; k++) {
+        v->pos[k] = -1;
+        if (v->dst[k] >= 0) {
+          v->pos[k] = fill[v->dst[k]]++;
+          sk[2 * (v->x.sdsp[v->dst[k]] + v->pos[k])] = zp[k];
+          sk[2 * (v->x.sdsp[v->dst[k]] + v->pos[k]) + 1] = v->oct[k];
+        }
+      }
+      xch_exec(&v->x, sk, rk, 2, MPI_LONG_LONG);
+      v->rslot = emalloc((v->nrecv + 1) * sizeof *v->rslot);
+      v->roct = emalloc((v->nrecv + 1) * sizeof *v->roct);
+      for (k = 0; k < v->nrecv; k++) {
+        struct Node *nd = node_get(L - 1, rk[2 * k]);
+        if (nd == NULL || nd->pos != sim.rank)
+          fatal("mg_build: received parent level %d Z %lld not local", L - 1, rk[2 * k]);
+        v->rslot[k] = slot[nd->local];
+        v->roct[k] = (int)rk[2 * k + 1];
+      }
+      free(sk);
+      free(rk);
+      free(fill);
+    }
+    xch_reset(&v->xr);
+    memcpy(v->xr.scnt, v->x.rcnt, sim.size * sizeof(int));
+    memcpy(v->xr.rcnt, v->x.scnt, sim.size * sizeof(int));
+    xch_dsp(&v->xr);
+    v->sbuf = emalloc((v->nsend + v->nrecv + 1) * MG_M * sizeof(Real));
+    v->rbuf = emalloc((v->nsend + v->nrecv + 1) * MG_M * sizeof(Real));
+    free(zp);
+  }
+  mg_use(mg.top);
+  if (mg.nslot > mg.cap) {
+    free(mg.u);
+    free(mg.f);
+    free(mg.t);
+    free(mg.us);
+    mg.cap = mg.nslot + mg.nslot / 4;
+    mg.u = emalloc(mg.cap * BS3 * sizeof(Real));
+    mg.f = emalloc(mg.cap * BS3 * sizeof(Real));
+    mg.t = emalloc(mg.cap * BS3 * sizeof(Real));
+    mg.us = emalloc(mg.cap * BS3 * sizeof(Real));
+  }
+}
+static void mg_op(Real *in, Real *out, long long *list, long long n) {
+  view_in = in;
+  view_out = out;
+  stencil_run(&st_mg, list, n);
+  view_in = NULL;
+  view_out = NULL;
+}
+static void mg_smooth(struct Lvl *v, int n) {
+  int it;
+  for (it = 0; it < n; it++) {
+    mg_op(mg.u, mg.t, v->act, v->nact);
+#pragma omp parallel
+    {
+      Real a[BS3], b[BS3], r[BS3];
+      long long k;
+#pragma omp for schedule(dynamic, 1)
+      for (k = 0; k < v->nact; k++) {
+        long long i = v->act[k];
+        Real *u = mg.u + SLOT(i) * BS3, *f = mg.f + SLOT(i) * BS3, *t = mg.t + SLOT(i) * BS3;
+        int j;
+        for (j = 0; j < BS3; j++)
+          r[j] = f[j] - t[j];
+        pre_blk(r, b, 1 / sta.blk[i].h, a, r);
+        for (j = 0; j < BS3; j++)
+          u[j] += mg_omega * b[j];
+      }
+    }
+  }
+}
+static void mg_sum(Real *src, Real *out64, Real scale) {
+  int x, y, z;
+  for (z = 0; z < 4; z++)
+    for (y = 0; y < 4; y++)
+      for (x = 0; x < 4; x++)
+        out64[(z * 4 + y) * 4 + x] =
+            scale * (src[IDX(2 * x, 2 * y, 2 * z)] + src[IDX(2 * x + 1, 2 * y, 2 * z)] +
+                     src[IDX(2 * x, 2 * y + 1, 2 * z)] + src[IDX(2 * x + 1, 2 * y + 1, 2 * z)] +
+                     src[IDX(2 * x, 2 * y, 2 * z + 1)] + src[IDX(2 * x + 1, 2 * y, 2 * z + 1)] +
+                     src[IDX(2 * x, 2 * y + 1, 2 * z + 1)] + src[IDX(2 * x + 1, 2 * y + 1, 2 * z + 1)]);
+}
+static void mg_put(long long ps, int oct, Real *r64, Real *u64) {
+  int x, y, z;
+  int ox = 4 * (oct & 1), oy = 4 * ((oct >> 1) & 1), oz = 4 * (oct >> 2);
+  Real *f = mg.f + ps * BS3, *u = mg.u + ps * BS3;
+  for (z = 0; z < 4; z++)
+    for (y = 0; y < 4; y++)
+      for (x = 0; x < 4; x++) {
+        int q = (z * 4 + y) * 4 + x;
+        f[IDX(ox + x, oy + y, oz + z)] = r64[q];
+        u[IDX(ox + x, oy + y, oz + z)] = u64[q];
+      }
+}
+static void mg_down(struct Lvl *v) {
+  long long k;
+  mg_op(mg.u, mg.t, v->act, v->nact);
+#pragma omp parallel for schedule(dynamic, 1)
+  for (k = 0; k < v->nact; k++) {
+    long long i = v->act[k], s = SLOT(i);
+    Real r[BS3], r64[64], u64[64];
+    int j;
+    for (j = 0; j < BS3; j++)
+      r[j] = mg.f[s * BS3 + j] - mg.t[s * BS3 + j];
+    mg_sum(r, r64, 1);
+    mg_sum(mg.u + s * BS3, u64, 1.0 / 8);
+    if (v->pslot[k] >= 0) {
+      mg_put(v->pslot[k], v->oct[k], r64, u64);
+    } else {
+      long long q = v->x.sdsp[v->dst[k]] + v->pos[k];
+      memcpy(v->sbuf + q * MG_M, r64, 64 * sizeof(Real));
+      memcpy(v->sbuf + q * MG_M + 64, u64, 64 * sizeof(Real));
+    }
+  }
+  xch_exec(&v->x, v->sbuf, v->rbuf, MG_M, MPI_Real);
+  for (k = 0; k < v->nrecv; k++)
+    mg_put(v->rslot[k], v->roct[k], v->rbuf + k * MG_M, v->rbuf + k * MG_M + 64);
+}
+static void mg_tau(struct Lvl *w) {
+  long long k;
+  mg_op(mg.u, mg.t, w->par, w->npar);
+#pragma omp parallel for
+  for (k = 0; k < w->npar; k++) {
+    long long s = SLOT(w->par[k]);
+    int j;
+    for (j = 0; j < BS3; j++) {
+      mg.f[s * BS3 + j] += mg.t[s * BS3 + j];
+      mg.us[s * BS3 + j] = mg.u[s * BS3 + j];
+    }
+  }
+}
+static void mg_get(long long ps, int oct, Real *d64) {
+  int x, y, z;
+  int ox = 4 * (oct & 1), oy = 4 * ((oct >> 1) & 1), oz = 4 * (oct >> 2);
+  Real *u = mg.u + ps * BS3, *us = mg.us + ps * BS3;
+  for (z = 0; z < 4; z++)
+    for (y = 0; y < 4; y++)
+      for (x = 0; x < 4; x++)
+        d64[(z * 4 + y) * 4 + x] = u[IDX(ox + x, oy + y, oz + z)] - us[IDX(ox + x, oy + y, oz + z)];
+}
+static void mg_add(Real *u, Real *d64) {
+  int x, y, z;
+  for (z = 0; z < BS; z++)
+    for (y = 0; y < BS; y++)
+      for (x = 0; x < BS; x++)
+        u[IDX(x, y, z)] += d64[((z / 2) * 4 + y / 2) * 4 + x / 2];
+}
+static void mg_up(struct Lvl *v) {
+  long long k;
+  for (k = 0; k < v->nrecv; k++)
+    mg_get(v->rslot[k], v->roct[k], v->sbuf + k * MG_M);
+  xch_exec(&v->xr, v->sbuf, v->rbuf, MG_M, MPI_Real);
+}
+static void mg_up2(struct Lvl *v) {
+  long long k;
+#pragma omp parallel for schedule(dynamic, 1)
+  for (k = 0; k < v->nact; k++) {
+    long long i = v->act[k], s = SLOT(i);
+    Real d64[64];
+    if (v->pslot[k] >= 0) {
+      mg_get(v->pslot[k], v->oct[k], d64);
+      mg_add(mg.u + s * BS3, d64);
+    } else {
+      long long q = v->xr.rdsp[v->dst[k]] + v->pos[k];
+      mg_add(mg.u + s * BS3, v->rbuf + q * MG_M);
+    }
+  }
+}
+static void mg_bottom(struct Lvl *v) {
+  Real q[2] = {0, 0};
+  long long k;
+#pragma omp parallel for reduction(+ : q[ : 2])
+  for (k = 0; k < v->nact; k++) {
+    long long s = SLOT(v->act[k]);
+    Real h3 = sta.blk[v->act[k]].h * sta.blk[v->act[k]].h * sta.blk[v->act[k]].h;
+    int j;
+    for (j = 0; j < BS3; j++)
+      q[0] += mg.f[s * BS3 + j] * h3;
+    q[1] += BS3 * h3;
+  }
+  MPI_Allreduce(MPI_IN_PLACE, q, 2, MPI_Real, MPI_SUM, sim.comm);
+  q[0] /= q[1];
+#pragma omp parallel for
+  for (k = 0; k < v->nact; k++) {
+    long long s = SLOT(v->act[k]);
+    int j;
+    for (j = 0; j < BS3; j++)
+      mg.f[s * BS3 + j] -= q[0];
+  }
+  mg_smooth(v, MG_BOT);
+}
+static void mg_vcycle(Real *in, Real *out) {
+  long long N = sta.nblk * BS3;
+  int L;
+  vec_zero(mg.u, mg.nslot * BS3);
+  vec_copy(mg.f, in, N);
+  for (L = mg.top; L >= 1; L--) {
+    mg_use(L);
+    mg_smooth(&mg.lv[L], MG_PRE);
+    mg_down(&mg.lv[L]);
+    mg_use(L - 1);
+    mg_tau(&mg.lv[L - 1]);
+  }
+  mg_use(0);
+  mg_bottom(&mg.lv[0]);
+  for (L = 1; L <= mg.top; L++) {
+    mg_use(L - 1);
+    mg_up(&mg.lv[L]);
+    mg_use(L);
+    mg_up2(&mg.lv[L]);
+    mg_smooth(&mg.lv[L], MG_POST);
+  }
+  vec_copy(out, mg.u, N);
+}
+static Real pois_dot(Real *a, Real *b, long long N) {
+  Real d = 0;
+  long long i;
+#pragma omp parallel for reduction(+ : d)
+  for (i = 0; i < N; i++)
+    d += a[i] * b[i] * pois.hw[i / BS3];
+  MPI_Allreduce(MPI_IN_PLACE, &d, 1, MPI_Real, MPI_SUM, sim.comm);
+  return d;
+}
+static void pois_axpy(Real *y, Real a, Real *x, long long N) {
+  long long i;
+#pragma omp parallel for
+  for (i = 0; i < N; i++)
+    y[i] += a * x[i];
+}
+static void pois_scale(Real *y, Real a, long long N) {
+  long long i;
+#pragma omp parallel for
+  for (i = 0; i < N; i++)
+    y[i] *= a;
 }
 static void pois_solve(void) {
   long long N = sta.nblk * BS3;
-  Real eps = 1e-100;
-  Real max_error = sim.ptol;
-  Real max_rel_error = sim.ptol_rel;
-  int serious_breakdown = 0;
-  int use_xopt = 0;
-  int restarts = 0;
-  Real min_norm = 1e50;
-  Real norm_1 = 0.0;
-  Real norm_2 = 0.0;
-  Real vol;
+  Real H[KR_M + 1][KR_M], cs[KR_M], sn[KR_M], g[KR_M + 1], y[KR_M];
+  Real vol, bnorm, norm, beta;
   long long i;
-  Real alpha;
-  Real norm;
-  Real beta;
-  Real omega;
-  Real r0r_prev;
-  Real init_norm;
-  int k;
-  int xzero;
+  int it, j, k, done;
   pois_alloc(N);
   vol = 0;
   pois_pin = -1;
@@ -4436,6 +4875,7 @@ static void pois_solve(void) {
     if (sta.blk[i].ix == 0 && sta.blk[i].iy == 0 && sta.blk[i].iz == 0)
       pois_pin = i;
   }
+  MPI_Allreduce(MPI_IN_PLACE, &vol, 1, MPI_Real, MPI_SUM, sim.comm);
 #pragma omp parallel for
   for (i = 0; i < sta.nblk; i++) {
     Real *rhs = fld(i, F_LHS);
@@ -4447,174 +4887,77 @@ static void pois_solve(void) {
         rhs[0] = 0.0;
     for (j = 0; j < BS3; j++) {
       pois.b[i * BS3 + j] = rhs[j];
-      pois.r[i * BS3 + j] = rhs[j];
       pois.x[i * BS3 + j] = zz[j];
     }
   }
-  xzero = 1;
-#pragma omp parallel for reduction(& : xzero)
+  bnorm = sqrt(pois_dot(pois.b, pois.b, N) / vol);
+  pois_op_vec(pois.x, pois.r);
+#pragma omp parallel for
   for (i = 0; i < N; i++)
-    xzero &= pois.x[i] == 0;
-  if (xzero) {
-    memcpy(pois.r0, pois.r, N * sizeof(Real));
-  } else {
-    pois_op_vec(pois.x, pois.r0);
-#pragma omp parallel for
-    for (i = 0; i < N; i++) {
-      pois.r0[i] = pois.r[i] - pois.r0[i];
-      pois.r[i] = pois.r0[i];
-    }
-  }
-  alpha = 0.0;
-  norm = 0.0;
-  beta = 0.0;
-  omega = 0.0;
-  r0r_prev = pois_restart(N, &alpha);
-  {
-    long long j;
-    Real temporary[2];
-#pragma omp parallel for reduction(+ : norm)
-    for (j = 0; j < N; j++) {
-      norm += pois.r0[j] * pois.r0[j] * pois.hw[j / BS3];
-    }
-    temporary[0] = norm;
-    temporary[1] = vol;
-    MPI_Allreduce(MPI_IN_PLACE, temporary, 2, MPI_Real, MPI_SUM, sim.comm);
-    vol = temporary[1];
-    norm = sqrt(temporary[0] / vol);
-  }
-  init_norm = norm;
-  for (k = 0; k < KR_MAXIT; k++) {
-    Real qy = 0.0;
-    Real yy = 0.0;
-    long long j;
-    Real quantities[7];
-    Real r0r;
-    Real r0w;
-    Real r0s;
-    Real r0z;
-    Real alphat;
-#pragma omp parallel for
-    for (j = 0; j < N; j++) {
-      pois.phat[j] = pois.rhat[j] + beta * (pois.phat[j] - omega * pois.shat[j]);
-    }
-    if (k % KR_RESTART != 0) {
-      long long j;
-#pragma omp parallel for
-      for (j = 0; j < N; j++) {
-        pois.s[j] = pois.w[j] + beta * (pois.s[j] - omega * pois.z[j]);
-        pois.shat[j] = pois.what[j] + beta * (pois.shat[j] - omega * pois.zhat[j]);
-        pois.z[j] = pois.t[j] + beta * (pois.z[j] - omega * pois.v[j]);
-      }
-    } else {
-      pois_op_vec(pois.phat, pois.s);
-      pois_pre_vec(pois.s, pois.shat);
-      pois_op_vec(pois.shat, pois.z);
-    }
-#pragma omp parallel for reduction(+ : qy, yy)
-    for (j = 0; j < N; j++) {
-      pois.q[j] = pois.r[j] - alpha * pois.s[j];
-      pois.qhat[j] = pois.rhat[j] - alpha * pois.shat[j];
-      pois.y[j] = pois.w[j] - alpha * pois.z[j];
-      qy += pois.q[j] * pois.y[j];
-      yy += pois.y[j] * pois.y[j];
-    }
-    quantities[0] = qy;
-    quantities[1] = yy;
-    MPI_Allreduce(MPI_IN_PLACE, quantities, 2, MPI_Real, MPI_SUM, sim.comm);
-    pois_pre_vec(pois.z, pois.zhat);
-    pois_op_vec(pois.zhat, pois.v);
-    qy = quantities[0];
-    yy = quantities[1];
-    omega = qy / (yy + eps);
-    r0r = 0.0;
-    r0w = 0.0;
-    r0s = 0.0;
-    r0z = 0.0;
-    norm = 0.0;
-    norm_1 = 0.0;
-    norm_2 = 0.0;
-#pragma omp parallel for
-    for (j = 0; j < N; j++) {
-      pois.x[j] = pois.x[j] + alpha * pois.phat[j] + omega * pois.qhat[j];
-    }
-    if (k % KR_RESTART != 0) {
-      long long j;
-#pragma omp parallel for
-      for (j = 0; j < N; j++) {
-        pois.r[j] = pois.q[j] - omega * pois.y[j];
-        pois.rhat[j] = pois.qhat[j] - omega * (pois.what[j] - alpha * pois.zhat[j]);
-        pois.w[j] = pois.y[j] - omega * (pois.t[j] - alpha * pois.v[j]);
-      }
-    } else {
-      long long j;
-      pois_op_vec(pois.x, pois.r);
-#pragma omp parallel for
-      for (j = 0; j < N; j++) {
-        pois.r[j] = pois.b[j] - pois.r[j];
-      }
-      pois_pre_vec(pois.r, pois.rhat);
-      pois_op_vec(pois.rhat, pois.w);
-    }
-#pragma omp parallel for reduction(+ : r0r, r0w, r0s, r0z, norm_1, norm_2, norm)
-    for (j = 0; j < N; j++) {
-      r0r += pois.r0[j] * pois.r[j];
-      r0w += pois.r0[j] * pois.w[j];
-      r0s += pois.r0[j] * pois.s[j];
-      r0z += pois.r0[j] * pois.z[j];
-      norm += pois.r[j] * pois.r[j] * pois.hw[j / BS3];
-      norm_1 += pois.r[j] * pois.r[j];
-      norm_2 += pois.r0[j] * pois.r0[j];
-    }
-    quantities[0] = r0r;
-    quantities[1] = r0w;
-    quantities[2] = r0s;
-    quantities[3] = r0z;
-    quantities[4] = norm_1;
-    quantities[5] = norm_2;
-    quantities[6] = norm;
-    MPI_Allreduce(MPI_IN_PLACE, quantities, 7, MPI_Real, MPI_SUM, sim.comm);
-    pois_pre_vec(pois.w, pois.what);
-    pois_op_vec(pois.what, pois.t);
-    r0r = quantities[0];
-    r0w = quantities[1];
-    r0s = quantities[2];
-    r0z = quantities[3];
-    norm_1 = quantities[4];
-    norm_2 = quantities[5];
-    norm = sqrt(quantities[6] / vol);
-    beta = alpha / (omega + eps) * r0r / (r0r_prev + eps);
-    alpha = r0r / (r0w + beta * r0s - beta * omega * r0z);
-    alphat = 1.0 / (omega + eps) + r0w / (r0r + eps) - beta * omega * r0z / (r0r + eps);
-    alphat = 1.0 / (alphat + eps);
-    if (fabs(alphat) < 10 * fabs(alpha))
-      alpha = alphat;
-    r0r_prev = r0r;
-    serious_breakdown = r0r * r0r < 1e-16 * norm_1 * norm_2;
-    if (serious_breakdown && restarts < KR_MAXRESTART) {
-      long long i;
-      restarts++;
-#pragma omp parallel for
-      for (i = 0; i < N; i++) {
-        pois.r0[i] = pois.r[i];
-      }
-      r0r_prev = pois_restart(N, &alpha);
-      beta = 0.0;
-      omega = 0.0;
-    }
-    if (norm < min_norm) {
-      long long i;
-      use_xopt = 1;
-      min_norm = norm;
-#pragma omp parallel for
-      for (i = 0; i < N; i++) {
-        pois.x_opt[i] = pois.x[i];
-      }
-    }
-    if (norm < max_error || norm / (init_norm + eps) < max_rel_error)
+    pois.r[i] = pois.b[i] - pois.r[i];
+  it = 0;
+  done = 0;
+  while (!done) {
+    beta = sqrt(pois_dot(pois.r, pois.r, N));
+    norm = beta / sqrt(vol);
+    if (norm < sim.ptol || norm < sim.ptol_rel * bnorm || it >= KR_MAXIT)
       break;
+    vec_copy(pois.V, pois.r, N);
+    pois_scale(pois.V, 1 / beta, N);
+    memset(g, 0, sizeof g);
+    g[0] = beta;
+    for (j = 0; j < KR_M; j++) {
+      Real *v = pois.V + (long long)(j + 1) * N;
+      mg_vcycle(pois.V + (long long)j * N, pois.z);
+      pois_op_vec(pois.z, pois.w);
+      for (k = 0; k <= j; k++) {
+        H[k][j] = pois_dot(pois.w, pois.V + (long long)k * N, N);
+        pois_axpy(pois.w, -H[k][j], pois.V + (long long)k * N, N);
+      }
+      H[j + 1][j] = sqrt(pois_dot(pois.w, pois.w, N));
+      vec_copy(v, pois.w, N);
+      if (H[j + 1][j] > 0)
+        pois_scale(v, 1 / H[j + 1][j], N);
+      for (k = 0; k < j; k++) {
+        Real t = cs[k] * H[k][j] + sn[k] * H[k + 1][j];
+        H[k + 1][j] = -sn[k] * H[k][j] + cs[k] * H[k + 1][j];
+        H[k][j] = t;
+      }
+      {
+        Real d = sqrt(H[j][j] * H[j][j] + H[j + 1][j] * H[j + 1][j]);
+        cs[j] = d > 0 ? H[j][j] / d : 1;
+        sn[j] = d > 0 ? H[j + 1][j] / d : 0;
+        H[j][j] = d;
+        H[j + 1][j] = 0;
+        g[j + 1] = -sn[j] * g[j];
+        g[j] = cs[j] * g[j];
+      }
+      it++;
+      norm = fabs(g[j + 1]) / sqrt(vol);
+      if (norm < sim.ptol || norm < sim.ptol_rel * bnorm || it >= KR_MAXIT) {
+        done = 1;
+        j++;
+        break;
+      }
+    }
+    for (k = j - 1; k >= 0; k--) {
+      int m;
+      y[k] = g[k];
+      for (m = k + 1; m < j; m++)
+        y[k] -= H[k][m] * y[m];
+      y[k] = H[k][k] != 0 ? y[k] / H[k][k] : 0;
+    }
+    vec_zero(pois.w, N);
+    for (k = 0; k < j; k++)
+      pois_axpy(pois.w, y[k], pois.V + (long long)k * N, N);
+    mg_vcycle(pois.w, pois.z);
+    pois_axpy(pois.x, 1, pois.z, N);
+    pois_op_vec(pois.x, pois.r);
+#pragma omp parallel for
+    for (i = 0; i < N; i++)
+      pois.r[i] = pois.b[i] - pois.r[i];
   }
-  field_set(F_PRES, use_xopt ? pois.x_opt : pois.x);
+  field_set(F_PRES, pois.x);
 }
 static Real derivative(Real U, Real um3, Real um2, Real um1, Real u, Real up1, Real up2, Real up3) {
   if (U > 0)
