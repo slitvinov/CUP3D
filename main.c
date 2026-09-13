@@ -4877,7 +4877,7 @@ static void pois_solve(void) {
   Real H[KR_M + 1][KR_M], cs[KR_M], sn[KR_M], g[KR_M + 1], y[KR_M];
   Real vol, bnorm, norm, beta;
   long long i;
-  int it, j, k, done;
+  int it, j, k, brk;
   pois_alloc(N);
   vol = 0;
   pois_pin = -1;
@@ -4909,12 +4909,17 @@ static void pois_solve(void) {
   for (i = 0; i < N; i++)
     pois.r[i] = pois.b[i] - pois.r[i];
   it = 0;
-  done = 0;
-  while (!done) {
+  for (;;) {
     beta = sqrt(pois_dot(pois.r, pois.r, N));
     norm = beta / sqrt(vol);
-    if (norm < sim.ptol || norm < sim.ptol_rel * bnorm || it >= KR_MAXIT)
+    if (norm < sim.ptol || norm < sim.ptol_rel * bnorm)
       break;
+    if (it >= KR_MAXIT) {
+      if (sim.rank == 0)
+        fprintf(stderr, "main.c: poisson did not converge in %d iterations: residual %.3e, rhs %.3e\n", it,
+                norm, bnorm);
+      break;
+    }
     vec_copy(pois.V, pois.r, N);
     pois_scale(pois.V, 1 / beta, N);
     memset(g, 0, sizeof g);
@@ -4928,6 +4933,7 @@ static void pois_solve(void) {
         pois_axpy(pois.w, -H[k][j], pois.V + (long long)k * N, N);
       }
       H[j + 1][j] = sqrt(pois_dot(pois.w, pois.w, N));
+      brk = H[j + 1][j] <= 1e-13 * fabs(H[j][j]);
       vec_copy(v, pois.w, N);
       if (H[j + 1][j] > 0)
         pois_scale(v, 1 / H[j + 1][j], N);
@@ -4947,8 +4953,7 @@ static void pois_solve(void) {
       }
       it++;
       norm = fabs(g[j + 1]) / sqrt(vol);
-      if (norm < sim.ptol || norm < sim.ptol_rel * bnorm || it >= KR_MAXIT) {
-        done = 1;
+      if (norm < sim.ptol || norm < sim.ptol_rel * bnorm || it >= KR_MAXIT || brk) {
         j++;
         break;
       }
