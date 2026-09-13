@@ -5474,7 +5474,10 @@ static void fish_hit(void) {
   int N = sim.nfish;
   struct CollisionInfo *collisions;
   int i;
-  Real *mx;
+  struct {
+    double v;
+    int r;
+  } *mx;
   int s;
   int j;
   long long *pair_start, *pair_blk, k, q;
@@ -5519,17 +5522,18 @@ static void fish_hit(void) {
   }
   free(pair_start);
   free(pair_blk);
-  mx = emalloc((2 * N + 1) * sizeof(Real));
+  mx = emalloc((2 * N + 1) * sizeof *mx);
   for (i = 0; i < N; i++)
     for (s = 0; s < 2; s++) {
       Real *M = collisions[i].s[s].Mom;
-      mx[2 * i + s] = M[0] * M[0] + M[1] * M[1] + M[2] * M[2];
+      mx[2 * i + s].v = M[0] * M[0] + M[1] * M[1] + M[2] * M[2];
+      mx[2 * i + s].r = sim.rank;
     }
-  MPI_Allreduce(MPI_IN_PLACE, mx, 2 * N, MPI_Real, MPI_MAX, sim.comm);
+  MPI_Allreduce(MPI_IN_PLACE, mx, 2 * N, MPI_DOUBLE_INT, MPI_MAXLOC, sim.comm);
   for (i = 0; i < N; i++)
     for (s = 0; s < 2; s++) {
       Real *M = collisions[i].s[s].Mom;
-      if (!(fabs(M[0] * M[0] + M[1] * M[1] + M[2] * M[2] - mx[2 * i + s]) < 1e-10))
+      if (mx[2 * i + s].r != sim.rank)
         M[0] = M[1] = M[2] = 0;
     }
   MPI_Allreduce(MPI_IN_PLACE, collisions, 20 * N, MPI_Real, MPI_SUM, sim.comm);
