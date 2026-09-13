@@ -1428,26 +1428,31 @@ static void io_write(char *path, float *buf, long n, int m, long off) {
   MPI_Type_free(&t);
 }
 static void vorticity(void);
+static void qcrit(void);
 static void io_dump(Real time, char *path) {
   long i, j, l, m, ncell, nblk_total, offset, boff;
-  char attr_path[FILENAME_MAX], vort_path[FILENAME_MAX], blk_path[FILENAME_MAX], xdmf_path[FILENAME_MAX],
-      *attr_base, *vort_base, *blk_base;
+  char attr_path[FILENAME_MAX], vort_path[FILENAME_MAX], q_path[FILENAME_MAX], blk_path[FILENAME_MAX],
+      xdmf_path[FILENAME_MAX], *attr_base, *vort_base, *q_base, *blk_base;
   FILE *xmf;
-  float *attr, *vort, *blk, *all;
+  float *attr, *vort, *q, *blk, *all;
   int *cnt, *dsp;
   int n, r, root;
   vorticity();
+  qcrit();
   snprintf(attr_path, sizeof attr_path, "%s.attr.raw", path);
   snprintf(vort_path, sizeof vort_path, "%s.vort.raw", path);
+  snprintf(q_path, sizeof q_path, "%s.q.raw", path);
   snprintf(blk_path, sizeof blk_path, "%s.blk.raw", path);
   snprintf(xdmf_path, sizeof xdmf_path, "%s.xdmf2", path);
   attr_base = attr_path;
   vort_base = vort_path;
+  q_base = q_path;
   blk_base = blk_path;
   for (j = 0; attr_path[j] != '\0'; j++) {
     if (attr_path[j] == '/' && attr_path[j + 1] != '\0') {
       attr_base = &attr_path[j + 1];
       vort_base = &vort_path[j + 1];
+      q_base = &q_path[j + 1];
       blk_base = &blk_path[j + 1];
     }
   }
@@ -1505,9 +1510,12 @@ static void io_dump(Real time, char *path) {
               "    <Attribute Name=\"vorticity\" AttributeType=\"Vector\" Center=\"Cell\">\n"
               "     <DataItem Dimensions=\"%d %d %d 3\" Format=\"Binary\" Seek=\"%ld\">%s</DataItem>\n"
               "    </Attribute>\n"
+              "    <Attribute Name=\"q\" Center=\"Cell\">\n"
+              "     <DataItem Dimensions=\"%d %d %d\" Format=\"Binary\" Seek=\"%ld\">%s</DataItem>\n"
+              "    </Attribute>\n"
               "   </Grid>\n",
               BS + 1, BS + 1, BS + 1, 24 * k, blk_base, 24 * k + 12, blk_base, BS, BS, BS, 4L * BS3 * k,
-              attr_base, BS, BS, BS, 12L * BS3 * k, vort_base);
+              attr_base, BS, BS, BS, 12L * BS3 * k, vort_base, BS, BS, BS, 4L * BS3 * k, q_base);
     fprintf(xmf, "  </Grid>\n </Domain>\n</Xdmf>\n");
     fclose(xmf);
     free(all);
@@ -1516,15 +1524,18 @@ static void io_dump(Real time, char *path) {
   free(dsp);
   attr = emalloc(ncell * sizeof *attr);
   vort = emalloc(3 * ncell * sizeof *vort);
+  q = emalloc(ncell * sizeof *q);
   l = 0;
   m = 0;
   for (i = 0; i < sta.nblk; i++) {
     Real *chi = fld(i, F_CHI);
     Real *om = fld(i, F_TMP);
+    Real *qq = fld(i, F_LHS);
     for (j = 0; j < BS3; j++) {
       vort[m++] = om[j];
       vort[m++] = om[BS3 + j];
       vort[m++] = om[2 * BS3 + j];
+      q[l] = qq[j];
       attr[l++] = chi[j];
     }
   }
@@ -1532,6 +1543,8 @@ static void io_dump(Real time, char *path) {
   free(attr);
   io_write(vort_path, vort, ncell, 3, offset);
   free(vort);
+  io_write(q_path, q, ncell, 1, offset);
+  free(q);
   io_write(blk_path, blk, sta.nblk, 6, boff);
   free(blk);
 }
@@ -5737,6 +5750,30 @@ static void k_vort(struct Lab *l, long long i) {
   }
 }
 static struct Stencil st_vort = {F_VEL, 3, 1, 0, 0, F_TMP, 3, k_vort};
+static void k_q(struct Lab *l, long long i) {
+  Real inv2h = .5 / sta.blk[i].h;
+  Real *o = fld(i, F_LHS);
+  int z;
+  int y;
+  int x;
+  for (z = 0; z < BS; ++z)
+    for (y = 0; y < BS; ++y)
+      for (x = 0; x < BS; ++x) {
+        Real g[3][3], q;
+        int a;
+        int b;
+        for (a = 0; a < 3; a++)
+          for (b = 0; b < 3; b++)
+            g[a][b] = inv2h * (LS(b, 1, a) - LS(b, -1, a));
+        q = 0;
+        for (a = 0; a < 3; a++)
+          for (b = 0; b < 3; b++)
+            q -= 0.5 * g[a][b] * g[b][a];
+        o[IDX(x, y, z)] = q;
+      }
+}
+static struct Stencil st_q = {F_VEL, 3, 1, 0, 0, F_LHS, 0, k_q};
+static void qcrit(void) { stencil_apply(&st_q); }
 static void vorticity(void) {
   long long i;
   stencil_apply(&st_vort);
